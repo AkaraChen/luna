@@ -1,249 +1,26 @@
-use std::{path::Path, process::Stdio, time::Instant};
+use std::{path::Path, process::Stdio};
 
 use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::{mpsc, watch},
+    sync::mpsc,
     task::JoinHandle,
-    time::{Duration, sleep_until},
+    time::Duration,
 };
 use tracing::{debug, info, warn};
 
 use crate::{
-    config::CodexConfig,
+    agent::{
+        SessionUpdate, StopReason, TurnExit, UsageUpdate, WorkerEvent,
+    },
+    config::CodexRunner,
     error::{LunaError, Result},
-    model::Issue,
     paths::absolutize_path,
-    prompt::{build_continuation_prompt, render_issue_prompt},
-    tracker::build_tracker,
-    workflow::LoadedWorkflow,
-    workspace::WorkspaceManager,
 };
 
 const MAX_JSON_LINE_BYTES: usize = 10 * 1024 * 1024;
-
-#[derive(Clone, Debug)]
-pub enum StopReason {
-    NonActive,
-    Terminal,
-    Stalled,
-    Shutdown,
-}
-
-#[derive(Clone, Debug)]
-pub struct UsageUpdate {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub total_tokens: u64,
-}
-
-#[derive(Clone, Debug)]
-pub struct SessionUpdate {
-    pub issue_id: String,
-    pub issue_identifier: String,
-    pub event: String,
-    pub timestamp: chrono::DateTime<Utc>,
-    pub session_id: Option<String>,
-    pub thread_id: Option<String>,
-    pub turn_id: Option<String>,
-    pub codex_app_server_pid: Option<u32>,
-    pub message: Option<String>,
-    pub usage: Option<UsageUpdate>,
-    pub rate_limits: Option<Value>,
-    pub turn_count: Option<u32>,
-}
-
-#[derive(Clone, Debug)]
-pub enum WorkerOutcome {
-    Normal,
-    Failed(String),
-    TimedOut,
-    Stalled,
-    CanceledByReconciliation,
-}
-
-#[derive(Clone, Debug)]
-pub struct WorkerExit {
-    pub issue_id: String,
-    pub issue_identifier: String,
-    pub outcome: WorkerOutcome,
-    pub runtime_seconds: f64,
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub enum WorkerEvent {
-    Session(SessionUpdate),
-    Exited(WorkerExit),
-    RetryDue(String),
-}
-
-pub async fn run_agent_attempt(
-    issue: Issue,
-    attempt: Option<u32>,
-    workflow: LoadedWorkflow,
-    events: mpsc::UnboundedSender<WorkerEvent>,
-    stop_rx: watch::Receiver<Option<StopReason>>,
-) {
-    let started = Instant::now();
-    let outcome =
-        run_agent_attempt_inner(issue.clone(), attempt, workflow, events.clone(), stop_rx).await;
-
-    let (worker_outcome, error) = match outcome {
-        Ok(WorkerOutcome::Normal) => (WorkerOutcome::Normal, None),
-        Ok(other) => {
-            let reason = match &other {
-                WorkerOutcome::Failed(reason) => Some(reason.clone()),
-                WorkerOutcome::TimedOut => Some("turn_timeout".to_string()),
-                WorkerOutcome::Stalled => Some("stalled".to_string()),
-                WorkerOutcome::CanceledByReconciliation => {
-                    Some("canceled_by_reconciliation".to_string())
-                }
-                WorkerOutcome::Normal => None,
-            };
-            (other, reason)
-        }
-        Err(err) => (
-            WorkerOutcome::Failed(err.to_string()),
-            Some(err.to_string()),
-        ),
-    };
-
-    let _ = events.send(WorkerEvent::Exited(WorkerExit {
-        issue_id: issue.id,
-        issue_identifier: issue.identifier,
-        outcome: worker_outcome,
-        runtime_seconds: started.elapsed().as_secs_f64(),
-        error,
-    }));
-}
-
-async fn run_agent_attempt_inner(
-    mut issue: Issue,
-    attempt: Option<u32>,
-    workflow: LoadedWorkflow,
-    events: mpsc::UnboundedSender<WorkerEvent>,
-    mut stop_rx: watch::Receiver<Option<StopReason>>,
-) -> Result<WorkerOutcome> {
-    let workspace_manager = WorkspaceManager::new(
-        workflow.config.workspace.root.clone(),
-        workflow.config.hooks.clone(),
-        Some(workflow.config.workflow_dir.clone()),
-    );
-    let workspace = workspace_manager.prepare(&issue.identifier).await?;
-    workspace_manager.before_run(&workspace).await?;
-
-    if matches!(
-        stop_rx.borrow().clone(),
-        Some(
-            StopReason::Shutdown
-                | StopReason::NonActive
-                | StopReason::Terminal
-                | StopReason::Stalled
-        )
-    ) {
-        workspace_manager.after_run_best_effort(&workspace).await;
-        return Ok(map_stop_reason(stop_rx.borrow().clone()));
-    }
-
-    let tracker = build_tracker(&workflow.config.tracker)?;
-    let mut session = AppServerSession::launch(
-        &workflow.config.codex,
-        &workspace.path,
-        issue.id.clone(),
-        issue.identifier.clone(),
-        events.clone(),
-    )
-    .await?;
-
-    let prompt = render_issue_prompt(&workflow.definition.prompt_template, &issue, attempt)?;
-    session.start_thread(&workflow.config.codex).await?;
-
-    let mut turn_number = 1_u32;
-    loop {
-        let prompt = if turn_number == 1 {
-            prompt.clone()
-        } else {
-            build_continuation_prompt(&issue, turn_number, workflow.config.agent.max_turns)
-        };
-
-        match session
-            .run_turn(prompt, turn_number, &workflow.config.codex, &mut stop_rx)
-            .await?
-        {
-            TurnExit::Completed => {}
-            TurnExit::Failed(reason) => {
-                session.shutdown().await;
-                workspace_manager.after_run_best_effort(&workspace).await;
-                return Ok(WorkerOutcome::Failed(reason));
-            }
-            TurnExit::TimedOut => {
-                session.shutdown().await;
-                workspace_manager.after_run_best_effort(&workspace).await;
-                return Ok(WorkerOutcome::TimedOut);
-            }
-            TurnExit::Stopped(reason) => {
-                session.shutdown().await;
-                workspace_manager.after_run_best_effort(&workspace).await;
-                return Ok(map_stop_reason(Some(reason)));
-            }
-        }
-
-        let refreshed = tracker
-            .fetch_issue_states_by_ids(&[issue.id.clone()])
-            .await?;
-        issue = refreshed.into_iter().next().ok_or_else(|| {
-            LunaError::Tracker("issue state refresh error: issue missing after turn".to_string())
-        })?;
-
-        if !workflow.config.tracker.is_active_state(&issue.state) {
-            break;
-        }
-        if turn_number >= workflow.config.agent.max_turns {
-            break;
-        }
-        turn_number += 1;
-    }
-
-    session.shutdown().await;
-    workspace_manager.after_run_best_effort(&workspace).await;
-    Ok(WorkerOutcome::Normal)
-}
-
-fn map_stop_reason(reason: Option<StopReason>) -> WorkerOutcome {
-    match reason {
-        Some(StopReason::Stalled) => WorkerOutcome::Stalled,
-        Some(StopReason::NonActive | StopReason::Terminal | StopReason::Shutdown) | None => {
-            WorkerOutcome::CanceledByReconciliation
-        }
-    }
-}
-
-enum TurnExit {
-    Completed,
-    Failed(String),
-    TimedOut,
-    Stopped(StopReason),
-}
-
-struct AppServerSession {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    stderr_task: JoinHandle<()>,
-    next_request_id: u64,
-    issue_id: String,
-    issue_identifier: String,
-    events: mpsc::UnboundedSender<WorkerEvent>,
-    pid: Option<u32>,
-    workspace_path: String,
-    thread_id: Option<String>,
-    turn_id: Option<String>,
-    session_id: Option<String>,
-    turn_terminal_status: Option<String>,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 enum CompletedItemLog {
@@ -271,9 +48,27 @@ enum CompletedItemLog {
     },
 }
 
-impl AppServerSession {
-    async fn launch(
-        config: &CodexConfig,
+pub struct CodexSession {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    stderr_task: JoinHandle<()>,
+    next_request_id: u64,
+    issue_id: String,
+    issue_identifier: String,
+    events: mpsc::UnboundedSender<WorkerEvent>,
+    pid: Option<u32>,
+    workspace_path: String,
+    thread_id: Option<String>,
+    turn_id: Option<String>,
+    session_id: Option<String>,
+    turn_terminal_status: Option<String>,
+    config: CodexRunner,
+}
+
+impl CodexSession {
+    pub async fn launch(
+        config: &CodexRunner,
         workspace_path: &Path,
         issue_id: String,
         issue_identifier: String,
@@ -324,6 +119,7 @@ impl AppServerSession {
             turn_id: None,
             session_id: None,
             turn_terminal_status: None,
+            config: config.clone(),
         };
 
         session.initialize(config.read_timeout_ms).await?;
@@ -344,7 +140,7 @@ impl AppServerSession {
         Ok(())
     }
 
-    async fn start_thread(&mut self, config: &CodexConfig) -> Result<()> {
+    async fn start_thread(&mut self) -> Result<()> {
         let response = self
             .request(
                 "thread/start",
@@ -352,10 +148,10 @@ impl AppServerSession {
                     "cwd": self.workspace_path.clone(),
                     "serviceName": "luna",
                     "sessionStartSource": "startup",
-                    "approvalPolicy": config.approval_policy.clone(),
-                    "sandbox": config.thread_sandbox.clone(),
+                    "approvalPolicy": self.config.approval_policy.clone(),
+                    "sandbox": self.config.thread_sandbox.clone(),
                 }),
-                config.read_timeout_ms,
+                self.config.read_timeout_ms,
             )
             .await?;
         self.thread_id = extract_string(&response, &["/thread/id"]);
@@ -367,12 +163,11 @@ impl AppServerSession {
         Ok(())
     }
 
-    async fn run_turn(
+    async fn run_turn_inner(
         &mut self,
-        prompt: String,
+        prompt: &str,
         turn_number: u32,
-        config: &CodexConfig,
-        stop_rx: &mut watch::Receiver<Option<StopReason>>,
+        stop_rx: &mut tokio::sync::watch::Receiver<Option<StopReason>>,
     ) -> Result<TurnExit> {
         self.turn_terminal_status = None;
         let response = self
@@ -381,8 +176,8 @@ impl AppServerSession {
                 json!({
                     "threadId": self.thread_id.clone().ok_or_else(|| LunaError::Agent("missing thread id".to_string()))?,
                     "cwd": self.workspace_path.clone(),
-                    "approvalPolicy": config.approval_policy.clone(),
-                    "sandboxPolicy": config.turn_sandbox_policy.clone(),
+                    "approvalPolicy": self.config.approval_policy.clone(),
+                    "sandboxPolicy": self.config.turn_sandbox_policy.clone(),
                     "input": [
                         {
                             "type": "text",
@@ -390,7 +185,7 @@ impl AppServerSession {
                         }
                     ]
                 }),
-                config.read_timeout_ms,
+                self.config.read_timeout_ms,
             )
             .await?;
 
@@ -400,7 +195,7 @@ impl AppServerSession {
             self.emit("session_started", None, None, Some(turn_number));
         }
 
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(config.turn_timeout_ms);
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(self.config.turn_timeout_ms);
         loop {
             if let Some(status) = self.turn_terminal_status.take() {
                 return Ok(match status.as_str() {
@@ -411,7 +206,7 @@ impl AppServerSession {
                 });
             }
 
-            let stop_deadline = sleep_until(deadline);
+            let stop_deadline = tokio::time::sleep_until(deadline);
             tokio::pin!(stop_deadline);
 
             tokio::select! {
@@ -737,7 +532,7 @@ impl AppServerSession {
             session_id: self.session_id.clone(),
             thread_id: self.thread_id.clone(),
             turn_id: self.turn_id.clone(),
-            codex_app_server_pid: self.pid,
+            agent_pid: self.pid,
             message,
             usage,
             rate_limits: None,
@@ -754,7 +549,7 @@ impl AppServerSession {
             session_id: self.session_id.clone(),
             thread_id: self.thread_id.clone(),
             turn_id: self.turn_id.clone(),
-            codex_app_server_pid: self.pid,
+            agent_pid: self.pid,
             message: None,
             usage: None,
             rate_limits: Some(rate_limits),
@@ -794,6 +589,22 @@ impl AppServerSession {
         if let Err(err) = self.child.kill().await {
             warn!(issue_id = %self.issue_id, error = %err, "failed to kill codex process");
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::agent::AgentSession for CodexSession {
+    async fn start(&mut self) -> Result<()> {
+        self.start_thread().await
+    }
+
+    async fn run_turn(
+        &mut self,
+        prompt: &str,
+        turn_number: u32,
+        stop_rx: &mut tokio::sync::watch::Receiver<Option<StopReason>>,
+    ) -> Result<TurnExit> {
+        self.run_turn_inner(prompt, turn_number, stop_rx).await
     }
 
     async fn shutdown(&mut self) {

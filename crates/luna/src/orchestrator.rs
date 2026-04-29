@@ -83,7 +83,7 @@ async fn on_tick(
 
     let workflow = store.current().clone();
     state.poll_interval_ms = workflow.config.polling.interval_ms;
-    state.max_concurrent_agents = workflow.config.agent.max_concurrent_agents;
+    state.max_concurrent_agents = workflow.config.scheduler.max_concurrent;
 
     if !dispatch_enabled {
         return Ok(());
@@ -142,18 +142,18 @@ fn apply_session_update(update: crate::agent::SessionUpdate, state: &mut Orchest
         return;
     };
 
-    entry.last_codex_event = Some(update.event.clone());
-    entry.last_codex_timestamp = Some(update.timestamp);
-    entry.last_codex_message = update.message.clone();
+    entry.last_agent_event = Some(update.event.clone());
+    entry.last_agent_timestamp = Some(update.timestamp);
+    entry.last_agent_message = update.message.clone();
     entry.session_id = update.session_id.clone();
     entry.thread_id = update.thread_id.clone();
     entry.turn_id = update.turn_id.clone();
-    entry.codex_app_server_pid = update.codex_app_server_pid;
+    entry.agent_pid = update.agent_pid;
     if let Some(turn_count) = update.turn_count {
         entry.turn_count = turn_count;
     }
     if let Some(rate_limits) = update.rate_limits {
-        state.codex_rate_limits = Some(rate_limits);
+        state.agent_rate_limits = Some(rate_limits);
     }
     if let Some(usage) = update.usage {
         apply_usage_update(state, &update.issue_id, usage);
@@ -174,16 +174,16 @@ fn apply_usage_update(state: &mut OrchestratorState, issue_id: &str, usage: Usag
         .total_tokens
         .saturating_sub(entry.last_reported_total_tokens);
 
-    entry.codex_input_tokens = usage.input_tokens;
-    entry.codex_output_tokens = usage.output_tokens;
-    entry.codex_total_tokens = usage.total_tokens;
+    entry.agent_input_tokens = usage.input_tokens;
+    entry.agent_output_tokens = usage.output_tokens;
+    entry.agent_total_tokens = usage.total_tokens;
     entry.last_reported_input_tokens = usage.input_tokens;
     entry.last_reported_output_tokens = usage.output_tokens;
     entry.last_reported_total_tokens = usage.total_tokens;
 
-    state.codex_totals.input_tokens += delta_input;
-    state.codex_totals.output_tokens += delta_output;
-    state.codex_totals.total_tokens += delta_total;
+    state.agent_totals.input_tokens += delta_input;
+    state.agent_totals.output_tokens += delta_output;
+    state.agent_totals.total_tokens += delta_total;
 }
 
 async fn handle_worker_exit(
@@ -195,7 +195,7 @@ async fn handle_worker_exit(
     let Some(entry) = state.running.remove(&exit.issue_id) else {
         return;
     };
-    state.codex_totals.seconds_running += exit.runtime_seconds;
+    state.agent_totals.seconds_running += exit.runtime_seconds;
     entry.worker.abort();
 
     let cleanup_workspace = entry.pending_cleanup;
@@ -366,13 +366,13 @@ fn dispatch_issue(
             session_id: None,
             thread_id: None,
             turn_id: None,
-            codex_app_server_pid: None,
-            last_codex_message: None,
-            last_codex_event: None,
-            last_codex_timestamp: None,
-            codex_input_tokens: 0,
-            codex_output_tokens: 0,
-            codex_total_tokens: 0,
+            agent_pid: None,
+            last_agent_message: None,
+            last_agent_event: None,
+            last_agent_timestamp: None,
+            agent_input_tokens: 0,
+            agent_output_tokens: 0,
+            agent_total_tokens: 0,
             last_reported_input_tokens: 0,
             last_reported_output_tokens: 0,
             last_reported_total_tokens: 0,
@@ -436,16 +436,16 @@ async fn reconcile_running_issues(
 }
 
 fn reconcile_stalled_runs(state: &mut OrchestratorState, config: &ServiceConfig) {
-    if config.codex.stall_timeout_ms <= 0 {
+    if config.runner.stall_timeout_ms() <= 0 {
         return;
     }
 
     let now = Utc::now();
     for running in state.running.values_mut() {
         let elapsed_ms = now
-            .signed_duration_since(running.last_codex_timestamp.unwrap_or(running.started_at))
+            .signed_duration_since(running.last_agent_timestamp.unwrap_or(running.started_at))
             .num_milliseconds();
-        if elapsed_ms > config.codex.stall_timeout_ms {
+        if elapsed_ms > config.runner.stall_timeout_ms() {
             let _ = running.stop_tx.send(Some(StopReason::Stalled));
         }
     }
@@ -507,8 +507,8 @@ fn compare_priority(left: Option<i64>, right: Option<i64>) -> Ordering {
 
 fn available_global_slots(state: &OrchestratorState, config: &ServiceConfig) -> usize {
     config
-        .agent
-        .max_concurrent_agents
+        .scheduler
+        .max_concurrent
         .saturating_sub(state.running.len())
 }
 
@@ -519,11 +519,11 @@ fn has_available_state_slot(
 ) -> bool {
     let key = state_name.to_lowercase();
     let limit = config
-        .agent
-        .max_concurrent_agents_by_state
+        .scheduler
+        .max_concurrent_by_state
         .get(&key)
         .copied()
-        .unwrap_or(config.agent.max_concurrent_agents);
+        .unwrap_or(config.scheduler.max_concurrent);
     let running_for_state = state
         .running
         .values()
@@ -551,7 +551,7 @@ fn schedule_retry(
         RetryDelay::Backoff => {
             let multiplier =
                 10_000_u64.saturating_mul(2_u64.saturating_pow(attempt.saturating_sub(1)));
-            multiplier.min(config.agent.max_retry_backoff_ms)
+            multiplier.min(config.scheduler.retry_backoff_ms)
         }
     };
     let due_at = Utc::now() + ChronoDuration::milliseconds(delay_ms as i64);
@@ -625,21 +625,21 @@ struct OrchestratorState {
     claimed: HashSet<String>,
     retry_attempts: HashMap<String, RetryEntry>,
     completed: HashSet<String>,
-    codex_totals: TokenTotals,
-    codex_rate_limits: Option<serde_json::Value>,
+    agent_totals: TokenTotals,
+    agent_rate_limits: Option<serde_json::Value>,
 }
 
 impl OrchestratorState {
     fn new(config: &ServiceConfig) -> Self {
         Self {
             poll_interval_ms: config.polling.interval_ms,
-            max_concurrent_agents: config.agent.max_concurrent_agents,
+            max_concurrent_agents: config.scheduler.max_concurrent,
             running: HashMap::new(),
             claimed: HashSet::new(),
             retry_attempts: HashMap::new(),
             completed: HashSet::new(),
-            codex_totals: TokenTotals::default(),
-            codex_rate_limits: None,
+            agent_totals: TokenTotals::default(),
+            agent_rate_limits: None,
         }
     }
 }
@@ -653,13 +653,13 @@ struct RunningEntry {
     session_id: Option<String>,
     thread_id: Option<String>,
     turn_id: Option<String>,
-    codex_app_server_pid: Option<u32>,
-    last_codex_message: Option<String>,
-    last_codex_event: Option<String>,
-    last_codex_timestamp: Option<DateTime<Utc>>,
-    codex_input_tokens: u64,
-    codex_output_tokens: u64,
-    codex_total_tokens: u64,
+    agent_pid: Option<u32>,
+    last_agent_message: Option<String>,
+    last_agent_event: Option<String>,
+    last_agent_timestamp: Option<DateTime<Utc>>,
+    agent_input_tokens: u64,
+    agent_output_tokens: u64,
+    agent_total_tokens: u64,
     last_reported_input_tokens: u64,
     last_reported_output_tokens: u64,
     last_reported_total_tokens: u64,
