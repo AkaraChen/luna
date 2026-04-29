@@ -29,24 +29,28 @@ const DEFAULT_GITHUB_PRIORITY_FIELD: &str = "Priority";
 #[derive(Clone, Debug)]
 pub enum TrackerConfig {
     GitHubProject(GitHubProjectTrackerConfig),
+    Linear(LinearTrackerConfig),
 }
 
 impl TrackerConfig {
     pub fn is_active_state(&self, value: &str) -> bool {
         match self {
             Self::GitHubProject(config) => config.is_active_state(value),
+            Self::Linear(config) => config.is_active_state(value),
         }
     }
 
     pub fn is_terminal_state(&self, value: &str) -> bool {
         match self {
             Self::GitHubProject(config) => config.is_terminal_state(value),
+            Self::Linear(config) => config.is_terminal_state(value),
         }
     }
 
     pub fn terminal_states(&self) -> &[String] {
         match self {
             Self::GitHubProject(config) => &config.terminal_states,
+            Self::Linear(config) => &config.terminal_states,
         }
     }
 }
@@ -65,6 +69,28 @@ pub struct GitHubProjectTrackerConfig {
 }
 
 impl GitHubProjectTrackerConfig {
+    pub fn is_active_state(&self, value: &str) -> bool {
+        self.active_state_lookup.contains(&value.to_lowercase())
+    }
+
+    pub fn is_terminal_state(&self, value: &str) -> bool {
+        self.terminal_state_lookup.contains(&value.to_lowercase())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LinearTrackerConfig {
+    pub endpoint: String,
+    pub api_key: Option<String>,
+    pub project_slug: Option<String>,
+    pub assignee: Option<String>,
+    pub active_states: Vec<String>,
+    pub terminal_states: Vec<String>,
+    active_state_lookup: HashSet<String>,
+    terminal_state_lookup: HashSet<String>,
+}
+
+impl LinearTrackerConfig {
     pub fn is_active_state(&self, value: &str) -> bool {
         self.active_state_lookup.contains(&value.to_lowercase())
     }
@@ -144,6 +170,10 @@ struct RawTrackerConfig {
     status_field: Option<String>,
     priority_field: Option<String>,
     gh_command: Option<String>,
+    endpoint: Option<String>,
+    api_key: Option<String>,
+    project_slug: Option<String>,
+    assignee: Option<String>,
     active_states: Option<Vec<String>>,
     terminal_states: Option<Vec<String>>,
 }
@@ -363,6 +393,39 @@ fn resolve_tracker_config(raw: RawTrackerConfig) -> Result<TrackerConfig> {
                 terminal_states,
             }))
         }
+        Some("linear") => {
+            let api_key = raw.api_key.filter(|value| !value.trim().is_empty());
+            let project_slug = raw.project_slug.filter(|value| !value.trim().is_empty());
+            let endpoint = raw
+                .endpoint
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "https://api.linear.app/graphql".to_string());
+            let assignee = raw.assignee.filter(|value| !value.trim().is_empty());
+
+            let active_states = raw
+                .active_states
+                .unwrap_or_else(|| vec!["Todo".to_string(), "In Progress".to_string()]);
+            let terminal_states = raw
+                .terminal_states
+                .unwrap_or_else(|| vec!["Closed".to_string(), "Cancelled".to_string(), "Canceled".to_string(), "Duplicate".to_string(), "Done".to_string()]);
+
+            Ok(TrackerConfig::Linear(LinearTrackerConfig {
+                endpoint,
+                api_key,
+                project_slug,
+                assignee,
+                active_state_lookup: active_states
+                    .iter()
+                    .map(|value| value.to_lowercase())
+                    .collect(),
+                terminal_state_lookup: terminal_states
+                    .iter()
+                    .map(|value| value.to_lowercase())
+                    .collect(),
+                active_states,
+                terminal_states,
+            }))
+        }
         _ => Err(LunaError::UnsupportedTrackerKind(kind)),
     }
 }
@@ -505,6 +568,7 @@ tracker:
                 assert_eq!(project.owner, "acme");
                 assert_eq!(project.project_number, 12);
             }
+            TrackerConfig::Linear(_) => unreachable!(),
         }
     }
 

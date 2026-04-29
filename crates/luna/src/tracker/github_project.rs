@@ -6,25 +6,11 @@ use serde::Deserialize;
 use tokio::process::Command;
 
 use crate::{
-    config::{GitHubProjectTrackerConfig, TrackerConfig},
+    config::GitHubProjectTrackerConfig,
     error::{LunaError, Result},
     model::Issue,
+    tracker::Tracker,
 };
-
-#[async_trait]
-pub trait Tracker: Send + Sync {
-    async fn fetch_candidate_issues(&self) -> Result<Vec<Issue>>;
-    async fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<Issue>>;
-    async fn fetch_issue_states_by_ids(&self, issue_ids: &[String]) -> Result<Vec<Issue>>;
-}
-
-pub fn build_tracker(config: &TrackerConfig) -> Result<Box<dyn Tracker>> {
-    match config {
-        TrackerConfig::GitHubProject(project) => {
-            Ok(Box::new(GitHubProjectTracker::new(project.clone())))
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct GitHubProjectTracker {
@@ -288,6 +274,18 @@ impl Tracker for GitHubProjectTracker {
             .into_iter()
             .filter(|issue| ids.contains(&issue.id))
             .collect())
+    }
+
+    async fn create_comment(&self, _issue_id: &str, _body: &str) -> Result<()> {
+        Err(LunaError::Tracker(
+            "create_comment is not supported for github_project tracker".to_string(),
+        ))
+    }
+
+    async fn update_issue_state(&self, _issue_id: &str, _state_name: &str) -> Result<()> {
+        Err(LunaError::Tracker(
+            "update_issue_state is not supported for github_project tracker".to_string(),
+        ))
     }
 }
 
