@@ -205,6 +205,7 @@ async fn handle_worker_exit(
         let workspace_manager = WorkspaceManager::new(
             workflow.config.workspace.root.clone(),
             workflow.config.hooks.clone(),
+            Some(workflow.config.workflow_dir.clone()),
         );
         if let Err(err) = workspace_manager.cleanup(&identifier).await {
             warn!(issue_id = %exit.issue_id, issue_identifier = %identifier, error = %err, "workspace cleanup failed");
@@ -597,6 +598,7 @@ async fn startup_terminal_workspace_cleanup(workflow: &LoadedWorkflow) {
     let workspace_manager = WorkspaceManager::new(
         workflow.config.workspace.root.clone(),
         workflow.config.hooks.clone(),
+        Some(workflow.config.workflow_dir.clone()),
     );
     for issue in terminal_issues {
         if let Err(err) = workspace_manager.cleanup(&issue.identifier).await {

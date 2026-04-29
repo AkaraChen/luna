@@ -18,11 +18,16 @@ const HOOK_OUTPUT_LIMIT: usize = 4 * 1024;
 pub struct WorkspaceManager {
     root: PathBuf,
     hooks: HooksConfig,
+    source_repo_hint: Option<PathBuf>,
 }
 
 impl WorkspaceManager {
-    pub fn new(root: PathBuf, hooks: HooksConfig) -> Self {
-        Self { root, hooks }
+    pub fn new(root: PathBuf, hooks: HooksConfig, source_repo_hint: Option<PathBuf>) -> Self {
+        Self {
+            root,
+            hooks,
+            source_repo_hint,
+        }
     }
 
     pub async fn prepare(&self, issue_identifier: &str) -> Result<WorkspaceAssignment> {
@@ -31,18 +36,7 @@ impl WorkspaceManager {
         let path = self.root.join(&workspace_key);
         ensure_within_root(&self.root, &path)?;
 
-        let created_now = if path.exists() {
-            if !path.is_dir() {
-                return Err(LunaError::Workspace(format!(
-                    "workspace path exists but is not a directory: {}",
-                    path.display()
-                )));
-            }
-            false
-        } else {
-            tokio::fs::create_dir_all(&path).await?;
-            true
-        };
+        let created_now = self.ensure_workspace_checkout(&path).await?;
 
         let workspace = WorkspaceAssignment {
             path,
@@ -61,6 +55,81 @@ impl WorkspaceManager {
         }
 
         Ok(workspace)
+    }
+
+    async fn ensure_workspace_checkout(&self, path: &Path) -> Result<bool> {
+        if path.exists() {
+            if !path.is_dir() {
+                return Err(LunaError::Workspace(format!(
+                    "workspace path exists but is not a directory: {}",
+                    path.display()
+                )));
+            }
+            if path.join(".git").exists() {
+                return Ok(false);
+            }
+            if !is_directory_empty(path).await? {
+                return Err(LunaError::Workspace(format!(
+                    "workspace exists but is not a git worktree and is not empty: {}",
+                    path.display()
+                )));
+            }
+            tokio::fs::remove_dir(path).await?;
+        }
+
+        let Some(source_repo_root) = self.resolve_source_repo_root().await? else {
+            tokio::fs::create_dir_all(path).await?;
+            return Ok(true);
+        };
+
+        info!(
+            workspace = %path.display(),
+            source_repo = %source_repo_root.display(),
+            "creating git worktree for workspace"
+        );
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&source_repo_root)
+            .args(["worktree", "add", "--detach"])
+            .arg(path)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr = truncate_output(&String::from_utf8_lossy(&output.stderr));
+            let stdout = truncate_output(&String::from_utf8_lossy(&output.stdout));
+            return Err(LunaError::Workspace(format!(
+                "failed to create git worktree for workspace: status={}, stdout={stdout:?}, stderr={stderr:?}",
+                output.status
+            )));
+        }
+
+        Ok(true)
+    }
+
+    async fn resolve_source_repo_root(&self) -> Result<Option<PathBuf>> {
+        let Some(source_repo_hint) = &self.source_repo_hint else {
+            return Ok(None);
+        };
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(source_repo_hint)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(PathBuf::from(path)))
+        }
     }
 
     pub async fn before_run(&self, workspace: &WorkspaceAssignment) -> Result<()> {
@@ -106,6 +175,31 @@ impl WorkspaceManager {
             .await
         {
             warn!(workspace = %path.display(), error = %err, "before_remove hook failed");
+        }
+
+        if path.join(".git").exists() {
+            if let Some(source_repo_root) = self.resolve_source_repo_root().await? {
+                let output = Command::new("git")
+                    .arg("-C")
+                    .arg(&source_repo_root)
+                    .args(["worktree", "remove", "--force"])
+                    .arg(&path)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    return Ok(());
+                }
+
+                let stderr = truncate_output(&String::from_utf8_lossy(&output.stderr));
+                let stdout = truncate_output(&String::from_utf8_lossy(&output.stdout));
+                warn!(
+                    workspace = %path.display(),
+                    source_repo = %source_repo_root.display(),
+                    stdout,
+                    stderr,
+                    "git worktree remove failed; falling back to recursive delete"
+                );
+            }
         }
 
         tokio::fs::remove_dir_all(path).await?;
@@ -193,6 +287,11 @@ fn truncate_output(output: &str) -> String {
     } else {
         format!("{}...", &trimmed[..HOOK_OUTPUT_LIMIT])
     }
+}
+
+async fn is_directory_empty(path: &Path) -> Result<bool> {
+    let mut entries = tokio::fs::read_dir(path).await?;
+    Ok(entries.next_entry().await?.is_none())
 }
 
 #[cfg(test)]

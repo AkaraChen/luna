@@ -7,6 +7,7 @@ use luna::{
     error::Result,
     init::{InitOptions, run_init},
     orchestrator,
+    paths::absolutize_path,
 };
 
 #[derive(Debug, Parser)]
@@ -70,7 +71,8 @@ async fn main() -> Result<()> {
             Ok(())
         }
         None => {
-            let workflow_path = cli.workflow.unwrap_or_else(|| PathBuf::from("WORKFLOW.md"));
+            let workflow_path =
+                absolutize_path(&cli.workflow.unwrap_or_else(|| PathBuf::from("WORKFLOW.md")))?;
             load_dotenv_file(&workflow_path)?;
             orchestrator::run(workflow_path).await
         }

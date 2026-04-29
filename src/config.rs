@@ -4,12 +4,13 @@ use std::{
 };
 
 use serde::Deserialize;
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
 use serde_yaml::{Mapping, Value as YamlValue};
 
 use crate::{
     error::{LunaError, Result},
     model::WorkflowDefinition,
+    paths::{absolutize_path, normalize_path},
 };
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 30_000;
@@ -177,6 +178,7 @@ struct RawAgentConfig {
 #[derive(Debug, Default, Deserialize)]
 struct RawCodexConfig {
     command: Option<String>,
+    permission_profile: Option<String>,
     approval_policy: Option<YamlValue>,
     thread_sandbox: Option<String>,
     turn_sandbox_policy: Option<YamlValue>,
@@ -190,7 +192,7 @@ pub fn resolve_service_config(
     workflow_path: &Path,
 ) -> Result<ServiceConfig> {
     let raw = parse_raw_config(&definition.config)?;
-    let workflow_path = workflow_path.to_path_buf();
+    let workflow_path = absolutize_path(workflow_path)?;
     let workflow_dir = workflow_path
         .parent()
         .map(Path::to_path_buf)
@@ -267,14 +269,23 @@ pub fn resolve_service_config(
                 "codex.command must be non-empty".to_string(),
             ));
         }
+        let permission_defaults =
+            resolve_codex_permission_profile_defaults(raw_codex.permission_profile.as_deref())?;
         CodexConfig {
             command,
-            approval_policy: raw_codex.approval_policy.map(yaml_to_json).transpose()?,
-            thread_sandbox: raw_codex.thread_sandbox,
+            approval_policy: raw_codex
+                .approval_policy
+                .map(yaml_to_json)
+                .transpose()?
+                .or(permission_defaults.approval_policy),
+            thread_sandbox: raw_codex
+                .thread_sandbox
+                .or(permission_defaults.thread_sandbox),
             turn_sandbox_policy: raw_codex
                 .turn_sandbox_policy
                 .map(yaml_to_json)
-                .transpose()?,
+                .transpose()?
+                .or(permission_defaults.turn_sandbox_policy),
             turn_timeout_ms: raw_codex.turn_timeout_ms.unwrap_or(DEFAULT_TURN_TIMEOUT_MS),
             read_timeout_ms: raw_codex.read_timeout_ms.unwrap_or(DEFAULT_READ_TIMEOUT_MS),
             stall_timeout_ms: raw_codex
@@ -299,9 +310,14 @@ fn resolve_tracker_config(raw: RawTrackerConfig) -> Result<TrackerConfig> {
     let kind = raw.kind.unwrap_or_default();
     match normalize_tracker_kind(&kind).as_deref() {
         Some("github_project") => {
-            let owner = raw.owner.filter(|value| !value.trim().is_empty()).ok_or_else(|| {
-                LunaError::InvalidConfig("tracker.owner is required for github_project".to_string())
-            })?;
+            let owner = raw
+                .owner
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    LunaError::InvalidConfig(
+                        "tracker.owner is required for github_project".to_string(),
+                    )
+                })?;
             let project_number = raw.project_number.ok_or_else(|| {
                 LunaError::InvalidConfig(
                     "tracker.project_number is required for github_project".to_string(),
@@ -360,6 +376,51 @@ fn normalize_tracker_kind(kind: &str) -> Option<String> {
     }
 }
 
+#[derive(Default)]
+struct CodexPermissionDefaults {
+    approval_policy: Option<JsonValue>,
+    thread_sandbox: Option<String>,
+    turn_sandbox_policy: Option<JsonValue>,
+}
+
+fn resolve_codex_permission_profile_defaults(
+    profile: Option<&str>,
+) -> Result<CodexPermissionDefaults> {
+    let Some(profile) = profile else {
+        return Ok(CodexPermissionDefaults::default());
+    };
+
+    match normalize_permission_profile(profile).as_deref() {
+        Some("high_trust") => Ok(CodexPermissionDefaults {
+            approval_policy: Some(JsonValue::String("never".to_string())),
+            thread_sandbox: Some("danger-full-access".to_string()),
+            turn_sandbox_policy: Some(json!({ "type": "dangerFullAccess" })),
+        }),
+        Some("workspace_write") => Ok(CodexPermissionDefaults {
+            approval_policy: Some(JsonValue::String("never".to_string())),
+            thread_sandbox: Some("workspace-write".to_string()),
+            turn_sandbox_policy: Some(json!({ "type": "workspaceWrite" })),
+        }),
+        Some("read_only") => Ok(CodexPermissionDefaults {
+            approval_policy: Some(JsonValue::String("never".to_string())),
+            thread_sandbox: Some("read-only".to_string()),
+            turn_sandbox_policy: Some(json!({ "type": "readOnly" })),
+        }),
+        _ => Err(LunaError::InvalidConfig(format!(
+            "unsupported codex.permission_profile: {profile}"
+        ))),
+    }
+}
+
+fn normalize_permission_profile(profile: &str) -> Option<String> {
+    let normalized = profile.trim().replace('-', "_");
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 fn parse_raw_config(config: &Mapping) -> Result<RawWorkflowConfig> {
     let yaml = YamlValue::Mapping(config.clone());
     serde_yaml::from_value(yaml).map_err(Into::into)
@@ -397,14 +458,6 @@ fn resolve_workspace_root(value: Option<String>, workflow_dir: &Path) -> Result<
         workflow_dir.join(root)
     };
     Ok(normalize_path(&absolute))
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        normalized.push(component);
-    }
-    normalized
 }
 
 fn yaml_to_json(value: YamlValue) -> Result<JsonValue> {
@@ -453,5 +506,107 @@ tracker:
                 assert_eq!(project.project_number, 12);
             }
         }
+    }
+
+    #[test]
+    fn codex_permission_profile_high_trust_maps_to_permissions() {
+        let definition = WorkflowDefinition {
+            config: serde_yaml::from_str(
+                r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+codex:
+  permission_profile: high-trust
+"#,
+            )
+            .expect("valid yaml"),
+            prompt_template: "hello".to_string(),
+        };
+
+        let config = resolve_service_config(&definition, Path::new("/tmp/WORKFLOW.md"))
+            .expect("config should parse");
+        assert_eq!(
+            config.codex.approval_policy,
+            Some(JsonValue::String("never".to_string()))
+        );
+        assert_eq!(
+            config.codex.thread_sandbox.as_deref(),
+            Some("danger-full-access")
+        );
+        assert_eq!(
+            config.codex.turn_sandbox_policy,
+            Some(json!({ "type": "dangerFullAccess" }))
+        );
+    }
+
+    #[test]
+    fn explicit_codex_permissions_override_profile_defaults() {
+        let definition = WorkflowDefinition {
+            config: serde_yaml::from_str(
+                r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+codex:
+  permission_profile: high_trust
+  approval_policy: on-request
+  thread_sandbox: workspace-write
+  turn_sandbox_policy:
+    type: workspaceWrite
+"#,
+            )
+            .expect("valid yaml"),
+            prompt_template: "hello".to_string(),
+        };
+
+        let config = resolve_service_config(&definition, Path::new("/tmp/WORKFLOW.md"))
+            .expect("config should parse");
+        assert_eq!(
+            config.codex.approval_policy,
+            Some(JsonValue::String("on-request".to_string()))
+        );
+        assert_eq!(
+            config.codex.thread_sandbox.as_deref(),
+            Some("workspace-write")
+        );
+        assert_eq!(
+            config.codex.turn_sandbox_policy,
+            Some(json!({ "type": "workspaceWrite" }))
+        );
+    }
+
+    #[test]
+    fn relative_workflow_path_resolves_workspace_root_to_absolute() {
+        let definition = WorkflowDefinition {
+            config: serde_yaml::from_str(
+                r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+workspace:
+  root: ./.luna/workspaces
+"#,
+            )
+            .expect("valid yaml"),
+            prompt_template: "hello".to_string(),
+        };
+
+        let cwd = std::env::current_dir().expect("cwd available");
+        let config = resolve_service_config(&definition, Path::new("fixtures/WORKFLOW.md"))
+            .expect("config should parse");
+
+        assert_eq!(
+            config.workflow_path,
+            normalize_path(&cwd.join("fixtures/WORKFLOW.md"))
+        );
+        assert_eq!(config.workflow_dir, normalize_path(&cwd.join("fixtures")));
+        assert_eq!(
+            config.workspace.root,
+            normalize_path(&cwd.join("fixtures/.luna/workspaces"))
+        );
     }
 }

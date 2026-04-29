@@ -20,7 +20,9 @@ pub trait Tracker: Send + Sync {
 
 pub fn build_tracker(config: &TrackerConfig) -> Result<Box<dyn Tracker>> {
     match config {
-        TrackerConfig::GitHubProject(project) => Ok(Box::new(GitHubProjectTracker::new(project.clone()))),
+        TrackerConfig::GitHubProject(project) => {
+            Ok(Box::new(GitHubProjectTracker::new(project.clone())))
+        }
     }
 }
 
@@ -230,8 +232,11 @@ query ProjectItems(
         let mut command = Command::new(&self.config.gh_command);
         command.arg("api").arg("graphql");
         command.arg("-f").arg(format!("query={query}"));
-        command.arg("-F").arg(format!("owner={}", self.config.owner));
-        command.arg("-F")
+        command
+            .arg("-F")
+            .arg(format!("owner={}", self.config.owner));
+        command
+            .arg("-F")
             .arg(format!("projectNumber={}", self.config.project_number));
         command
             .arg("-F")
@@ -306,7 +311,11 @@ fn normalize_project_item(
     project_url: &str,
     config: &GitHubProjectTrackerConfig,
 ) -> Option<Issue> {
-    let fallback_state = match item.content.as_ref().unwrap_or(&ProjectItemContent::Unknown) {
+    let fallback_state = match item
+        .content
+        .as_ref()
+        .unwrap_or(&ProjectItemContent::Unknown)
+    {
         ProjectItemContent::Issue(issue) => {
             if issue.closed || issue.state.eq_ignore_ascii_case("closed") {
                 "Done".to_string()
@@ -332,40 +341,44 @@ fn normalize_project_item(
 
     let (identifier, title, description, labels, url, created_at, updated_at) =
         match item.content.unwrap_or(ProjectItemContent::Unknown) {
-        ProjectItemContent::Issue(issue) => (
-            format!(
-                "{repo}#{number}",
-                repo = issue.repository.name_with_owner,
-                number = issue.number
+            ProjectItemContent::Issue(issue) => (
+                format!(
+                    "{repo}#{number}",
+                    repo = issue.repository.name_with_owner,
+                    number = issue.number
+                ),
+                issue.title,
+                issue.body,
+                issue
+                    .labels
+                    .nodes
+                    .into_iter()
+                    .map(|label| label.name.to_lowercase())
+                    .collect(),
+                Some(issue.url),
+                parse_datetime(Some(issue.created_at))
+                    .or_else(|| parse_datetime(Some(item.created_at.clone()))),
+                parse_datetime(Some(issue.updated_at))
+                    .or_else(|| parse_datetime(Some(item.updated_at.clone()))),
             ),
-            issue.title,
-            issue.body,
-            issue
-                .labels
-                .nodes
-                .into_iter()
-                .map(|label| label.name.to_lowercase())
-                .collect(),
-            Some(issue.url),
-            parse_datetime(Some(issue.created_at)).or_else(|| parse_datetime(Some(item.created_at.clone()))),
-            parse_datetime(Some(issue.updated_at)).or_else(|| parse_datetime(Some(item.updated_at.clone()))),
-        ),
-        ProjectItemContent::DraftIssue(draft) => (
-            format!(
-                "{owner}/projects/{project}#draft-{suffix}",
-                owner = config.owner,
-                project = config.project_number,
-                suffix = short_item_suffix(&item.id)
+            ProjectItemContent::DraftIssue(draft) => (
+                format!(
+                    "{owner}/projects/{project}#draft-{suffix}",
+                    owner = config.owner,
+                    project = config.project_number,
+                    suffix = short_item_suffix(&item.id)
+                ),
+                draft.title,
+                draft.body,
+                Vec::new(),
+                Some(project_url.to_string()),
+                parse_datetime(Some(draft.created_at))
+                    .or_else(|| parse_datetime(Some(item.created_at.clone()))),
+                parse_datetime(Some(draft.updated_at))
+                    .or_else(|| parse_datetime(Some(item.updated_at.clone()))),
             ),
-            draft.title,
-            draft.body,
-            Vec::new(),
-            Some(project_url.to_string()),
-            parse_datetime(Some(draft.created_at)).or_else(|| parse_datetime(Some(item.created_at.clone()))),
-            parse_datetime(Some(draft.updated_at)).or_else(|| parse_datetime(Some(item.updated_at.clone()))),
-        ),
-        ProjectItemContent::PullRequest { .. } | ProjectItemContent::Unknown => return None,
-    };
+            ProjectItemContent::PullRequest { .. } | ProjectItemContent::Unknown => return None,
+        };
 
     Some(Issue {
         id: item.id,
@@ -480,7 +493,9 @@ impl ProjectFieldValue {
 
     fn as_priority(&self) -> Option<i64> {
         match self {
-            Self::ProjectV2ItemFieldNumberValue { number } => number.map(|value| value.round() as i64),
+            Self::ProjectV2ItemFieldNumberValue { number } => {
+                number.map(|value| value.round() as i64)
+            }
             Self::ProjectV2ItemFieldSingleSelectValue { name } => {
                 name.as_deref().and_then(parse_priority_string)
             }

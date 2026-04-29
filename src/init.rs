@@ -59,7 +59,10 @@ pub async fn run_init(options: InitOptions) -> Result<Vec<PathBuf>> {
 }
 
 async fn build_non_interactive_context(options: &InitOptions) -> Result<InitContext> {
-    let mut owner = options.owner.clone().unwrap_or_else(|| DEFAULT_OWNER.to_string());
+    let mut owner = options
+        .owner
+        .clone()
+        .unwrap_or_else(|| DEFAULT_OWNER.to_string());
     if owner == DEFAULT_OWNER {
         if let Some(detected) = detect_current_github_login().await {
             owner = detected;
@@ -74,10 +77,16 @@ async fn build_non_interactive_context(options: &InitOptions) -> Result<InitCont
     let (project_number, created_project) = if options.create_project {
         match create_github_project(&owner, &project_title).await {
             Ok(number) => (number, true),
-            Err(_) => (options.project_number.unwrap_or(DEFAULT_PROJECT_NUMBER), false),
+            Err(_) => (
+                options.project_number.unwrap_or(DEFAULT_PROJECT_NUMBER),
+                false,
+            ),
         }
     } else {
-        (options.project_number.unwrap_or(DEFAULT_PROJECT_NUMBER), false)
+        (
+            options.project_number.unwrap_or(DEFAULT_PROJECT_NUMBER),
+            false,
+        )
     };
 
     Ok(InitContext {
@@ -151,19 +160,11 @@ async fn build_interactive_context(options: &InitOptions) -> Result<InitContext>
 }
 
 async fn detect_current_github_login() -> Option<String> {
-    run_gh_capture(
-        &[
-            "api",
-            "user",
-            "--jq",
-            ".login",
-        ],
-        Path::new("."),
-    )
-    .await
-    .ok()
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty())
+    run_gh_capture(&["api", "user", "--jq", ".login"], Path::new("."))
+        .await
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 async fn detect_repo_name_with_owner(target_dir: &Path) -> Option<String> {
@@ -187,15 +188,7 @@ async fn detect_repo_name_with_owner(target_dir: &Path) -> Option<String> {
 async fn create_github_project(owner: &str, title: &str) -> Result<u32> {
     let output = run_gh_capture(
         &[
-            "project",
-            "create",
-            "--owner",
-            owner,
-            "--title",
-            title,
-            "--format",
-            "json",
-            "--jq",
+            "project", "create", "--owner", owner, "--title", title, "--format", "json", "--jq",
             ".number",
         ],
         Path::new("."),
@@ -209,16 +202,14 @@ async fn create_github_project(owner: &str, title: &str) -> Result<u32> {
     })
 }
 
-async fn link_current_repo_to_project(target_dir: &Path, owner: &str, project_number: u32) -> Result<()> {
+async fn link_current_repo_to_project(
+    target_dir: &Path,
+    owner: &str,
+    project_number: u32,
+) -> Result<()> {
     let project_number = project_number.to_string();
     run_gh_capture(
-        &[
-            "project",
-            "link",
-            project_number.as_str(),
-            "--owner",
-            owner,
-        ],
+        &["project", "link", project_number.as_str(), "--owner", owner],
         target_dir,
     )
     .await?;
@@ -280,10 +271,7 @@ agent:
 
 codex:
   command: codex app-server
-  approval_policy: never
-  thread_sandbox: workspace-write
-  turn_sandbox_policy:
-    type: workspaceWrite
+  permission_profile: high_trust
 ---
 # Luna Workflow
 
@@ -296,9 +284,15 @@ Project context:
 - Open the project in the browser with: `gh project view {project_number} --owner {owner} --web`
 - Inspect project items with: `gh project item-list {project_number} --owner {owner} --format json`
 - If this item corresponds to a repository issue, inspect it with commands like:
-  `gh issue view <number> -R {repo_hint}`
+  `gh issue view <number> -R {repo_hint} --comments`
   `gh issue comment <number> -R {repo_hint} --body "..."`
   `gh issue edit <number> -R {repo_hint} ...`
+- Open, inspect, and update pull requests with commands like:
+  `gh pr create -R {repo_hint} --fill`
+  `gh pr view -R {repo_hint} --json number,url,reviewDecision,statusCheckRollup`
+  `gh pr comment <number> -R {repo_hint} --body "..."`
+  `gh pr checks <number> -R {repo_hint} --watch`
+  `gh pr merge <number> -R {repo_hint} --squash --delete-branch`
 
 Issue: {{{{ issue.identifier }}}} - {{{{ issue.title }}}}
 URL: {{{{ issue.url or "" }}}}
@@ -322,7 +316,14 @@ Attempt:
 
 Execution rules:
 - Work only inside the current workspace.
-- Use `gh project`, `gh issue`, `gh pr`, and git commands when you need to inspect or update GitHub state.
+- The repository checkout already lives in the current workspace; run commands from the current working directory and do not construct nested `.luna/workspaces/...` paths yourself.
+- At the start of every run, sync the workspace with the latest upstream code before making changes. Prefer `git pull --ff-only`; if the workspace is detached or has no upstream tracking branch, fetch the latest remote state and update from the correct base branch before continuing.
+- If this project item maps to a GitHub issue, inspect the issue with `gh issue view ... --comments` before editing code.
+- Use `gh issue comment` to post meaningful progress updates, blockers, and the final handoff summary.
+- When the implementation is ready, open or update a PR with `gh pr create`, `gh pr view`, `gh pr edit`, and `gh pr comment`.
+- After a PR exists, check review status and CI with `gh pr view`, `gh pr checks`, or `gh run watch`.
+- Once the required review is satisfied and CI is green, merge the PR with `gh pr merge` instead of stopping at a local code change.
+- Use `gh project`, `gh issue`, `gh pr`, and git commands whenever you need to inspect or update GitHub state.
 - Validate changes before stopping.
 - Move the project item or backing issue to the next workflow-defined handoff state when appropriate.
 "#,
@@ -386,9 +387,9 @@ fn prompt_confirm(label: &str, default: bool) -> Result<bool> {
 
 fn prompt_u32(label: &str, default: u32) -> Result<u32> {
     let value = prompt_string(label, &default.to_string())?;
-    value.parse::<u32>().map_err(|err| {
-        LunaError::InvalidConfig(format!("invalid integer for `{label}`: {err}"))
-    })
+    value
+        .parse::<u32>()
+        .map_err(|err| LunaError::InvalidConfig(format!("invalid integer for `{label}`: {err}")))
 }
 
 fn default_project_title(target_dir: &Path) -> String {

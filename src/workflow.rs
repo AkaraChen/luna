@@ -10,6 +10,7 @@ use crate::{
     config::{ServiceConfig, resolve_service_config},
     error::{LunaError, Result},
     model::WorkflowDefinition,
+    paths::absolutize_path,
 };
 
 #[derive(Clone, Debug)]
@@ -27,6 +28,7 @@ pub struct WorkflowStore {
 
 impl WorkflowStore {
     pub fn load(path: PathBuf) -> Result<Self> {
+        let path = absolutize_path(&path)?;
         let (definition, modified_at) = load_definition(&path)?;
         let config = resolve_service_config(&definition, &path)?;
         Ok(Self {

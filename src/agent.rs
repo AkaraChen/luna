@@ -9,12 +9,13 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, sleep_until},
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     config::CodexConfig,
     error::{LunaError, Result},
     model::Issue,
+    paths::absolutize_path,
     prompt::{build_continuation_prompt, render_issue_prompt},
     tracker::build_tracker,
     workflow::LoadedWorkflow,
@@ -129,6 +130,7 @@ async fn run_agent_attempt_inner(
     let workspace_manager = WorkspaceManager::new(
         workflow.config.workspace.root.clone(),
         workflow.config.hooks.clone(),
+        Some(workflow.config.workflow_dir.clone()),
     );
     let workspace = workspace_manager.prepare(&issue.identifier).await?;
     workspace_manager.before_run(&workspace).await?;
@@ -189,7 +191,9 @@ async fn run_agent_attempt_inner(
             }
         }
 
-        let refreshed = tracker.fetch_issue_states_by_ids(&[issue.id.clone()]).await?;
+        let refreshed = tracker
+            .fetch_issue_states_by_ids(&[issue.id.clone()])
+            .await?;
         issue = refreshed.into_iter().next().ok_or_else(|| {
             LunaError::Tracker("issue state refresh error: issue missing after turn".to_string())
         })?;
@@ -241,6 +245,32 @@ struct AppServerSession {
     turn_terminal_status: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CompletedItemLog {
+    CommandExecution {
+        command: String,
+        cwd: Option<String>,
+        duration_ms: Option<i64>,
+        exit_code: Option<i64>,
+    },
+    DynamicToolCall {
+        tool: String,
+        namespace: Option<String>,
+        duration_ms: Option<i64>,
+        success: Option<bool>,
+    },
+    McpToolCall {
+        tool: String,
+        server: String,
+        duration_ms: Option<i64>,
+    },
+    CollabAgentToolCall {
+        tool: String,
+        duration_ms: Option<i64>,
+        receiver_thread_count: usize,
+    },
+}
+
 impl AppServerSession {
     async fn launch(
         config: &CodexConfig,
@@ -249,10 +279,12 @@ impl AppServerSession {
         issue_identifier: String,
         events: mpsc::UnboundedSender<WorkerEvent>,
     ) -> Result<Self> {
+        let workspace_path =
+            std::fs::canonicalize(workspace_path).or_else(|_| absolutize_path(workspace_path))?;
         let mut child = Command::new("bash")
             .arg("-lc")
             .arg(&config.command)
-            .current_dir(workspace_path)
+            .current_dir(&workspace_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -596,6 +628,9 @@ impl AppServerSession {
                     .map(truncate_message);
                 self.emit(method, message, None, Some(turn_number));
             }
+            "item/completed" => {
+                self.log_completed_item(&params);
+            }
             "turn/completed" => {
                 self.turn_id =
                     extract_string(&params, &["/turn/id"]).or_else(|| self.turn_id.clone());
@@ -612,6 +647,79 @@ impl AppServerSession {
             _ => {}
         }
         Ok(true)
+    }
+
+    fn log_completed_item(&self, params: &Value) {
+        let Some(item_log) = extract_completed_item_log(params) else {
+            return;
+        };
+
+        match item_log {
+            CompletedItemLog::CommandExecution {
+                command,
+                cwd,
+                duration_ms,
+                exit_code,
+            } => {
+                info!(
+                    issue_id = %self.issue_id,
+                    issue_identifier = %self.issue_identifier,
+                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
+                    command = %command,
+                    cwd = cwd.as_deref().unwrap_or("unknown"),
+                    duration_ms,
+                    exit_code,
+                    "codex command execution completed"
+                );
+            }
+            CompletedItemLog::DynamicToolCall {
+                tool,
+                namespace,
+                duration_ms,
+                success,
+            } => {
+                info!(
+                    issue_id = %self.issue_id,
+                    issue_identifier = %self.issue_identifier,
+                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
+                    tool = %tool,
+                    namespace = namespace.as_deref().unwrap_or(""),
+                    duration_ms,
+                    success,
+                    "codex dynamic tool call completed"
+                );
+            }
+            CompletedItemLog::McpToolCall {
+                tool,
+                server,
+                duration_ms,
+            } => {
+                info!(
+                    issue_id = %self.issue_id,
+                    issue_identifier = %self.issue_identifier,
+                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
+                    tool = %tool,
+                    server = %server,
+                    duration_ms,
+                    "codex mcp tool call completed"
+                );
+            }
+            CompletedItemLog::CollabAgentToolCall {
+                tool,
+                duration_ms,
+                receiver_thread_count,
+            } => {
+                info!(
+                    issue_id = %self.issue_id,
+                    issue_identifier = %self.issue_identifier,
+                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
+                    tool = %tool,
+                    duration_ms,
+                    receiver_thread_count,
+                    "codex collab tool call completed"
+                );
+            }
+        }
     }
 
     fn emit(
@@ -736,6 +844,63 @@ fn extract_usage(value: &Value) -> Option<UsageUpdate> {
     })
 }
 
+fn extract_completed_item_log(params: &Value) -> Option<CompletedItemLog> {
+    let item = params.get("item")?;
+    let item_type = item.get("type")?.as_str()?;
+    let status = item.get("status").and_then(Value::as_str)?;
+
+    match item_type {
+        "commandExecution" if status == "completed" => {
+            let exit_code = item.get("exitCode").and_then(Value::as_i64);
+            if !matches!(exit_code, None | Some(0)) {
+                return None;
+            }
+
+            Some(CompletedItemLog::CommandExecution {
+                command: item
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .map(truncate_message)?,
+                cwd: item.get("cwd").and_then(Value::as_str).map(str::to_string),
+                duration_ms: item.get("durationMs").and_then(Value::as_i64),
+                exit_code,
+            })
+        }
+        "dynamicToolCall" if status == "completed" => {
+            let success = item.get("success").and_then(Value::as_bool);
+            if success == Some(false) {
+                return None;
+            }
+
+            Some(CompletedItemLog::DynamicToolCall {
+                tool: item.get("tool").and_then(Value::as_str)?.to_string(),
+                namespace: item
+                    .get("namespace")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                duration_ms: item.get("durationMs").and_then(Value::as_i64),
+                success,
+            })
+        }
+        "mcpToolCall" if status == "completed" => Some(CompletedItemLog::McpToolCall {
+            tool: item.get("tool").and_then(Value::as_str)?.to_string(),
+            server: item.get("server").and_then(Value::as_str)?.to_string(),
+            duration_ms: item.get("durationMs").and_then(Value::as_i64),
+        }),
+        "collabAgentToolCall" if status == "completed" => {
+            Some(CompletedItemLog::CollabAgentToolCall {
+                tool: item.get("tool").and_then(Value::as_str)?.to_string(),
+                duration_ms: item.get("durationMs").and_then(Value::as_i64),
+                receiver_thread_count: item
+                    .get("receiverThreadIds")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+            })
+        }
+        _ => None,
+    }
+}
+
 fn truncate_message(value: impl AsRef<str>) -> String {
     let value = value.as_ref();
     const LIMIT: usize = 400;
@@ -743,5 +908,52 @@ fn truncate_message(value: impl AsRef<str>) -> String {
         value.to_string()
     } else {
         format!("{}...", &value[..LIMIT])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{CompletedItemLog, extract_completed_item_log};
+
+    #[test]
+    fn extracts_successful_command_execution_log() {
+        let params = json!({
+            "item": {
+                "type": "commandExecution",
+                "status": "completed",
+                "command": "gh issue view 31 -R AkaraChen/fama",
+                "cwd": "/tmp/workspace",
+                "durationMs": 1250,
+                "exitCode": 0
+            }
+        });
+
+        assert_eq!(
+            extract_completed_item_log(&params),
+            Some(CompletedItemLog::CommandExecution {
+                command: "gh issue view 31 -R AkaraChen/fama".to_string(),
+                cwd: Some("/tmp/workspace".to_string()),
+                duration_ms: Some(1250),
+                exit_code: Some(0),
+            })
+        );
+    }
+
+    #[test]
+    fn ignores_unsuccessful_dynamic_tool_call() {
+        let params = json!({
+            "item": {
+                "type": "dynamicToolCall",
+                "status": "completed",
+                "tool": "linear_graphql",
+                "namespace": "luna",
+                "durationMs": 42,
+                "success": false
+            }
+        });
+
+        assert_eq!(extract_completed_item_log(&params), None);
     }
 }
