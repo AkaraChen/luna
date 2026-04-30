@@ -308,16 +308,11 @@ function Timeline({
             <div className="text-sm leading-6 text-[#33312d]">{item.data.body}</div>
           </div>
         ) : (
-          <div className="flex items-start gap-2 py-1" key={`activity-${item.data.id}`}>
-            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[#c9c4bb]" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm text-[#55524b]">{item.data.title}</div>
-              {item.data.body ? (
-                <div className="mt-0.5 text-sm text-[#85827a]">{item.data.body}</div>
-              ) : null}
-              <div className="mt-0.5 text-xs text-[#a8a59d]">
-                {formatDate(item.data.created_at)}
-              </div>
+          <div className="flex items-center gap-2 py-1" key={`activity-${item.data.id}`}>
+            <span className="size-1.5 shrink-0 rounded-full bg-[#c9c4bb]" />
+            <div className="min-w-0 flex-1 text-sm text-[#55524b]">{item.data.title}</div>
+            <div className="shrink-0 text-xs text-[#a8a59d]">
+              {formatDate(item.data.created_at)}
             </div>
           </div>
         ),
