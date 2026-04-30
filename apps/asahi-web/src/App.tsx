@@ -1,6 +1,6 @@
 import { Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { IconChevronLeft, IconPlus, IconSearch } from "@tabler/icons-react";
+import { IconChevronLeft, IconFolder, IconPlus, IconSearch } from "@tabler/icons-react";
 import { useLocation } from "wouter";
 
 import { fetchIssues } from "@/api/asahi";
@@ -11,6 +11,7 @@ import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { IssueDetails, DetailsSkeleton } from "@/components/dashboard/issue-details";
 import { IssueList } from "@/components/dashboard/issue-list";
 import { NotificationsView } from "@/components/dashboard/notifications-view";
+import { ProjectDetails } from "@/components/dashboard/project-details";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -26,14 +27,24 @@ export function App() {
 
 function Dashboard() {
   const [location, navigate] = useLocation();
-  const view: View = location.startsWith("/inbox") ? "notifications" : "issues";
+  const projectRoute = location.startsWith("/projects");
+  const view: View = projectRoute
+    ? "project"
+    : location.startsWith("/inbox")
+      ? "notifications"
+      : "issues";
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
   const selectedId = issueIdFromLocation(location);
+  const selectedProjectLocator = projectLocatorFromLocation(location);
 
   return (
     <SidebarProvider>
       <AsahiSidebar
+        activeProjectLocator={selectedProjectLocator}
+        onProjectSelect={(projectLocator) => {
+          navigate(`/projects/${encodeURIComponent(projectLocator)}`);
+        }}
         view={view}
         onViewChange={(nextView) => {
           navigate(nextView === "notifications" ? "/inbox" : "/issues");
@@ -54,7 +65,7 @@ function Dashboard() {
               </button>
             ) : (
               <span className="text-sm font-semibold">
-                {view === "notifications" ? "Inbox" : "Issues"}
+                {view === "notifications" ? "Inbox" : view === "project" ? "Project" : "Issues"}
               </span>
             )}
           </div>
@@ -71,7 +82,7 @@ function Dashboard() {
                 />
               </div>
             ) : null}
-            {view === "issues" && !selectedId || view === "notifications" ? (
+            {(view === "issues" && !selectedId) || view === "notifications" ? (
               <CreateIssueTrigger>
                 <Button size="sm">
                   <IconPlus className="size-4" />
@@ -84,6 +95,15 @@ function Dashboard() {
 
         {view === "notifications" ? (
           <NotificationsView />
+        ) : view === "project" ? (
+          selectedProjectLocator ? (
+            <ProjectDetails
+              locator={selectedProjectLocator}
+              onSelectIssue={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
+            />
+          ) : (
+            <NoProjectSelected />
+          )
         ) : selectedId ? (
           <IssueDetailPage selectedId={selectedId} />
         ) : (
@@ -95,7 +115,6 @@ function Dashboard() {
           />
         )}
       </SidebarInset>
-
     </SidebarProvider>
   );
 }
@@ -103,6 +122,24 @@ function Dashboard() {
 function issueIdFromLocation(location: string) {
   const match = /^\/issues\/([^/?#]+)/.exec(location);
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+function projectLocatorFromLocation(location: string) {
+  const match = /^\/projects\/([^/?#]+)/.exec(location);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function NoProjectSelected() {
+  return (
+    <div className="flex min-h-[calc(100svh-3.5rem)] items-center justify-center px-6 text-center">
+      <div>
+        <div className="mx-auto mb-3 flex size-9 items-center justify-center rounded-full bg-muted">
+          <IconFolder className="size-4 text-muted-foreground" stroke={1.8} />
+        </div>
+        <div className="text-sm font-medium">Select a project</div>
+      </div>
+    </div>
+  );
 }
 
 function IssuesView({

@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::project::ProjectRef;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockerRef {
     pub id: Option<String>,
@@ -12,6 +14,8 @@ pub struct BlockerRef {
 pub struct Issue {
     pub id: String,
     pub identifier: String,
+    pub project_id: Option<String>,
+    pub project: Option<ProjectRef>,
     pub title: String,
     pub description: Option<String>,
     pub priority: Option<i64>,

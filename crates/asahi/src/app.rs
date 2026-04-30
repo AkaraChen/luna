@@ -1,7 +1,7 @@
 use rocket::{Build, Rocket, fairing::AdHoc};
 
 use crate::{
-    api::{health, issues, notifications},
+    api::{health, issues, notifications, projects},
     db,
     service::IssueService,
     web,
@@ -27,6 +27,7 @@ pub fn rocket_with_database_url(database_url: impl Into<String>) -> Rocket<Build
         }))
         .mount("/api", health::routes())
         .mount("/api", issues::routes())
+        .mount("/api", projects::routes())
         .mount("/api", notifications::routes())
         .mount("/", web::routes())
 }
@@ -53,6 +54,7 @@ pub fn rocket_with_database_url_and_port(
         }))
         .mount("/api", health::routes())
         .mount("/api", issues::routes())
+        .mount("/api", projects::routes())
         .mount("/api", notifications::routes())
         .mount("/", web::routes())
 }

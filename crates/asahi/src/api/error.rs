@@ -25,6 +25,7 @@ impl From<ServiceError> for ApiError {
         match error {
             ServiceError::InvalidInput(message) => Self::BadRequest(message),
             ServiceError::IssueNotFound(locator) => Self::NotFound(locator),
+            ServiceError::ProjectNotFound(locator) => Self::NotFound(locator),
             ServiceError::NotificationNotFound(id) => Self::NotFound(id),
             ServiceError::Database(_) => Self::Internal(error.to_string()),
         }

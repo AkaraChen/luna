@@ -10,10 +10,10 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        Activity, BlockerRef, Comment, Issue, Notification, NotificationIssueRef, default_team_key,
-        issue_matches_locator,
+        Activity, BlockerRef, Comment, Issue, Notification, NotificationIssueRef, Project,
+        ProjectRef, default_team_key, issue_matches_locator, project_matches_locator,
     },
-    entity::{activity, comment, issue, issue_label, issue_relation, notification},
+    entity::{activity, comment, issue, issue_label, issue_relation, notification, project},
 };
 
 #[derive(Clone, Debug)]
@@ -28,7 +28,13 @@ impl IssueService {
 
     pub async fn create_issue(&self, input: CreateIssueInput) -> ServiceResult<Issue> {
         let title = require_non_empty("title", input.title)?;
-        let project_slug = non_empty_or(input.project_slug, "default");
+        let project_model = self
+            .ensure_project_for_issue(input.project_id.as_deref(), input.project_slug.as_deref())
+            .await?;
+        let project_slug = project_model
+            .as_ref()
+            .map(|project| project.slug.clone())
+            .unwrap_or_else(|| non_empty_or(input.project_slug.clone(), "default"));
         let team_key = input
             .team_key
             .map(|value| value.trim().to_ascii_uppercase())
@@ -47,6 +53,7 @@ impl IssueService {
         issue::ActiveModel {
             id: Set(id.clone()),
             identifier: Set(identifier),
+            project_id: Set(project_model.as_ref().map(|project| project.id.clone())),
             project_slug: Set(project_slug),
             team_key: Set(team_key),
             number: Set(number),
@@ -105,11 +112,181 @@ impl IssueService {
         Ok(issue)
     }
 
+    pub async fn create_project(&self, input: CreateProjectInput) -> ServiceResult<Project> {
+        let name = input
+            .name
+            .as_deref()
+            .and_then(non_empty_str)
+            .map(ToString::to_string);
+        let slug_source = input
+            .slug
+            .as_deref()
+            .and_then(non_empty_str)
+            .or(name.as_deref())
+            .ok_or_else(|| {
+                ServiceError::InvalidInput("project slug or name is required".to_string())
+            })?;
+        let slug = normalize_slug(slug_source)?;
+        if self.find_project_id(&slug).await?.is_some() {
+            return Err(ServiceError::InvalidInput(format!(
+                "project already exists: {slug}"
+            )));
+        }
+
+        let name = name.unwrap_or_else(|| slug.clone());
+        let state = non_empty_or(input.state, "Backlog");
+        let now = Utc::now();
+        let id = Uuid::new_v4().to_string();
+        let url = Some(format!("/api/projects/{}", url_safe_identifier(&slug)));
+
+        let model = project::ActiveModel {
+            id: Set(id.clone()),
+            slug: Set(slug),
+            name: Set(name),
+            description: Set(input.description),
+            priority: Set(input.priority),
+            state: Set(state),
+            url: Set(url),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&self.db)
+        .await?;
+
+        Ok(model_to_project(model))
+    }
+
+    pub async fn list_projects(&self, filter: ProjectFilter) -> ServiceResult<Vec<Project>> {
+        let mut query = project::Entity::find();
+
+        let states = normalize_list(filter.states);
+        if !states.is_empty() {
+            query = query.filter(project::Column::State.is_in(states));
+        }
+
+        let ids = normalize_list(filter.ids);
+        if !ids.is_empty() {
+            query = query.filter(project::Column::Id.is_in(ids.clone()));
+        }
+
+        let mut projects = query
+            .order_by_asc(project::Column::CreatedAt)
+            .order_by_asc(project::Column::Slug)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(model_to_project)
+            .collect::<Vec<_>>();
+
+        if !ids.is_empty() {
+            let index = ids
+                .iter()
+                .enumerate()
+                .map(|(index, id)| (id, index))
+                .collect::<HashMap<_, _>>();
+            projects.sort_by_key(|project| index.get(&project.id).copied().unwrap_or(usize::MAX));
+        }
+
+        Ok(projects)
+    }
+
+    pub async fn find_project(&self, locator: &str) -> ServiceResult<Option<Project>> {
+        self.find_project_model(locator)
+            .await
+            .map(|model| model.map(model_to_project))
+    }
+
+    pub async fn update_project(
+        &self,
+        locator: &str,
+        input: UpdateProjectInput,
+    ) -> ServiceResult<Project> {
+        let project_id = self
+            .find_project_id(locator)
+            .await?
+            .ok_or_else(|| ServiceError::ProjectNotFound(locator.to_string()))?;
+        let model = project::Entity::find_by_id(project_id.clone())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::ProjectNotFound(locator.to_string()))?;
+        let mut active = model.into_active_model();
+        if let Some(name) = input.name {
+            active.name = Set(require_non_empty("name", Some(name))?);
+        }
+        if let Some(description) = input.description {
+            active.description = Set(description);
+        }
+        if let Some(priority) = input.priority {
+            active.priority = Set(priority);
+        }
+        active.updated_at = Set(Utc::now());
+        let model = active.update(&self.db).await?;
+
+        Ok(model_to_project(model))
+    }
+
+    pub async fn update_project_state(
+        &self,
+        locator: &str,
+        state: String,
+    ) -> ServiceResult<Project> {
+        let state = require_non_empty("state", Some(state))?;
+        let project_id = self
+            .find_project_id(locator)
+            .await?
+            .ok_or_else(|| ServiceError::ProjectNotFound(locator.to_string()))?;
+        let model = project::Entity::find_by_id(project_id)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::ProjectNotFound(locator.to_string()))?;
+        let mut active = model.into_active_model();
+        active.state = Set(state);
+        active.updated_at = Set(Utc::now());
+        let model = active.update(&self.db).await?;
+
+        Ok(model_to_project(model))
+    }
+
+    pub async fn delete_project(&self, locator: &str) -> ServiceResult<Project> {
+        let project_id = self
+            .find_project_id(locator)
+            .await?
+            .ok_or_else(|| ServiceError::ProjectNotFound(locator.to_string()))?;
+        let project = self
+            .find_project(&project_id)
+            .await?
+            .ok_or_else(|| ServiceError::ProjectNotFound(project_id.clone()))?;
+
+        let transaction = self.db.begin().await?;
+        issue::Entity::update_many()
+            .col_expr(
+                issue::Column::ProjectId,
+                sea_orm::sea_query::Expr::value(None::<String>),
+            )
+            .col_expr(
+                issue::Column::ProjectSlug,
+                sea_orm::sea_query::Expr::value("default"),
+            )
+            .filter(issue::Column::ProjectId.eq(project_id.clone()))
+            .exec(&transaction)
+            .await?;
+        project::Entity::delete_by_id(project_id)
+            .exec(&transaction)
+            .await?;
+        transaction.commit().await?;
+
+        Ok(project)
+    }
+
     pub async fn list_issues(&self, filter: IssueFilter) -> ServiceResult<Vec<Issue>> {
         let mut query = issue::Entity::find();
 
         if let Some(project_slug) = filter.project_slug.as_deref().and_then(non_empty_str) {
             query = query.filter(issue::Column::ProjectSlug.eq(project_slug.to_string()));
+        }
+
+        if let Some(project_id) = filter.project_id.as_deref().and_then(non_empty_str) {
+            query = query.filter(issue::Column::ProjectId.eq(project_id.to_string()));
         }
 
         if let Some(assignee_id) = filter.assignee_id.as_deref().and_then(non_empty_str) {
@@ -239,6 +416,11 @@ impl IssueService {
             Some(blocked_by) => Some(self.resolve_issue_locators(&blocked_by).await?),
             None => None,
         };
+        let project_model = match input.project_id.as_ref() {
+            Some(Some(locator)) => Some(Some(self.resolve_project_locator(locator).await?)),
+            Some(None) => Some(None),
+            None => None,
+        };
 
         if let Some(blocked_by_ids) = blocked_by_ids.as_ref() {
             if blocked_by_ids
@@ -266,6 +448,18 @@ impl IssueService {
         }
         if let Some(priority) = input.priority {
             active.priority = Set(priority);
+        }
+        if let Some(project_model) = project_model {
+            match project_model {
+                Some(project) => {
+                    active.project_id = Set(Some(project.id));
+                    active.project_slug = Set(project.slug);
+                }
+                None => {
+                    active.project_id = Set(None);
+                    active.project_slug = Set("default".to_string());
+                }
+            }
         }
         active.updated_at = Set(now);
         active.update(&transaction).await?;
@@ -469,6 +663,88 @@ impl IssueService {
         Ok(latest.map(|issue| issue.number + 1).unwrap_or(1))
     }
 
+    async fn ensure_project_for_issue(
+        &self,
+        project_id: Option<&str>,
+        project_slug: Option<&str>,
+    ) -> ServiceResult<Option<project::Model>> {
+        if let Some(locator) = project_id.and_then(non_empty_str) {
+            return self.resolve_project_locator(locator).await.map(Some);
+        }
+
+        if let Some(slug) = project_slug.and_then(non_empty_str) {
+            return self.find_or_create_project_for_slug(slug).await.map(Some);
+        }
+
+        self.find_or_create_project_for_slug("default")
+            .await
+            .map(Some)
+    }
+
+    async fn resolve_project_locator(&self, locator: &str) -> ServiceResult<project::Model> {
+        self.find_project_model(locator)
+            .await?
+            .ok_or_else(|| ServiceError::ProjectNotFound(locator.to_string()))
+    }
+
+    async fn find_or_create_project_for_slug(&self, slug: &str) -> ServiceResult<project::Model> {
+        let slug = normalize_slug(slug)?;
+        if let Some(project) = self.find_project_model_by_slug(&slug).await? {
+            return Ok(project);
+        }
+
+        let now = Utc::now();
+        let model = project::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            slug: Set(slug.clone()),
+            name: Set(slug.clone()),
+            description: Set(None),
+            priority: Set(None),
+            state: Set("Backlog".to_string()),
+            url: Set(Some(format!(
+                "/api/projects/{}",
+                url_safe_identifier(&slug)
+            ))),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&self.db)
+        .await?;
+
+        Ok(model)
+    }
+
+    async fn find_project_id(&self, locator: &str) -> ServiceResult<Option<String>> {
+        Ok(self
+            .find_project_model(locator)
+            .await?
+            .map(|project| project.id))
+    }
+
+    async fn find_project_model(&self, locator: &str) -> ServiceResult<Option<project::Model>> {
+        let locator = locator.trim();
+        if locator.is_empty() {
+            return Ok(None);
+        }
+
+        let models = project::Entity::find().all(&self.db).await?;
+        Ok(models.into_iter().find(|model| {
+            let candidate = model_to_project(model.clone());
+            project_matches_locator(&candidate, locator)
+        }))
+    }
+
+    async fn find_project_model_by_slug(
+        &self,
+        slug: &str,
+    ) -> ServiceResult<Option<project::Model>> {
+        let slug = normalize_slug(slug)?;
+        let models = project::Entity::find().all(&self.db).await?;
+        Ok(models
+            .into_iter()
+            .find(|model| model.slug.eq_ignore_ascii_case(&slug)))
+    }
+
     async fn resolve_issue_locators(&self, locators: &[String]) -> ServiceResult<Vec<String>> {
         let mut ids = Vec::with_capacity(locators.len());
         for locator in locators {
@@ -490,7 +766,7 @@ impl IssueService {
         let models = issue::Entity::find().all(&self.db).await?;
         Ok(models
             .into_iter()
-            .map(|model| model_to_issue(model, Vec::new(), Vec::new()))
+            .map(|model| model_to_issue(model, None, Vec::new(), Vec::new()))
             .find(|issue| issue_matches_locator(issue, locator))
             .map(|issue| issue.id))
     }
@@ -523,6 +799,14 @@ impl IssueService {
             .map(|label| label.name)
             .collect::<Vec<_>>();
 
+        let project = match model.project_id.as_deref() {
+            Some(project_id) => project::Entity::find_by_id(project_id.to_string())
+                .one(&self.db)
+                .await?
+                .map(model_to_project_ref),
+            None => None,
+        };
+
         let relations = issue_relation::Entity::find()
             .filter(issue_relation::Column::IssueId.eq(model.id.clone()))
             .all(&self.db)
@@ -554,7 +838,7 @@ impl IssueService {
                 .collect()
         };
 
-        Ok(model_to_issue(model, labels, blockers))
+        Ok(model_to_issue(model, project, labels, blockers))
     }
 
     pub async fn list_activities(&self, locator: &str) -> ServiceResult<Vec<Activity>> {
@@ -678,9 +962,16 @@ impl IssueService {
 #[derive(Clone, Debug, Default)]
 pub struct IssueFilter {
     pub project_slug: Option<String>,
+    pub project_id: Option<String>,
     pub states: Vec<String>,
     pub ids: Vec<String>,
     pub assignee_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ProjectFilter {
+    pub states: Vec<String>,
+    pub ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -695,13 +986,22 @@ pub struct NotificationFilter {
 #[derive(Clone, Debug, Default)]
 pub struct UpdateIssueInput {
     pub title: Option<String>,
+    pub project_id: Option<Option<String>>,
     pub description: Option<Option<String>>,
     pub priority: Option<Option<i64>>,
     pub blocked_by: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct UpdateProjectInput {
+    pub name: Option<String>,
+    pub description: Option<Option<String>>,
+    pub priority: Option<Option<i64>>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct CreateIssueInput {
+    pub project_id: Option<String>,
     pub project_slug: Option<String>,
     pub team_key: Option<String>,
     pub title: Option<String>,
@@ -714,12 +1014,23 @@ pub struct CreateIssueInput {
     pub assignee_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct CreateProjectInput {
+    pub slug: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub priority: Option<i64>,
+    pub state: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum ServiceError {
     #[error("invalid_input: {0}")]
     InvalidInput(String),
     #[error("issue_not_found: {0}")]
     IssueNotFound(String),
+    #[error("project_not_found: {0}")]
+    ProjectNotFound(String),
     #[error("notification_not_found: {0}")]
     NotificationNotFound(String),
     #[error("database error: {0}")]
@@ -739,10 +1050,17 @@ impl From<comment::Model> for Comment {
     }
 }
 
-fn model_to_issue(model: issue::Model, labels: Vec<String>, blocked_by: Vec<BlockerRef>) -> Issue {
+fn model_to_issue(
+    model: issue::Model,
+    project: Option<ProjectRef>,
+    labels: Vec<String>,
+    blocked_by: Vec<BlockerRef>,
+) -> Issue {
     Issue {
         id: model.id,
         identifier: model.identifier,
+        project_id: model.project_id,
+        project,
         title: model.title,
         description: model.description,
         priority: model.priority,
@@ -753,6 +1071,30 @@ fn model_to_issue(model: issue::Model, labels: Vec<String>, blocked_by: Vec<Bloc
         blocked_by,
         created_at: Some(model.created_at),
         updated_at: Some(model.updated_at),
+    }
+}
+
+fn model_to_project(model: project::Model) -> Project {
+    Project {
+        id: model.id,
+        slug: model.slug,
+        name: model.name,
+        description: model.description,
+        priority: model.priority,
+        state: model.state,
+        url: model.url,
+        created_at: Some(model.created_at),
+        updated_at: Some(model.updated_at),
+    }
+}
+
+fn model_to_project_ref(model: project::Model) -> ProjectRef {
+    ProjectRef {
+        id: model.id,
+        slug: model.slug,
+        name: model.name,
+        state: model.state,
+        priority: model.priority,
     }
 }
 
@@ -811,6 +1153,33 @@ fn non_empty_or(value: Option<String>, fallback: &str) -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| fallback.to_string())
+}
+
+fn normalize_slug(value: &str) -> ServiceResult<String> {
+    let mut slug = String::new();
+    let mut previous_separator = false;
+
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            previous_separator = false;
+        } else if matches!(ch, '.' | '_' | '-') {
+            slug.push(ch);
+            previous_separator = matches!(ch, '-' | '_');
+        } else if !previous_separator {
+            slug.push('-');
+            previous_separator = true;
+        }
+    }
+
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        Err(ServiceError::InvalidInput(
+            "project slug is required".to_string(),
+        ))
+    } else {
+        Ok(slug)
+    }
 }
 
 fn non_empty_str(value: &str) -> Option<&str> {

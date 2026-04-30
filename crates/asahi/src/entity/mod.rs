@@ -4,3 +4,4 @@ pub mod issue;
 pub mod issue_label;
 pub mod issue_relation;
 pub mod notification;
+pub mod project;

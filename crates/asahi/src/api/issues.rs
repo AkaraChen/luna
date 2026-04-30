@@ -12,6 +12,7 @@ use crate::{
 
 #[derive(Debug, FromForm)]
 pub struct ListIssuesQuery {
+    project_id: Option<String>,
     project_slug: Option<String>,
     states: Option<String>,
     ids: Option<String>,
@@ -20,6 +21,7 @@ pub struct ListIssuesQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateIssueRequest {
+    pub project_id: Option<String>,
     pub project_slug: Option<String>,
     pub team_key: Option<String>,
     pub title: String,
@@ -42,6 +44,8 @@ pub struct UpdateStateRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateIssueRequest {
     pub title: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub project_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub description: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
@@ -77,6 +81,7 @@ async fn list_issues(
     let issues = service
         .list_issues(IssueFilter {
             project_slug: query.project_slug,
+            project_id: query.project_id,
             states: split_csv(query.states),
             ids: split_csv(query.ids),
             assignee_id: query.assignee_id,
@@ -94,6 +99,7 @@ async fn create_issue(
     let body = body.into_inner();
     let issue = service
         .create_issue(CreateIssueInput {
+            project_id: body.project_id,
             project_slug: body.project_slug,
             team_key: body.team_key,
             title: Some(body.title),
@@ -123,6 +129,7 @@ async fn update_issue(
                 locator,
                 UpdateIssueInput {
                     title: body.title,
+                    project_id: body.project_id,
                     description: body.description,
                     priority: body.priority,
                     blocked_by: body.blocked_by,
@@ -199,7 +206,13 @@ fn api_root() -> Json<Value> {
     Json(json!({
         "name": "asahi",
         "endpoints": [
-            "GET /api/issues?project_slug=&states=Todo,In%20Progress&ids=&assignee_id=",
+            "GET /api/projects?states=Backlog,In%20Progress&ids=",
+            "POST /api/projects",
+            "GET /api/projects/{locator}",
+            "PATCH /api/projects/{locator}",
+            "DELETE /api/projects/{locator}",
+            "PATCH /api/projects/{locator}/state",
+            "GET /api/issues?project_id=&project_slug=&states=Todo,In%20Progress&ids=&assignee_id=",
             "POST /api/issues",
             "GET /api/issues/{locator}",
             "PATCH /api/issues/{locator}",
@@ -411,7 +424,12 @@ mod tests {
         assert_eq!(notifications.status(), Status::Ok);
         let notifications: NotificationListResponse =
             notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after create, got {}", notifications.notifications.len());
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 notification after create, got {}",
+            notifications.notifications.len()
+        );
 
         let updated = client
             .patch(format!("/api/issues/{}", issue.id))
@@ -424,7 +442,12 @@ mod tests {
         assert_eq!(notifications.status(), Status::Ok);
         let notifications: NotificationListResponse =
             notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 aggregated notification after priority update, got {}", notifications.notifications.len());
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 aggregated notification after priority update, got {}",
+            notifications.notifications.len()
+        );
     }
 
     #[test]
@@ -451,7 +474,12 @@ mod tests {
         assert_eq!(notifications.status(), Status::Ok);
         let notifications: NotificationListResponse =
             notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 aggregated notification after state update, got {}", notifications.notifications.len());
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 aggregated notification after state update, got {}",
+            notifications.notifications.len()
+        );
     }
 
     #[test]
@@ -483,18 +511,30 @@ mod tests {
         assert_eq!(notifications.status(), Status::Ok);
         let notifications: NotificationListResponse =
             notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after mark-read, got {}", notifications.notifications.len());
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 notification after mark-read, got {}",
+            notifications.notifications.len()
+        );
 
         let archive = client
             .patch(format!("/api/notifications/{}/archive", notification_id))
             .dispatch();
         assert_eq!(archive.status(), Status::Ok);
 
-        let notifications = client.get("/api/notifications?include_archived=true&limit=10").dispatch();
+        let notifications = client
+            .get("/api/notifications?include_archived=true&limit=10")
+            .dispatch();
         assert_eq!(notifications.status(), Status::Ok);
         let notifications: NotificationListResponse =
             notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after archive, got {}", notifications.notifications.len());
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 notification after archive, got {}",
+            notifications.notifications.len()
+        );
     }
 
     #[test]
@@ -528,14 +568,27 @@ mod tests {
             .dispatch();
 
         let notifications = client.get("/api/notifications?limit=10").dispatch();
-        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 aggregated notification, got {}", notifications.notifications.len());
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 aggregated notification, got {}",
+            notifications.notifications.len()
+        );
 
         // But activities should contain all operations
-        let activities = client.get(format!("/api/issues/{}/activities", issue.id)).dispatch();
+        let activities = client
+            .get(format!("/api/issues/{}/activities", issue.id))
+            .dispatch();
         assert_eq!(activities.status(), Status::Ok);
         let activities: ActivityListResponse = activities.into_json().expect("activities json");
-        assert_eq!(activities.activities.len(), 4, "Expected 4 activities (create + priority + state + comment), got {}", activities.activities.len());
+        assert_eq!(
+            activities.activities.len(),
+            4,
+            "Expected 4 activities (create + priority + state + comment), got {}",
+            activities.activities.len()
+        );
     }
 
     #[test]
@@ -552,7 +605,8 @@ mod tests {
         let issue: Issue = created.into_json().expect("issue json");
 
         let notifications = client.get("/api/notifications?limit=10").dispatch();
-        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
         let notification_id = notifications.notifications[0].id.clone();
 
         // Archive the notification
@@ -570,9 +624,18 @@ mod tests {
         assert_eq!(updated.status(), Status::Ok);
 
         let notifications = client.get("/api/notifications?limit=10").dispatch();
-        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 new notification after archive + update, got {}", notifications.notifications.len());
-        assert_ne!(notifications.notifications[0].id, notification_id, "New notification should have a different id");
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 new notification after archive + update, got {}",
+            notifications.notifications.len()
+        );
+        assert_ne!(
+            notifications.notifications[0].id, notification_id,
+            "New notification should have a different id"
+        );
     }
 
     #[test]
@@ -588,7 +651,8 @@ mod tests {
         assert_eq!(created.status(), Status::Ok);
 
         let notifications = client.get("/api/notifications?limit=10").dispatch();
-        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
         let notification_id = notifications.notifications[0].id.clone();
 
         // Simulate double-click / rapid requests
@@ -602,7 +666,13 @@ mod tests {
         assert_eq!(read2.status(), Status::Ok);
 
         let notifications = client.get("/api/notifications?limit=10").dispatch();
-        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after double mark-read, got {}", notifications.notifications.len());
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(
+            notifications.notifications.len(),
+            1,
+            "Expected 1 notification after double mark-read, got {}",
+            notifications.notifications.len()
+        );
     }
 }

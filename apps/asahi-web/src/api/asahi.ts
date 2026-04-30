@@ -4,9 +4,31 @@ export interface BlockerRef {
   state: string | null;
 }
 
+export interface ProjectRef {
+  id: string;
+  slug: string;
+  name: string;
+  state: string;
+  priority: number | null;
+}
+
+export interface Project {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  priority: number | null;
+  state: string;
+  url: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface Issue {
   id: string;
   identifier: string;
+  project_id: string | null;
+  project: ProjectRef | null;
   title: string;
   description: string | null;
   priority: number | null;
@@ -64,6 +86,10 @@ export interface IssueListResponse {
   issues: Issue[];
 }
 
+export interface ProjectListResponse {
+  projects: Project[];
+}
+
 export interface CommentListResponse {
   comments: Comment[];
 }
@@ -78,6 +104,7 @@ export interface NotificationListResponse {
 }
 
 export interface CreateIssueInput {
+  project_id?: string;
   project_slug?: string;
   team_key?: string;
   title: string;
@@ -92,21 +119,77 @@ export interface CreateIssueInput {
 
 export interface UpdateIssueInput {
   title?: string;
+  project_id?: string | null;
   description?: string | null;
   priority?: number | null;
   blocked_by?: string[];
 }
 
+export interface CreateProjectInput {
+  slug?: string;
+  name?: string;
+  description?: string;
+  priority?: number;
+  state?: string;
+}
+
+export interface UpdateProjectInput {
+  name?: string;
+  description?: string | null;
+  priority?: number | null;
+}
+
 export async function fetchIssues(
   options: {
+    projectId?: string;
+    projectSlug?: string;
     states?: string[];
   } = {},
 ): Promise<IssueListResponse> {
   const params = new URLSearchParams();
+  if (options.projectId) {
+    params.set("project_id", options.projectId);
+  }
+  if (options.projectSlug) {
+    params.set("project_slug", options.projectSlug);
+  }
   if (options.states?.length) {
     params.set("states", options.states.join(","));
   }
   return request<IssueListResponse>(`/api/issues${queryString(params)}`);
+}
+
+export async function fetchProjects(
+  options: {
+    states?: string[];
+  } = {},
+): Promise<ProjectListResponse> {
+  const params = new URLSearchParams();
+  if (options.states?.length) {
+    params.set("states", options.states.join(","));
+  }
+  return request<ProjectListResponse>(`/api/projects${queryString(params)}`);
+}
+
+export async function createProject(input: CreateProjectInput): Promise<Project> {
+  return request<Project>("/api/projects", {
+    body: JSON.stringify(input),
+    method: "POST",
+  });
+}
+
+export async function updateProject(projectId: string, input: UpdateProjectInput): Promise<Project> {
+  return request<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
+    body: JSON.stringify(input),
+    method: "PATCH",
+  });
+}
+
+export async function updateProjectState(projectId: string, state: string): Promise<Project> {
+  return request<Project>(`/api/projects/${encodeURIComponent(projectId)}/state`, {
+    body: JSON.stringify({ state }),
+    method: "PATCH",
+  });
 }
 
 export async function createIssue(input: CreateIssueInput): Promise<Issue> {

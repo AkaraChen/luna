@@ -2,32 +2,36 @@ import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { IconX } from "@tabler/icons-react";
 
-import { createIssue } from "@/api/asahi";
+import { createProject, type Project } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
 
-export function IssueComposer({ onClose }: { onClose: () => void }) {
+export function ProjectComposer({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (project: Project) => void;
+}) {
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState("");
+  const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
   const mutation = useMutation({
     mutationFn: () =>
-      createIssue({
-        project_slug: "engineering",
-        team_key: "ENG",
-        title,
+      createProject({
+        name,
         description: description || undefined,
       }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["issues"] });
+    onSuccess: (project) => {
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      onCreated(project);
       onClose();
     },
   });
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (title.trim()) {
+    if (name.trim()) {
       mutation.mutate();
     }
   };
@@ -48,11 +52,11 @@ export function IssueComposer({ onClose }: { onClose: () => void }) {
         type="button"
       />
       <form
-        className="relative flex min-h-[18rem] w-[min(42rem,calc(100vw-2rem))] flex-col rounded-[1.15rem] bg-card text-card-foreground shadow-[0_18px_55px_rgba(15,23,42,0.2),0_1px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/10"
+        className="relative flex min-h-[17rem] w-[min(38rem,calc(100vw-2rem))] flex-col rounded-[1.15rem] bg-card text-card-foreground shadow-[0_18px_55px_rgba(15,23,42,0.2),0_1px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/10"
         onSubmit={submit}
       >
         <div className="flex items-center justify-between px-4 pt-3.5">
-          <span className="text-sm font-medium text-foreground">New issue</span>
+          <span className="text-sm font-medium text-foreground">New project</span>
           <button
             aria-label="Close composer"
             className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -67,13 +71,13 @@ export function IssueComposer({ onClose }: { onClose: () => void }) {
           <input
             autoFocus
             className="block h-8 w-full bg-transparent font-semibold text-foreground outline-none placeholder:text-[#9da0a6]"
-            onChange={(event) => setTitle(event.target.value)}
+            onChange={(event) => setName(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Issue title"
-            value={title}
+            placeholder="Project name"
+            value={name}
           />
           <textarea
-            className="mt-2 block min-h-16 w-full resize-none bg-transparent text-foreground outline-none placeholder:text-[#a9abb1]"
+            className="mt-2 block min-h-20 w-full resize-none bg-transparent text-foreground outline-none placeholder:text-[#a9abb1]"
             onChange={(event) => setDescription(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Add description..."
@@ -83,11 +87,11 @@ export function IssueComposer({ onClose }: { onClose: () => void }) {
 
         <div className="mt-auto flex items-center justify-end px-4 pb-4">
           <Button
-            aria-disabled={mutation.isPending || !title.trim()}
+            aria-disabled={mutation.isPending || !name.trim()}
             className="px-4 aria-disabled:opacity-80"
             type="submit"
           >
-            Create issue
+            Create project
           </Button>
         </div>
       </form>

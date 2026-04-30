@@ -1,10 +1,15 @@
-import { IconBell, IconCircleDot } from "@tabler/icons-react";
+import { useState } from "react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { IconBell, IconCircleDot, IconFolder, IconPlus } from "@tabler/icons-react";
 
+import { fetchProjects } from "@/api/asahi";
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -13,15 +18,27 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
-export type View = "issues" | "notifications";
+import { ProjectComposer } from "./project-composer";
+
+export type View = "issues" | "notifications" | "project";
 
 export function AsahiSidebar({
+  activeProjectLocator,
+  onProjectSelect,
   view,
   onViewChange,
 }: {
+  activeProjectLocator: string | null;
+  onProjectSelect: (projectLocator: string) => void;
   view: View;
   onViewChange: (view: View) => void;
 }) {
+  const [composerOpen, setComposerOpen] = useState(false);
+  const { data } = useSuspenseQuery({
+    queryKey: ["projects"],
+    queryFn: () => fetchProjects(),
+  });
+
   return (
     <Sidebar collapsible="icon" variant="inset">
       <SidebarHeader>
@@ -55,9 +72,49 @@ export function AsahiSidebar({
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Projects</SidebarGroupLabel>
+          <SidebarGroupAction
+            aria-label="Create project"
+            onClick={() => setComposerOpen(true)}
+            title="Create project"
+            type="button"
+          >
+            <IconPlus />
+          </SidebarGroupAction>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {data.projects.length ? (
+                data.projects.map((project) => (
+                  <SidebarItem
+                    active={
+                      view === "project" &&
+                      (activeProjectLocator === project.id || activeProjectLocator === project.slug)
+                    }
+                    icon={IconFolder}
+                    key={project.id}
+                    label={project.name}
+                    onClick={() => onProjectSelect(project.slug)}
+                  />
+                ))
+              ) : (
+                <div className="px-3 py-2 text-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
+                  No projects
+                </div>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
 
       <SidebarRail />
+      {composerOpen ? (
+        <ProjectComposer
+          onClose={() => setComposerOpen(false)}
+          onCreated={(project) => onProjectSelect(project.slug)}
+        />
+      ) : null}
     </Sidebar>
   );
 }
