@@ -49,7 +49,7 @@ export function NotificationsView() {
 
   if (data.notifications.length === 0) {
     return (
-      <div className="flex min-h-[calc(100svh-3.5rem)] flex-col items-center justify-center gap-3 px-6 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
         <div className="flex size-10 items-center justify-center rounded-full bg-muted">
           <IconBell className="size-4.5 text-muted-foreground" stroke={1.8} />
         </div>
@@ -64,7 +64,7 @@ export function NotificationsView() {
   }
 
   return (
-    <section className="grid min-h-[calc(100svh-3.5rem)] xl:grid-cols-[minmax(0,1fr)_360px]">
+    <section className="grid flex-1 overflow-auto xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="min-w-0 border-r border-border">
         <div className="flex h-12 items-center justify-between px-4">
           <div className="text-xs text-muted-foreground">

@@ -40,7 +40,7 @@ function Dashboard() {
         }}
       />
 
-      <SidebarInset className="min-h-svh overflow-hidden border border-border/70 bg-background">
+      <SidebarInset className="border border-border/70 bg-background">
         <header className="flex h-14 items-center justify-between border-b border-border bg-background/95 px-4">
           <div className="flex min-w-0 items-center gap-3">
             {view === "issues" && selectedId ? (
@@ -140,7 +140,7 @@ function IssuesView({
   }, [data.issues, search]);
 
   return (
-    <section className="min-h-[calc(100svh-3.5rem)]">
+    <section className="flex-1 overflow-auto">
       <div className="flex h-12 items-center justify-between px-4">
         <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
           {statusFilters.map((status) => (
@@ -181,7 +181,7 @@ function IssueDetailPage({ selectedId }: { selectedId: string }) {
   }
 
   return (
-    <div className="h-[calc(100svh-3.5rem)] overflow-hidden">
+    <div className="min-h-0 flex-1 overflow-hidden">
       <Suspense fallback={<DetailsSkeleton />}>
         <IssueDetails issue={issue} />
       </Suspense>
