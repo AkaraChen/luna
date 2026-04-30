@@ -1,16 +1,19 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel,
-    QueryFilter, QueryOrder, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait,
+    IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    domain::{BlockerRef, Comment, Issue, default_team_key, issue_matches_locator},
-    entity::{comment, issue, issue_label, issue_relation},
+    domain::{
+        BlockerRef, Comment, Issue, Notification, NotificationIssueRef, default_team_key,
+        issue_matches_locator,
+    },
+    entity::{comment, issue, issue_label, issue_relation, notification},
 };
 
 #[derive(Clone, Debug)]
@@ -81,9 +84,18 @@ impl IssueService {
         }
 
         transaction.commit().await?;
-        self.find_issue_by_id(&id)
+        let issue = self
+            .find_issue_by_id(&id)
             .await?
-            .ok_or_else(|| ServiceError::IssueNotFound(id))
+            .ok_or_else(|| ServiceError::IssueNotFound(id))?;
+        self.create_issue_notification(
+            &issue,
+            "issue_created",
+            format!("{} created", issue.identifier),
+            Some(issue.title.clone()),
+        )
+        .await?;
+        Ok(issue)
     }
 
     pub async fn list_issues(&self, filter: IssueFilter) -> ServiceResult<Vec<Issue>> {
@@ -132,6 +144,45 @@ impl IssueService {
         self.find_issue_by_id(&id).await
     }
 
+    pub async fn delete_issue(&self, locator: &str) -> ServiceResult<Issue> {
+        let issue_id = self
+            .find_issue_id(locator)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(locator.to_string()))?;
+        let issue = self
+            .find_issue_by_id(&issue_id)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
+
+        let transaction = self.db.begin().await?;
+        comment::Entity::delete_many()
+            .filter(comment::Column::IssueId.eq(issue_id.clone()))
+            .exec(&transaction)
+            .await?;
+        issue_label::Entity::delete_many()
+            .filter(issue_label::Column::IssueId.eq(issue_id.clone()))
+            .exec(&transaction)
+            .await?;
+        issue_relation::Entity::delete_many()
+            .filter(
+                Condition::any()
+                    .add(issue_relation::Column::IssueId.eq(issue_id.clone()))
+                    .add(issue_relation::Column::BlockedByIssueId.eq(issue_id.clone())),
+            )
+            .exec(&transaction)
+            .await?;
+        notification::Entity::delete_many()
+            .filter(notification::Column::IssueId.eq(issue_id.clone()))
+            .exec(&transaction)
+            .await?;
+        issue::Entity::delete_by_id(issue_id)
+            .exec(&transaction)
+            .await?;
+        transaction.commit().await?;
+
+        Ok(issue)
+    }
+
     pub async fn update_issue_state(&self, locator: &str, state: String) -> ServiceResult<Issue> {
         let state = require_non_empty("state", Some(state))?;
         let issue_id = self
@@ -147,9 +198,88 @@ impl IssueService {
         active.updated_at = Set(Utc::now());
         active.update(&self.db).await?;
 
-        self.find_issue_by_id(&issue_id)
+        let issue = self
+            .find_issue_by_id(&issue_id)
             .await?
-            .ok_or(ServiceError::IssueNotFound(issue_id))
+            .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
+        self.create_issue_notification(
+            &issue,
+            "issue_updated",
+            format!("{} moved to {}", issue.identifier, issue.state),
+            Some(issue.title.clone()),
+        )
+        .await?;
+        Ok(issue)
+    }
+
+    pub async fn update_issue(
+        &self,
+        locator: &str,
+        input: UpdateIssueInput,
+    ) -> ServiceResult<Issue> {
+        let issue_id = self
+            .find_issue_id(locator)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(locator.to_string()))?;
+        let blocked_by_ids = match input.blocked_by {
+            Some(blocked_by) => Some(self.resolve_issue_locators(&blocked_by).await?),
+            None => None,
+        };
+
+        if let Some(blocked_by_ids) = blocked_by_ids.as_ref() {
+            if blocked_by_ids
+                .iter()
+                .any(|blocker_id| blocker_id == &issue_id)
+            {
+                return Err(ServiceError::InvalidInput(
+                    "issue cannot be blocked by itself".to_string(),
+                ));
+            }
+        }
+
+        let model = issue::Entity::find_by_id(issue_id.clone())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(locator.to_string()))?;
+        let now = Utc::now();
+        let transaction = self.db.begin().await?;
+        let mut active = model.into_active_model();
+        if let Some(priority) = input.priority {
+            active.priority = Set(priority);
+        }
+        active.updated_at = Set(now);
+        active.update(&transaction).await?;
+
+        if let Some(blocked_by_ids) = blocked_by_ids {
+            issue_relation::Entity::delete_many()
+                .filter(issue_relation::Column::IssueId.eq(issue_id.clone()))
+                .exec(&transaction)
+                .await?;
+
+            for blocked_by_issue_id in blocked_by_ids {
+                issue_relation::ActiveModel {
+                    id: Set(Uuid::new_v4().to_string()),
+                    issue_id: Set(issue_id.clone()),
+                    blocked_by_issue_id: Set(blocked_by_issue_id),
+                }
+                .insert(&transaction)
+                .await?;
+            }
+        }
+
+        transaction.commit().await?;
+        let issue = self
+            .find_issue_by_id(&issue_id)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
+        self.create_issue_notification(
+            &issue,
+            "issue_updated",
+            format!("{} updated", issue.identifier),
+            Some(issue.title.clone()),
+        )
+        .await?;
+        Ok(issue)
     }
 
     pub async fn create_comment(&self, locator: &str, body: String) -> ServiceResult<Comment> {
@@ -159,13 +289,27 @@ impl IssueService {
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(locator.to_string()))?;
 
+        let now = Utc::now();
         let model = comment::ActiveModel {
             id: Set(Uuid::new_v4().to_string()),
-            issue_id: Set(issue_id),
+            issue_id: Set(issue_id.clone()),
             body: Set(body),
-            created_at: Set(Utc::now()),
+            created_at: Set(now),
         }
         .insert(&self.db)
+        .await?;
+
+        self.touch_issue(&issue_id, now).await?;
+        let issue = self
+            .find_issue_by_id(&issue_id)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
+        self.create_issue_notification(
+            &issue,
+            "comment_created",
+            format!("New comment on {}", issue.identifier),
+            Some(model.body.clone()),
+        )
         .await?;
 
         Ok(model.into())
@@ -184,6 +328,90 @@ impl IssueService {
             .await?;
 
         Ok(comments.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn list_notifications(
+        &self,
+        filter: NotificationFilter,
+    ) -> ServiceResult<Vec<Notification>> {
+        let mut query = notification::Entity::find();
+
+        if !filter.include_archived {
+            query = query.filter(notification::Column::ArchivedAt.is_null());
+        }
+
+        if filter.unread_only {
+            query = query.filter(notification::Column::ReadAt.is_null());
+        }
+
+        if let Some(recipient_id) = filter.recipient_id.as_deref().and_then(non_empty_str) {
+            query = query.filter(notification::Column::RecipientId.eq(recipient_id.to_string()));
+        }
+
+        if let Some(issue_id) = filter.issue_id.as_deref().and_then(non_empty_str) {
+            query = query.filter(notification::Column::IssueId.eq(issue_id.to_string()));
+        }
+
+        if let Some(limit) = filter.limit {
+            query = query.limit(limit.clamp(1, 100));
+        }
+
+        let models = query
+            .order_by_desc(notification::Column::CreatedAt)
+            .all(&self.db)
+            .await?;
+
+        self.hydrate_notifications(models).await
+    }
+
+    pub async fn count_notifications(&self, filter: NotificationFilter) -> ServiceResult<u64> {
+        let mut query = notification::Entity::find();
+
+        if !filter.include_archived {
+            query = query.filter(notification::Column::ArchivedAt.is_null());
+        }
+
+        if filter.unread_only {
+            query = query.filter(notification::Column::ReadAt.is_null());
+        }
+
+        if let Some(recipient_id) = filter.recipient_id.as_deref().and_then(non_empty_str) {
+            query = query.filter(notification::Column::RecipientId.eq(recipient_id.to_string()));
+        }
+
+        if let Some(issue_id) = filter.issue_id.as_deref().and_then(non_empty_str) {
+            query = query.filter(notification::Column::IssueId.eq(issue_id.to_string()));
+        }
+
+        Ok(query.count(&self.db).await?)
+    }
+
+    pub async fn mark_notification_read(&self, id: &str) -> ServiceResult<Notification> {
+        let now = Utc::now();
+        let model = notification::Entity::find_by_id(id.to_string())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::NotificationNotFound(id.to_string()))?;
+        let mut active = model.into_active_model();
+        active.read_at = Set(Some(now));
+        active.updated_at = Set(now);
+        let model = active.update(&self.db).await?;
+        self.hydrate_notification(model).await
+    }
+
+    pub async fn archive_notification(&self, id: &str) -> ServiceResult<Notification> {
+        let now = Utc::now();
+        let model = notification::Entity::find_by_id(id.to_string())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::NotificationNotFound(id.to_string()))?;
+        let read_at = model.read_at.unwrap_or(now);
+        let mut active = model.into_active_model();
+        active.archived_at = Set(Some(now));
+        active.read_at = Set(Some(read_at));
+        active.updated_at = Set(now);
+        let model = active.update(&self.db).await?;
+        self.hydrate_notification(model).await
     }
 
     async fn next_issue_number(&self, team_key: &str) -> ServiceResult<i64> {
@@ -283,6 +511,70 @@ impl IssueService {
 
         Ok(model_to_issue(model, labels, blockers))
     }
+
+    async fn create_issue_notification(
+        &self,
+        issue: &Issue,
+        kind: &str,
+        title: String,
+        body: Option<String>,
+    ) -> ServiceResult<Notification> {
+        let now = Utc::now();
+        let model = notification::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            kind: Set(kind.to_string()),
+            issue_id: Set(Some(issue.id.clone())),
+            recipient_id: Set(None),
+            actor_id: Set(None),
+            title: Set(title),
+            body: Set(body),
+            read_at: Set(None),
+            archived_at: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&self.db)
+        .await?;
+
+        self.hydrate_notification(model).await
+    }
+
+    async fn touch_issue(&self, issue_id: &str, updated_at: DateTime<Utc>) -> ServiceResult<()> {
+        let model = issue::Entity::find_by_id(issue_id.to_string())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(issue_id.to_string()))?;
+        let mut active = model.into_active_model();
+        active.updated_at = Set(updated_at);
+        active.update(&self.db).await?;
+        Ok(())
+    }
+
+    async fn hydrate_notifications(
+        &self,
+        models: Vec<notification::Model>,
+    ) -> ServiceResult<Vec<Notification>> {
+        let mut notifications = Vec::with_capacity(models.len());
+        for model in models {
+            notifications.push(self.hydrate_notification(model).await?);
+        }
+        Ok(notifications)
+    }
+
+    async fn hydrate_notification(
+        &self,
+        model: notification::Model,
+    ) -> ServiceResult<Notification> {
+        let issue = match model.issue_id.as_deref() {
+            Some(issue_id) => issue::Entity::find_by_id(issue_id.to_string())
+                .one(&self.db)
+                .await?
+                .map(notification_issue_ref),
+            None => None,
+        };
+
+        Ok(model_to_notification(model, issue))
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -291,6 +583,21 @@ pub struct IssueFilter {
     pub states: Vec<String>,
     pub ids: Vec<String>,
     pub assignee_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct NotificationFilter {
+    pub include_archived: bool,
+    pub unread_only: bool,
+    pub recipient_id: Option<String>,
+    pub issue_id: Option<String>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UpdateIssueInput {
+    pub priority: Option<Option<i64>>,
+    pub blocked_by: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -313,6 +620,8 @@ pub enum ServiceError {
     InvalidInput(String),
     #[error("issue_not_found: {0}")]
     IssueNotFound(String),
+    #[error("notification_not_found: {0}")]
+    NotificationNotFound(String),
     #[error("database error: {0}")]
     Database(#[from] DbErr),
 }
@@ -344,6 +653,37 @@ fn model_to_issue(model: issue::Model, labels: Vec<String>, blocked_by: Vec<Bloc
         blocked_by,
         created_at: Some(model.created_at),
         updated_at: Some(model.updated_at),
+    }
+}
+
+fn notification_issue_ref(model: issue::Model) -> NotificationIssueRef {
+    NotificationIssueRef {
+        id: model.id,
+        identifier: model.identifier,
+        title: model.title,
+        state: model.state,
+        priority: model.priority,
+        updated_at: Some(model.updated_at),
+    }
+}
+
+fn model_to_notification(
+    model: notification::Model,
+    issue: Option<NotificationIssueRef>,
+) -> Notification {
+    Notification {
+        id: model.id,
+        kind: model.kind,
+        issue_id: model.issue_id,
+        issue,
+        recipient_id: model.recipient_id,
+        actor_id: model.actor_id,
+        title: model.title,
+        body: model.body,
+        read_at: model.read_at,
+        archived_at: model.archived_at,
+        created_at: model.created_at,
+        updated_at: model.updated_at,
     }
 }
 

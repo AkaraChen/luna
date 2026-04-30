@@ -1,4 +1,4 @@
-import { IconCircleDashed } from "@tabler/icons-react";
+import { IconCircleDashed, IconLink } from "@tabler/icons-react";
 
 import { type Issue } from "@/api/asahi";
 import { cn } from "@/lib/utils";
@@ -31,7 +31,7 @@ export function IssueList({
       {issues.map((issue) => (
         <button
           className={cn(
-            "flex h-10 w-full items-center gap-3 px-4 text-left hover:bg-[#f7f6f2]",
+            "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f6f2]",
             selectedId === issue.id && "bg-[#f2f1ec]",
           )}
           key={issue.id}
@@ -39,13 +39,34 @@ export function IssueList({
           type="button"
         >
           <StatusIcon state={issue.state} />
-          <span className="flex-1 truncate text-sm text-[#262522]">{issue.title}</span>
+          <span className="min-w-0">
+            <span className="block truncate text-sm text-[#262522]">{issue.title}</span>
+            <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-[#8f8b82]">
+              <span className="shrink-0">{issue.identifier}</span>
+              <span className="shrink-0">{formatDate(issue.updated_at)}</span>
+              {issue.blocked_by.length ? (
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <IconLink className="size-3 shrink-0" />
+                  <span className="truncate">
+                    {issue.blocked_by.map((blocker) => blocker.identifier ?? blocker.id).join(", ")}
+                  </span>
+                </span>
+              ) : null}
+            </span>
+          </span>
           <Priority priority={issue.priority} />
-          <span className="shrink-0 text-xs text-[#a09d97]">{issue.identifier}</span>
         </button>
       ))}
     </div>
   );
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "No update";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 }
 
 export function EmptyDetails() {
