@@ -17,15 +17,19 @@ pub struct InitOptions {
     pub create_project: bool,
     pub project_title: Option<String>,
     pub non_interactive: bool,
+    pub tracker_kind: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 struct InitContext {
+    tracker_kind: String,
     owner: String,
     project_number: u32,
     project_title: String,
     repo_name_with_owner: Option<String>,
     created_project: bool,
+    asahi_port: Option<u16>,
+    asahi_db: Option<String>,
 }
 
 const DEFAULT_OWNER: &str = "your-github-owner";
@@ -59,6 +63,29 @@ pub async fn run_init(options: InitOptions) -> Result<Vec<PathBuf>> {
 }
 
 async fn build_non_interactive_context(options: &InitOptions) -> Result<InitContext> {
+    let tracker_kind = options
+        .tracker_kind
+        .clone()
+        .unwrap_or_else(|| "github_project".to_string());
+
+    if tracker_kind == "asahi" {
+        let project_title = options
+            .project_title
+            .clone()
+            .unwrap_or_else(|| default_project_title(&options.target_dir));
+        let port = find_available_port().await?;
+        return Ok(InitContext {
+            tracker_kind,
+            owner: DEFAULT_OWNER.to_string(),
+            project_number: DEFAULT_PROJECT_NUMBER,
+            project_title,
+            repo_name_with_owner: detect_repo_name_with_owner(&options.target_dir).await,
+            created_project: false,
+            asahi_port: Some(port),
+            asahi_db: Some("./asahi.db".to_string()),
+        });
+    }
+
     let mut owner = options
         .owner
         .clone()
@@ -90,15 +117,48 @@ async fn build_non_interactive_context(options: &InitOptions) -> Result<InitCont
     };
 
     Ok(InitContext {
+        tracker_kind,
         owner,
         project_number,
         project_title,
         repo_name_with_owner: detect_repo_name_with_owner(&options.target_dir).await,
         created_project,
+        asahi_port: None,
+        asahi_db: None,
     })
 }
 
 async fn build_interactive_context(options: &InitOptions) -> Result<InitContext> {
+    let tracker_default = options
+        .tracker_kind
+        .clone()
+        .unwrap_or_else(|| "github_project".to_string());
+    let tracker_kind = if options.tracker_kind.is_some() {
+        tracker_default
+    } else {
+        let choices = vec!["github_project", "asahi"];
+        prompt_choice("Tracker kind", &choices, 0)?
+    };
+
+    if tracker_kind == "asahi" {
+        let project_title_default = options
+            .project_title
+            .clone()
+            .unwrap_or_else(|| default_project_title(&options.target_dir));
+        let project_title = prompt_string("Project title", &project_title_default)?;
+        let port = find_available_port().await?;
+        return Ok(InitContext {
+            tracker_kind,
+            owner: DEFAULT_OWNER.to_string(),
+            project_number: DEFAULT_PROJECT_NUMBER,
+            project_title,
+            repo_name_with_owner: detect_repo_name_with_owner(&options.target_dir).await,
+            created_project: false,
+            asahi_port: Some(port),
+            asahi_db: Some("./asahi.db".to_string()),
+        });
+    }
+
     println!("Luna will generate a GitHub Project based workflow.");
     println!("If you are not logged in, run `gh auth login` first.");
 
@@ -151,11 +211,14 @@ async fn build_interactive_context(options: &InitOptions) -> Result<InitContext>
     };
 
     Ok(InitContext {
+        tracker_kind,
         owner,
         project_number,
         project_title,
         repo_name_with_owner: detect_repo_name_with_owner(&options.target_dir).await,
         created_project,
+        asahi_port: None,
+        asahi_db: None,
     })
 }
 
@@ -240,9 +303,23 @@ fn render_workflow_template(context: &InitContext) -> String {
         .as_deref()
         .unwrap_or("owner/repo");
 
-    format!(
-        r#"---
-tracker:
+    let tracker_front_matter = if context.tracker_kind == "asahi" {
+        let port = context.asahi_port.unwrap_or(8080);
+        let db = context.asahi_db.as_deref().unwrap_or("./asahi.db");
+        format!(
+            r#"tracker:
+  kind: asahi
+  db: {db}
+  port: {port}
+  active_states:
+    - Todo
+    - In Progress
+  terminal_states:
+    - Done"#
+        )
+    } else {
+        format!(
+            r#"tracker:
   kind: github_project
   owner: {owner}
   project_number: {project_number}
@@ -253,7 +330,15 @@ tracker:
     - Todo
     - In Progress
   terminal_states:
-    - Done
+    - Done"#,
+            owner = context.owner,
+            project_number = context.project_number,
+        )
+    };
+
+    format!(
+        r#"---
+{tracker_front_matter}
 
 polling:
   interval_ms: 30000
@@ -275,24 +360,10 @@ codex:
 ---
 # Luna Workflow
 
-You are Luna, an autonomous coding agent working on a GitHub Project item.
+You are Luna, an autonomous coding agent working on a tracker item.
 
 Project context:
-- GitHub Project owner: `{owner}`
-- GitHub Project number: `{project_number}`
-- GitHub Project title: `{project_title}`
-- Open the project in the browser with: `gh project view {project_number} --owner {owner} --web`
-- Inspect project items with: `gh project item-list {project_number} --owner {owner} --format json`
-- If this item corresponds to a repository issue, inspect it with commands like:
-  `luna show`
-  `luna comment "..."`
-  `luna move "In Progress"`
-- Open, inspect, and update pull requests with commands like:
-  `gh pr create -R {repo_hint} --fill`
-  `gh pr view -R {repo_hint} --json number,url,reviewDecision,statusCheckRollup`
-  `gh pr comment <number> -R {repo_hint} --body "..."`
-  `gh pr checks <number> -R {repo_hint} --watch`
-  `gh pr merge <number> -R {repo_hint} --squash --delete-branch`
+{project_context}
 
 Issue: {{{{ issue.identifier }}}} - {{{{ issue.title }}}}
 URL: {{{{ issue.url or "" }}}}
@@ -329,10 +400,23 @@ Execution rules:
 - Validate changes before stopping.
 - Move the project item or backing issue to the next workflow-defined handoff state when appropriate.
 "#,
-        owner = context.owner,
-        project_number = context.project_number,
-        project_title = context.project_title,
-        repo_hint = repo_hint,
+        tracker_front_matter = tracker_front_matter,
+        project_context = if context.tracker_kind == "asahi" {
+            format!(
+                "- Tracker: Asahi (local)\n- Project title: `{project_title}`\n- Database: `{db}`\n- Port: `{port}`\n- Start asahi manually with: `ROCKET_PORT={port} asahi` (or let luna embed it automatically)",
+                project_title = context.project_title,
+                db = context.asahi_db.as_deref().unwrap_or("./asahi.db"),
+                port = context.asahi_port.unwrap_or(8080),
+            )
+        } else {
+            format!(
+                "- GitHub Project owner: `{owner}`\n- GitHub Project number: `{project_number}`\n- GitHub Project title: `{project_title}`\n- Open the project in the browser with: `gh project view {project_number} --owner {owner} --web`\n- Inspect project items with: `gh project item-list {project_number} --owner {owner} --format json`\n- If this item corresponds to a repository issue, inspect it with commands like:\n  `luna show`\n  `luna comment \"...\"`\n  `luna move \"In Progress\"`\n- Open, inspect, and update pull requests with commands like:\n  `gh pr create -R {repo_hint} --fill`\n  `gh pr view -R {repo_hint} --json number,url,reviewDecision,statusCheckRollup`\n  `gh pr comment <number> -R {repo_hint} --body \"...\"`\n  `gh pr checks <number> -R {repo_hint} --watch`\n  `gh pr merge <number> -R {repo_hint} --squash --delete-branch`",
+                owner = context.owner,
+                project_number = context.project_number,
+                project_title = context.project_title,
+                repo_hint = repo_hint,
+            )
+        },
     )
 }
 
@@ -343,20 +427,30 @@ GITHUB_TOKEN=
 "#;
 
 fn print_init_summary(context: &InitContext) {
-    println!(
-        "Configured Luna for GitHub Project `{}` (owner `{}`, number {}).",
-        context.project_title, context.owner, context.project_number
-    );
-    if context.created_project {
+    if context.tracker_kind == "asahi" {
         println!(
-            "Project created. Open it with: gh project view {} --owner {} --web",
-            context.project_number, context.owner
+            "Configured Luna for Asahi tracker `{}` (db: {}, port: {}).",
+            context.project_title,
+            context.asahi_db.as_deref().unwrap_or("./asahi.db"),
+            context.asahi_port.unwrap_or(0),
         );
+        println!("Luna will embed asahi automatically when running.");
     } else {
         println!(
-            "Project not created by Luna. If needed, create one with: gh project create --owner {} --title \"{}\"",
-            context.owner, context.project_title
+            "Configured Luna for GitHub Project `{}` (owner `{}`, number {}).",
+            context.project_title, context.owner, context.project_number
         );
+        if context.created_project {
+            println!(
+                "Project created. Open it with: gh project view {} --owner {} --web",
+                context.project_number, context.owner
+            );
+        } else {
+            println!(
+                "Project not created by Luna. If needed, create one with: gh project create --owner {} --title \"{}\"",
+                context.owner, context.project_title
+            );
+        }
     }
 }
 
@@ -392,6 +486,37 @@ fn prompt_u32(label: &str, default: u32) -> Result<u32> {
     value
         .parse::<u32>()
         .map_err(|err| LunaError::InvalidConfig(format!("invalid integer for `{label}`: {err}")))
+}
+
+fn prompt_choice(label: &str, choices: &[&str], default_index: usize) -> Result<String> {
+    println!("{label}:");
+    for (i, choice) in choices.iter().enumerate() {
+        let marker = if i == default_index { " *" } else { "" };
+        println!("  {}) {}{}", i + 1, choice, marker);
+    }
+    print!("[default: {}]: ", default_index + 1);
+    io::stdout().flush()?;
+    let mut buffer = String::new();
+    io::stdin().read_line(&mut buffer)?;
+    let value = buffer.trim();
+    if value.is_empty() {
+        return Ok(choices[default_index].to_string());
+    }
+    if let Ok(index) = value.parse::<usize>() {
+        if index > 0 && index <= choices.len() {
+            return Ok(choices[index - 1].to_string());
+        }
+    }
+    Err(LunaError::InvalidConfig(format!(
+        "invalid choice for `{label}`: {value}"
+    )))
+}
+
+async fn find_available_port() -> Result<u16> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    drop(listener);
+    Ok(addr.port())
 }
 
 fn default_project_title(target_dir: &Path) -> String {

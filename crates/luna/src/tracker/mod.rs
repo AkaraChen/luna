@@ -5,6 +5,7 @@ use crate::{config::TrackerConfig, error::Result, model::Issue};
 pub mod commands;
 pub mod context;
 
+mod asahi;
 mod github_project;
 mod linear;
 
@@ -13,6 +14,7 @@ pub use commands::{
     run_move_command, run_show_command,
 };
 pub use context::TrackerTargetOptions;
+pub use asahi::AsahiTracker;
 pub use github_project::GitHubProjectTracker;
 pub use linear::LinearTracker;
 
@@ -32,5 +34,6 @@ pub fn build_tracker(config: &TrackerConfig) -> Result<Box<dyn Tracker>> {
             Ok(Box::new(GitHubProjectTracker::new(project.clone())))
         }
         TrackerConfig::Linear(linear) => Ok(Box::new(LinearTracker::new(linear.clone()))),
+        TrackerConfig::Asahi(asahi) => Ok(Box::new(AsahiTracker::new(asahi.clone()))),
     }
 }

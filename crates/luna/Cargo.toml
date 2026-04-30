@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+asahi = { path = "../asahi" }
 async-trait = "0.1.89"
 chrono = { version = "0.4.42", features = ["clock", "serde"] }
 clap = { version = "4.5.38", features = ["derive"] }

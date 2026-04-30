@@ -6,4 +6,4 @@ pub mod entity;
 pub mod service;
 pub mod web;
 
-pub use app::rocket;
+pub use app::{rocket, rocket_with_database_url_and_port};

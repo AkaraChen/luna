@@ -46,6 +46,8 @@ enum Commands {
         project_title: Option<String>,
         #[arg(long)]
         non_interactive: bool,
+        #[arg(long, help = "Tracker kind: github_project or asahi")]
+        tracker: Option<String>,
     },
     #[command(about = "Post a comment to the current tracker item")]
     Comment {
@@ -111,6 +113,7 @@ async fn main() -> Result<()> {
             create_project,
             project_title,
             non_interactive,
+            tracker,
         }) => {
             let created = run_init(InitOptions {
                 target_dir: dir,
@@ -120,6 +123,7 @@ async fn main() -> Result<()> {
                 create_project,
                 project_title,
                 non_interactive,
+                tracker_kind: tracker,
             })
             .await?;
             for path in created {

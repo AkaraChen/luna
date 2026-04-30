@@ -30,3 +30,29 @@ pub fn rocket_with_database_url(database_url: impl Into<String>) -> Rocket<Build
         .mount("/api", notifications::routes())
         .mount("/", web::routes())
 }
+
+pub fn rocket_with_database_url_and_port(
+    database_url: impl Into<String>,
+    port: u16,
+) -> Rocket<Build> {
+    let database_url = database_url.into();
+    let figment = rocket::Config::figment()
+        .merge(("port", port))
+        .merge(("address", "127.0.0.1"));
+    rocket::custom(figment)
+        .attach(AdHoc::try_on_ignite("Asahi Database", move |rocket| {
+            Box::pin(async move {
+                match db::connect_and_setup(&database_url).await {
+                    Ok(db) => Ok(rocket.manage(IssueService::new(db))),
+                    Err(err) => {
+                        eprintln!("asahi database initialization failed: {err}");
+                        Err(rocket)
+                    }
+                }
+            })
+        }))
+        .mount("/api", health::routes())
+        .mount("/api", issues::routes())
+        .mount("/api", notifications::routes())
+        .mount("/", web::routes())
+}

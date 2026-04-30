@@ -36,6 +36,8 @@ pub enum TrackerConfig {
     GitHubProject(GitHubProjectTrackerConfig),
     #[serde(rename = "linear")]
     Linear(LinearTrackerConfig),
+    #[serde(rename = "asahi")]
+    Asahi(AsahiTrackerConfig),
 }
 
 impl TrackerConfig {
@@ -43,6 +45,7 @@ impl TrackerConfig {
         match self {
             Self::GitHubProject(c) => c.is_active_state(value),
             Self::Linear(c) => c.is_active_state(value),
+            Self::Asahi(c) => c.is_active_state(value),
         }
     }
 
@@ -50,6 +53,7 @@ impl TrackerConfig {
         match self {
             Self::GitHubProject(c) => c.is_terminal_state(value),
             Self::Linear(c) => c.is_terminal_state(value),
+            Self::Asahi(c) => c.is_terminal_state(value),
         }
     }
 
@@ -57,6 +61,7 @@ impl TrackerConfig {
         match self {
             Self::GitHubProject(c) => &c.terminal_states,
             Self::Linear(c) => &c.terminal_states,
+            Self::Asahi(c) => &c.terminal_states,
         }
     }
 
@@ -64,6 +69,7 @@ impl TrackerConfig {
         match self {
             Self::GitHubProject(c) => c.validate(),
             Self::Linear(c) => c.validate(),
+            Self::Asahi(c) => c.validate(),
         }
     }
 }
@@ -139,6 +145,41 @@ impl LinearTrackerConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AsahiTrackerConfig {
+    #[serde(default)]
+    pub endpoint: String,
+    pub db: Option<String>,
+    pub port: Option<u16>,
+    #[serde(default = "default_asahi_active_states")]
+    pub active_states: Vec<String>,
+    #[serde(default = "default_asahi_terminal_states")]
+    pub terminal_states: Vec<String>,
+    #[serde(skip)]
+    active_lookup: HashSet<String>,
+    #[serde(skip)]
+    terminal_lookup: HashSet<String>,
+}
+
+impl AsahiTrackerConfig {
+    pub fn is_active_state(&self, value: &str) -> bool {
+        self.active_lookup.contains(&value.to_lowercase())
+    }
+
+    pub fn is_terminal_state(&self, value: &str) -> bool {
+        self.terminal_lookup.contains(&value.to_lowercase())
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.db.is_none() && self.endpoint.trim().is_empty() {
+            return Err(LunaError::InvalidConfig(
+                "tracker.endpoint is required for asahi".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -380,8 +421,34 @@ pub fn resolve_service_config(
     definition: &WorkflowDefinition,
     workflow_path: &Path,
 ) -> Result<ServiceConfig> {
+    let mut config_map = definition.config.clone();
+
+    if !config_map.contains_key("tracker") {
+        let mut tracker = serde_yaml::Mapping::new();
+        tracker.insert(
+            YamlValue::String("kind".to_string()),
+            YamlValue::String("asahi".to_string()),
+        );
+        tracker.insert(
+            YamlValue::String("db".to_string()),
+            YamlValue::String("./asahi.db".to_string()),
+        );
+        tracker.insert(
+            YamlValue::String("active_states".to_string()),
+            serde_yaml::to_value(default_asahi_active_states()).unwrap_or(YamlValue::Sequence(Vec::new())),
+        );
+        tracker.insert(
+            YamlValue::String("terminal_states".to_string()),
+            serde_yaml::to_value(default_asahi_terminal_states()).unwrap_or(YamlValue::Sequence(Vec::new())),
+        );
+        config_map.insert(
+            YamlValue::String("tracker".to_string()),
+            YamlValue::Mapping(tracker),
+        );
+    }
+
     let mut config: ServiceConfig =
-        serde_yaml::from_value(YamlValue::Mapping(definition.config.clone()))
+        serde_yaml::from_value(YamlValue::Mapping(config_map))
             .map_err(|err| LunaError::InvalidConfig(format!("config parse error: {err}")))?;
 
     config.workflow_path = absolutize_path(workflow_path)?;
@@ -411,6 +478,18 @@ pub fn resolve_service_config(
                 .collect();
         }
         TrackerConfig::Linear(t) => {
+            t.active_lookup = t
+                .active_states
+                .iter()
+                .map(|s: &String| s.to_lowercase())
+                .collect();
+            t.terminal_lookup = t
+                .terminal_states
+                .iter()
+                .map(|s: &String| s.to_lowercase())
+                .collect();
+        }
+        TrackerConfig::Asahi(t) => {
             t.active_lookup = t
                 .active_states
                 .iter()
@@ -578,6 +657,12 @@ fn default_linear_terminal_states() -> Vec<String> {
         "Duplicate".to_string(),
         "Done".to_string(),
     ]
+}
+fn default_asahi_active_states() -> Vec<String> {
+    vec!["Todo".to_string(), "In Progress".to_string()]
+}
+fn default_asahi_terminal_states() -> Vec<String> {
+    vec!["Done".to_string()]
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

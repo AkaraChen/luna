@@ -46,6 +46,10 @@ impl WorkflowStore {
         &self.current
     }
 
+    pub fn current_mut(&mut self) -> &mut LoadedWorkflow {
+        &mut self.current
+    }
+
     pub fn reload_if_changed(&mut self) -> Result<bool> {
         let modified_at = fs::metadata(&self.path)
             .map_err(|err| {

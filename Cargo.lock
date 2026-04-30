@@ -1586,6 +1586,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-tokio",
+ "asahi",
  "async-trait",
  "chrono",
  "clap",

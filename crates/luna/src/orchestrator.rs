@@ -15,16 +15,72 @@ use tracing::{error, info, warn};
 
 use crate::{
     agent::{StopReason, UsageUpdate, WorkerEvent, WorkerExit, WorkerOutcome, run_agent_attempt},
-    config::ServiceConfig,
-    error::Result,
+    config::{ServiceConfig, TrackerConfig},
+    error::{LunaError, Result},
     model::{Issue, TokenTotals},
     tracker::build_tracker,
-    workflow::{LoadedWorkflow, WorkflowStore},
+    workflow::{LoadedWorkflow, WorkflowStore, parse_workflow_definition},
     workspace::WorkspaceManager,
 };
 
 pub async fn run(workflow_path: PathBuf) -> Result<()> {
-    let mut store = WorkflowStore::load(workflow_path)?;
+    let mut store = WorkflowStore::load(workflow_path.clone())?;
+
+    let raw_contents = tokio::fs::read_to_string(&workflow_path).await?;
+    let raw_def = parse_workflow_definition(&raw_contents)?;
+    let auto_start_asahi = !raw_def.config.contains_key("tracker");
+
+    let mut asahi_shutdown: Option<tokio::sync::oneshot::Sender<()>> = None;
+
+    let should_embed = auto_start_asahi
+        || matches!(
+            &store.current().config.tracker,
+            TrackerConfig::Asahi(cfg) if cfg.db.is_some()
+        );
+
+    if should_embed {
+        let port = match &store.current().config.tracker {
+            TrackerConfig::Asahi(cfg) if cfg.port.is_some() => cfg.port.unwrap(),
+            _ => find_available_port().await?,
+        };
+
+        let db_path = match &store.current().config.tracker {
+            TrackerConfig::Asahi(cfg) => cfg
+                .db
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| store.current().config.workflow_dir.join("asahi.db")),
+            _ => store.current().config.workflow_dir.join("asahi.db"),
+        };
+
+        let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
+        let rocket = asahi::rocket_with_database_url_and_port(db_url, port);
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        asahi_shutdown = Some(tx);
+
+        tokio::spawn(async move {
+            match rocket.launch().await {
+                Ok(orbit) => {
+                    let _ = rx.await;
+                    orbit.shutdown().notify();
+                }
+                Err(e) => {
+                    error!(error = %e, "asahi server error");
+                }
+            }
+        });
+
+        let endpoint = format!("http://127.0.0.1:{}", port);
+        wait_for_asahi(&endpoint).await?;
+
+        if let TrackerConfig::Asahi(ref mut config) = store.current_mut().config.tracker {
+            config.endpoint = endpoint;
+        }
+
+        info!("embedded asahi started on port {}", port);
+    }
+
     let initial = store.current().clone();
 
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
@@ -42,6 +98,10 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
             _ = signal::ctrl_c() => {
                 info!("received shutdown signal");
                 shutdown_running(&mut state);
+                if let Some(tx) = asahi_shutdown.take() {
+                    let _ = tx.send(());
+                    info!("signaled embedded asahi to stop");
+                }
                 break;
             }
             _ = ticker.tick() => {
@@ -683,4 +743,34 @@ struct RetryEntry {
 enum RetryDelay {
     Continuation,
     Backoff,
+}
+
+// ─── Asahi auto-start helpers ───────────────────────────────────────────────
+
+async fn find_available_port() -> Result<u16> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    drop(listener);
+    Ok(addr.port())
+}
+
+async fn wait_for_asahi(endpoint: &str) -> Result<()> {
+    let client = reqwest::Client::new();
+    let health_url = format!("{}/api/issues", endpoint);
+
+    for attempt in 0..60 {
+        match client.get(&health_url).send().await {
+            Ok(response) if response.status().is_success() => return Ok(()),
+            _ => {
+                if attempt >= 59 {
+                    return Err(LunaError::Tracker(
+                        "asahi failed to start within timeout".to_string(),
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    Ok(())
 }
