@@ -391,18 +391,36 @@ pub fn resolve_service_config(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    config.workspace.root =
-        resolve_workspace_root(config.workspace.root.to_str().map(|s| s.to_string()), &config.workflow_dir)?;
+    config.workspace.root = resolve_workspace_root(
+        config.workspace.root.to_str().map(|s| s.to_string()),
+        &config.workflow_dir,
+    )?;
 
     // Build lookup tables for tracker states
     match &mut config.tracker {
         TrackerConfig::GitHubProject(t) => {
-            t.active_lookup = t.active_states.iter().map(|s: &String| s.to_lowercase()).collect();
-            t.terminal_lookup = t.terminal_states.iter().map(|s: &String| s.to_lowercase()).collect();
+            t.active_lookup = t
+                .active_states
+                .iter()
+                .map(|s: &String| s.to_lowercase())
+                .collect();
+            t.terminal_lookup = t
+                .terminal_states
+                .iter()
+                .map(|s: &String| s.to_lowercase())
+                .collect();
         }
         TrackerConfig::Linear(t) => {
-            t.active_lookup = t.active_states.iter().map(|s: &String| s.to_lowercase()).collect();
-            t.terminal_lookup = t.terminal_states.iter().map(|s: &String| s.to_lowercase()).collect();
+            t.active_lookup = t
+                .active_states
+                .iter()
+                .map(|s: &String| s.to_lowercase())
+                .collect();
+            t.terminal_lookup = t
+                .terminal_states
+                .iter()
+                .map(|s: &String| s.to_lowercase())
+                .collect();
         }
     }
 
@@ -420,7 +438,10 @@ pub fn resolve_service_config(
             if let Ok(defaults) = resolve_permission_profile_defaults(profile) {
                 codex.approval_policy = codex.approval_policy.clone().or(defaults.approval_policy);
                 codex.thread_sandbox = codex.thread_sandbox.clone().or(defaults.thread_sandbox);
-                codex.turn_sandbox_policy = codex.turn_sandbox_policy.clone().or(defaults.turn_sandbox_policy);
+                codex.turn_sandbox_policy = codex
+                    .turn_sandbox_policy
+                    .clone()
+                    .or(defaults.turn_sandbox_policy);
             }
         }
     }
@@ -495,27 +516,57 @@ fn resolve_permission_profile_defaults(profile: &str) -> Result<PermissionProfil
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
-fn default_poll_interval_ms() -> u64 { DEFAULT_POLL_INTERVAL_MS }
-fn default_hook_timeout_ms() -> u64 { DEFAULT_HOOK_TIMEOUT_MS }
-fn default_workspace_root() -> PathBuf { PathBuf::from(".") }
-fn default_max_concurrent() -> usize { DEFAULT_MAX_CONCURRENT }
-fn default_max_turns() -> u32 { DEFAULT_MAX_TURNS }
-fn default_max_retry_backoff_ms() -> u64 { DEFAULT_MAX_RETRY_BACKOFF_MS }
-fn default_turn_timeout_ms() -> u64 { DEFAULT_TURN_TIMEOUT_MS }
-fn default_read_timeout_ms() -> u64 { DEFAULT_READ_TIMEOUT_MS }
-fn default_stall_timeout_ms() -> i64 { DEFAULT_STALL_TIMEOUT_MS }
-fn default_codex_command() -> String { DEFAULT_CODEX_COMMAND.to_string() }
-fn default_acp_command() -> String { DEFAULT_ACP_COMMAND.to_string() }
-fn default_gh_command() -> String { DEFAULT_GH_COMMAND.to_string() }
-fn default_github_status_field() -> String { "Status".to_string() }
-fn default_github_priority_field() -> String { "Priority".to_string() }
+fn default_poll_interval_ms() -> u64 {
+    DEFAULT_POLL_INTERVAL_MS
+}
+fn default_hook_timeout_ms() -> u64 {
+    DEFAULT_HOOK_TIMEOUT_MS
+}
+fn default_workspace_root() -> PathBuf {
+    PathBuf::from(".")
+}
+fn default_max_concurrent() -> usize {
+    DEFAULT_MAX_CONCURRENT
+}
+fn default_max_turns() -> u32 {
+    DEFAULT_MAX_TURNS
+}
+fn default_max_retry_backoff_ms() -> u64 {
+    DEFAULT_MAX_RETRY_BACKOFF_MS
+}
+fn default_turn_timeout_ms() -> u64 {
+    DEFAULT_TURN_TIMEOUT_MS
+}
+fn default_read_timeout_ms() -> u64 {
+    DEFAULT_READ_TIMEOUT_MS
+}
+fn default_stall_timeout_ms() -> i64 {
+    DEFAULT_STALL_TIMEOUT_MS
+}
+fn default_codex_command() -> String {
+    DEFAULT_CODEX_COMMAND.to_string()
+}
+fn default_acp_command() -> String {
+    DEFAULT_ACP_COMMAND.to_string()
+}
+fn default_gh_command() -> String {
+    DEFAULT_GH_COMMAND.to_string()
+}
+fn default_github_status_field() -> String {
+    "Status".to_string()
+}
+fn default_github_priority_field() -> String {
+    "Priority".to_string()
+}
 fn default_github_active_states() -> Vec<String> {
     vec!["Todo".to_string(), "In Progress".to_string()]
 }
 fn default_github_terminal_states() -> Vec<String> {
     vec!["Done".to_string()]
 }
-fn default_linear_endpoint() -> String { "https://api.linear.app/graphql".to_string() }
+fn default_linear_endpoint() -> String {
+    "https://api.linear.app/graphql".to_string()
+}
 fn default_linear_active_states() -> Vec<String> {
     vec!["Todo".to_string(), "In Progress".to_string()]
 }

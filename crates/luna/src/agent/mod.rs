@@ -15,11 +15,11 @@ use crate::{
     workspace::WorkspaceManager,
 };
 
-mod codex;
 mod acp;
+mod codex;
 
-pub use codex::CodexSession;
 pub use acp::AcpSession;
+pub use codex::CodexSession;
 
 #[derive(Clone, Debug)]
 pub enum StopReason {
@@ -185,10 +185,7 @@ async fn run_agent_attempt_inner(
             build_continuation_prompt(&issue, turn_number, workflow.config.scheduler.max_turns)
         };
 
-        match session
-            .run_turn(&prompt, turn_number, &mut stop_rx)
-            .await?
-        {
+        match session.run_turn(&prompt, turn_number, &mut stop_rx).await? {
             TurnExit::Completed => {}
             TurnExit::Failed(reason) => {
                 session.shutdown().await;
@@ -245,15 +242,11 @@ pub async fn build_agent_session(
     events: mpsc::UnboundedSender<WorkerEvent>,
 ) -> Result<Box<dyn AgentSession>> {
     match config {
-        RunnerConfig::Codex(c) => {
-            Ok(Box::new(
-                CodexSession::launch(c, workspace_path, issue_id, issue_identifier, events).await?,
-            ))
-        }
-        RunnerConfig::Acp(c) => {
-            Ok(Box::new(
-                AcpSession::launch(c, workspace_path, issue_id, issue_identifier, events).await?,
-            ))
-        }
+        RunnerConfig::Codex(c) => Ok(Box::new(
+            CodexSession::launch(c, workspace_path, issue_id, issue_identifier, events).await?,
+        )),
+        RunnerConfig::Acp(c) => Ok(Box::new(
+            AcpSession::launch(c, workspace_path, issue_id, issue_identifier, events).await?,
+        )),
     }
 }
