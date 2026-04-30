@@ -1,0 +1,11 @@
+[package]
+name = "asahi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4.42", features = ["clock", "serde"] }
+rocket = { version = "0.5.1", features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.12"
+uuid = { version = "1.23.1", features = ["v4"] }
