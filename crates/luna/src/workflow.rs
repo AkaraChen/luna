@@ -70,6 +70,38 @@ impl WorkflowStore {
     }
 }
 
+pub fn discover_workflow_path(start_dir: &Path) -> Result<PathBuf> {
+    let start_dir = absolutize_path(start_dir)?;
+
+    for dir in start_dir.ancestors() {
+        let mut lowercase_match = None;
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            match entry.file_name().to_str() {
+                Some("WORKFLOW.md") => return Ok(path),
+                Some("workflow.md") => lowercase_match = Some(path),
+                _ => {}
+            }
+        }
+
+        if let Some(path) = lowercase_match {
+            return Ok(path);
+        }
+    }
+
+    Err(LunaError::MissingWorkflowFile(
+        start_dir.join("WORKFLOW.md"),
+    ))
+}
+
 fn load_definition(path: &Path) -> Result<(WorkflowDefinition, Option<SystemTime>)> {
     let contents = fs::read_to_string(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -135,7 +167,11 @@ pub fn parse_workflow_definition(contents: &str) -> Result<WorkflowDefinition> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_workflow_definition;
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{discover_workflow_path, parse_workflow_definition};
 
     #[test]
     fn parses_front_matter() {
@@ -152,5 +188,25 @@ mod tests {
         let workflow = parse_workflow_definition("body only").expect("workflow should parse");
         assert_eq!(workflow.prompt_template, "body only");
         assert!(workflow.config.is_empty());
+    }
+
+    #[test]
+    fn discovers_workflow_in_parent_directory() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp.path().join("a/b");
+        fs::create_dir_all(&nested).expect("mkdir");
+        fs::write(temp.path().join("WORKFLOW.md"), "---\n---\n").expect("write workflow");
+
+        let path = discover_workflow_path(&nested).expect("workflow path");
+        assert_eq!(path, temp.path().join("WORKFLOW.md"));
+    }
+
+    #[test]
+    fn discovers_lowercase_workflow_name() {
+        let temp = tempdir().expect("tempdir");
+        fs::write(temp.path().join("workflow.md"), "---\n---\n").expect("write workflow");
+
+        let path = discover_workflow_path(temp.path()).expect("workflow path");
+        assert_eq!(path, temp.path().join("workflow.md"));
     }
 }

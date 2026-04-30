@@ -64,6 +64,9 @@ Luna 适合以下开发者：
 # 在当前目录初始化 WORKFLOW.md
 luna init
 
+# 在当前 issue 工作区里发布 tracker comment
+luna comment "开始实现，接下来会补测试。"
+
 # 启动编排器
 luna
 ```

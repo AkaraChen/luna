@@ -8,6 +8,7 @@ use crate::{
     error::{LunaError, Result},
     model::{BlockerRef, Issue},
     tracker::Tracker,
+    workspace::sanitize_workspace_key,
 };
 
 const ISSUE_PAGE_SIZE: i64 = 50;
@@ -162,6 +163,43 @@ impl LinearTracker {
         Ok(all_issues)
     }
 
+    async fn fetch_all_project_issues(&self) -> Result<Vec<Issue>> {
+        let project_slug = self
+            .config
+            .project_slug
+            .as_ref()
+            .ok_or(LunaError::MissingTrackerProjectSlug)?;
+
+        let mut issues = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let body = self
+                .graphql(
+                    LINEAR_PROJECT_ISSUES_QUERY,
+                    json!({
+                        "projectSlug": project_slug,
+                        "first": ISSUE_PAGE_SIZE,
+                        "relationFirst": ISSUE_PAGE_SIZE,
+                        "after": cursor,
+                    }),
+                )
+                .await?;
+
+            let (page_issues, page_info) = decode_linear_page(&body)?;
+            issues.extend(page_issues);
+
+            match page_info {
+                Some(info) if info.has_next_page => {
+                    cursor = info.end_cursor;
+                }
+                _ => break,
+            }
+        }
+
+        Ok(issues)
+    }
+
     async fn resolve_assignee_filter(&self, assignee: &str) -> Result<Option<String>> {
         let trimmed = assignee.trim();
         if trimmed.is_empty() {
@@ -174,9 +212,7 @@ impl LinearTracker {
                 .and_then(|d| d.get("viewer"))
                 .and_then(|v| v.get("id"))
                 .and_then(|id| id.as_str())
-                .ok_or_else(|| {
-                    LunaError::Tracker("missing_linear_viewer_identity".to_string())
-                })?;
+                .ok_or_else(|| LunaError::Tracker("missing_linear_viewer_identity".to_string()))?;
             Ok(Some(viewer_id.to_string()))
         } else {
             Ok(Some(trimmed.to_string()))
@@ -208,12 +244,25 @@ impl Tracker for LinearTracker {
         self.do_fetch_by_ids(issue_ids).await
     }
 
-    async fn create_comment(&self, issue_id: &str, body: &str) -> Result<()> {
+    async fn find_issue_by_locator(&self, locator: &str) -> Result<Option<Issue>> {
+        let locator = locator.trim();
+        if locator.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(self
+            .fetch_all_project_issues()
+            .await?
+            .into_iter()
+            .find(|issue| issue_matches_locator(issue, locator)))
+    }
+
+    async fn create_comment(&self, issue: &Issue, body: &str) -> Result<()> {
         let response = self
             .graphql(
                 LINEAR_CREATE_COMMENT_MUTATION,
                 json!({
-                    "issueId": issue_id,
+                    "issueId": issue.id,
                     "body": body,
                 }),
             )
@@ -328,7 +377,10 @@ fn normalize_linear_issue(node: &serde_json::Value) -> Option<Issue> {
     let id = node.get("id")?.as_str()?.to_string();
     let identifier = node.get("identifier")?.as_str()?.to_string();
     let title = node.get("title")?.as_str()?.to_string();
-    let description = node.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
+    let description = node
+        .get("description")
+        .and_then(|d| d.as_str())
+        .map(|s| s.to_string());
     let priority = node.get("priority").and_then(|p| p.as_i64());
     let state = node
         .get("state")
@@ -336,8 +388,14 @@ fn normalize_linear_issue(node: &serde_json::Value) -> Option<Issue> {
         .and_then(|n| n.as_str())
         .map(|s| s.to_string())
         .unwrap_or_default();
-    let branch_name = node.get("branchName").and_then(|b| b.as_str()).map(|s| s.to_string());
-    let url = node.get("url").and_then(|u| u.as_str()).map(|s| s.to_string());
+    let branch_name = node
+        .get("branchName")
+        .and_then(|b| b.as_str())
+        .map(|s| s.to_string());
+    let url = node
+        .get("url")
+        .and_then(|u| u.as_str())
+        .map(|s| s.to_string());
 
     let labels = node
         .get("labels")
@@ -365,7 +423,10 @@ fn normalize_linear_issue(node: &serde_json::Value) -> Option<Issue> {
                     }
                     let issue = rel.get("issue")?;
                     Some(BlockerRef {
-                        id: issue.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()),
+                        id: issue
+                            .get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string()),
                         identifier: issue
                             .get("identifier")
                             .and_then(|id| id.as_str())
@@ -419,6 +480,12 @@ fn truncate_error_body(value: &serde_json::Value) -> String {
     }
 }
 
+fn issue_matches_locator(issue: &Issue, locator: &str) -> bool {
+    issue.id == locator
+        || issue.identifier.eq_ignore_ascii_case(locator)
+        || sanitize_workspace_key(&issue.identifier).eq_ignore_ascii_case(locator)
+}
+
 #[derive(Debug)]
 struct PageInfo {
     has_next_page: bool,
@@ -428,6 +495,51 @@ struct PageInfo {
 const LINEAR_POLL_QUERY: &str = r#"
 query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
   issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      priority
+      state {
+        name
+      }
+      branchName
+      url
+      assignee {
+        id
+      }
+      labels {
+        nodes {
+          name
+        }
+      }
+      inverseRelations(first: $relationFirst) {
+        nodes {
+          type
+          issue {
+            id
+            identifier
+            state {
+              name
+            }
+          }
+        }
+      }
+      createdAt
+      updatedAt
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+"#;
+
+const LINEAR_PROJECT_ISSUES_QUERY: &str = r#"
+query SymphonyLinearProjectIssues($projectSlug: String!, $first: Int!, $relationFirst: Int!, $after: String) {
+  issues(filter: {project: {slugId: {eq: $projectSlug}}}, first: $first, after: $after) {
     nodes {
       id
       identifier
@@ -548,3 +660,35 @@ query SymphonyResolveStateId($issueId: String!, $stateName: String!) {
   }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use crate::model::Issue;
+
+    use super::issue_matches_locator;
+
+    fn issue(identifier: &str) -> Issue {
+        Issue {
+            id: "linear-id".to_string(),
+            identifier: identifier.to_string(),
+            title: "title".to_string(),
+            description: None,
+            priority: None,
+            state: "Todo".to_string(),
+            branch_name: None,
+            url: None,
+            labels: Vec::new(),
+            blocked_by: Vec::new(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn matches_issue_locator_against_identifier_and_workspace_key() {
+        let issue = issue("ENG-42");
+        assert!(issue_matches_locator(&issue, "ENG-42"));
+        assert!(issue_matches_locator(&issue, "eng-42"));
+        assert!(!issue_matches_locator(&issue, "ENG-43"));
+    }
+}

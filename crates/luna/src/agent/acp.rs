@@ -45,6 +45,8 @@ impl AcpSession {
             .arg("-lc")
             .arg(&config.command)
             .current_dir(&workspace_path)
+            .env("LUNA_ISSUE_ID", &issue_id)
+            .env("LUNA_ISSUE_IDENTIFIER", &issue_identifier)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -55,7 +57,8 @@ impl AcpSession {
         let agent = AcpAgent::from_str(&config.command)
             .map_err(|e| LunaError::Agent(format!("failed to parse acp agent command: {e}")))?;
 
-        let (prompt_tx, mut prompt_rx) = mpsc::channel::<(String, oneshot::Sender<Result<TurnExit>>)>(1);
+        let (prompt_tx, mut prompt_rx) =
+            mpsc::channel::<(String, oneshot::Sender<Result<TurnExit>>)>(1);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         let (session_ready_tx, session_ready_rx) = oneshot::channel();
 
@@ -74,22 +77,27 @@ impl AcpSession {
                 .on_receive_notification(
                     async move |notification: SessionNotification, _cx| {
                         match notification.update {
-                            agent_client_protocol::schema::SessionUpdate::AgentThoughtChunk(chunk) => {
-                                if let agent_client_protocol::schema::ContentBlock::Text(text) = chunk.content {
-                                    let _ = events_notif.send(WorkerEvent::Session(SessionUpdate {
-                                        issue_id: issue_id_notif.clone(),
-                                        issue_identifier: issue_identifier_notif.clone(),
-                                        event: "item/agentMessage/delta".to_string(),
-                                        timestamp: chrono::Utc::now(),
-                                        session_id: None,
-                                        thread_id: None,
-                                        turn_id: None,
-                                        agent_pid,
-                                        message: Some(text.text.clone()),
-                                        usage: None,
-                                        rate_limits: None,
-                                        turn_count: None,
-                                    }));
+                            agent_client_protocol::schema::SessionUpdate::AgentThoughtChunk(
+                                chunk,
+                            ) => {
+                                if let agent_client_protocol::schema::ContentBlock::Text(text) =
+                                    chunk.content
+                                {
+                                    let _ =
+                                        events_notif.send(WorkerEvent::Session(SessionUpdate {
+                                            issue_id: issue_id_notif.clone(),
+                                            issue_identifier: issue_identifier_notif.clone(),
+                                            event: "item/agentMessage/delta".to_string(),
+                                            timestamp: chrono::Utc::now(),
+                                            session_id: None,
+                                            thread_id: None,
+                                            turn_id: None,
+                                            agent_pid,
+                                            message: Some(text.text.clone()),
+                                            usage: None,
+                                            rate_limits: None,
+                                            turn_count: None,
+                                        }));
                                 }
                             }
                             _ => {}
@@ -99,11 +107,17 @@ impl AcpSession {
                     agent_client_protocol::on_receive_notification!(),
                 )
                 .on_receive_request(
-                    async move |request: RequestPermissionRequest, responder: agent_client_protocol::Responder<RequestPermissionResponse>, _connection| {
+                    async move |request: RequestPermissionRequest,
+                                responder: agent_client_protocol::Responder<
+                        RequestPermissionResponse,
+                    >,
+                                _connection| {
                         let option_id = request.options.first().map(|opt| opt.option_id.clone());
                         if let Some(id) = option_id {
                             responder.respond(RequestPermissionResponse::new(
-                                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(id)),
+                                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                                    id,
+                                )),
                             ))
                         } else {
                             responder.respond(RequestPermissionResponse::new(

@@ -284,9 +284,9 @@ Project context:
 - Open the project in the browser with: `gh project view {project_number} --owner {owner} --web`
 - Inspect project items with: `gh project item-list {project_number} --owner {owner} --format json`
 - If this item corresponds to a repository issue, inspect it with commands like:
-  `gh issue view <number> -R {repo_hint} --comments`
-  `gh issue comment <number> -R {repo_hint} --body "..."`
-  `gh issue edit <number> -R {repo_hint} ...`
+  `luna show`
+  `luna comment "..."`
+  `luna move "In Progress"`
 - Open, inspect, and update pull requests with commands like:
   `gh pr create -R {repo_hint} --fill`
   `gh pr view -R {repo_hint} --json number,url,reviewDecision,statusCheckRollup`
@@ -317,13 +317,15 @@ Attempt:
 Execution rules:
 - Work only inside the current workspace.
 - The repository checkout already lives in the current workspace; run commands from the current working directory and do not construct nested `.luna/workspaces/...` paths yourself.
+- Do not guess Luna CLI usage. Check the real interface with `luna --help`, and inspect subcommand details with commands like `luna comment --help` whenever you need exact flags or behavior.
 - At the start of every run, sync the workspace with the latest upstream code before making changes. Prefer `git pull --ff-only`; if the workspace is detached or has no upstream tracking branch, fetch the latest remote state and update from the correct base branch before continuing.
-- If this project item maps to a GitHub issue, inspect the issue with `gh issue view ... --comments` before editing code.
-- Use `gh issue comment` to post meaningful progress updates, blockers, and the final handoff summary.
+- Inspect the current tracker item with `luna show` before editing code.
+- Use `luna comment` to post meaningful progress updates, blockers, and the final handoff summary so the workflow stays tracker-agnostic.
+- Use `luna move "<state>"` when you need to advance the tracker state through the workflow.
 - When the implementation is ready, open or update a PR with `gh pr create`, `gh pr view`, `gh pr edit`, and `gh pr comment`.
 - After a PR exists, check review status and CI with `gh pr view`, `gh pr checks`, or `gh run watch`.
 - Once the required review is satisfied and CI is green, merge the PR with `gh pr merge` instead of stopping at a local code change.
-- Use `gh project`, `gh issue`, `gh pr`, and git commands whenever you need to inspect or update GitHub state.
+- Use `luna`, `gh pr`, and git commands whenever you need to inspect or update project state.
 - Validate changes before stopping.
 - Move the project item or backing issue to the next workflow-defined handoff state when appropriate.
 "#,

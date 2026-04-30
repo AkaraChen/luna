@@ -64,6 +64,9 @@ Luna is for developers who:
 # Initialize a WORKFLOW.md in the current directory
 luna init
 
+# Post a tracker comment from the current issue workspace
+luna comment "Started implementation, validating tests next."
+
 # Run the orchestrator
 luna
 ```

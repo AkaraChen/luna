@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io::{self, IsTerminal, Read},
+    path::{Path, PathBuf},
+};
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, fmt};
@@ -8,6 +11,11 @@ use luna::{
     init::{InitOptions, run_init},
     orchestrator,
     paths::absolutize_path,
+    tracker::{
+        CommentCommandOptions, MoveCommandOptions, ShowCommandOptions, TrackerTargetOptions,
+        run_comment_command, run_move_command, run_show_command,
+    },
+    workflow::discover_workflow_path,
 };
 
 #[derive(Debug, Parser)]
@@ -22,6 +30,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "Initialize a default WORKFLOW.md in a directory")]
     Init {
         #[arg(default_value = ".")]
         dir: PathBuf,
@@ -37,6 +46,54 @@ enum Commands {
         project_title: Option<String>,
         #[arg(long)]
         non_interactive: bool,
+    },
+    #[command(about = "Post a comment to the current tracker item")]
+    Comment {
+        #[arg(
+            long,
+            help = "Path to WORKFLOW.md. Defaults to the nearest WORKFLOW.md or workflow.md in the current directory tree."
+        )]
+        workflow: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Explicit issue locator. If omitted, Luna resolves the current issue from LUNA_ISSUE_* env vars or the current workspace."
+        )]
+        issue: Option<String>,
+        #[arg(
+            value_name = "BODY",
+            help = "Comment body. If omitted, Luna reads from stdin when stdin is piped."
+        )]
+        body: Vec<String>,
+    },
+    #[command(about = "Show the current tracker item")]
+    Show {
+        #[arg(
+            long,
+            help = "Path to WORKFLOW.md. Defaults to the nearest WORKFLOW.md or workflow.md in the current directory tree."
+        )]
+        workflow: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Explicit issue locator. If omitted, Luna resolves the current issue from LUNA_ISSUE_* env vars or the current workspace."
+        )]
+        issue: Option<String>,
+        #[arg(long, help = "Print the issue as JSON instead of human-readable text.")]
+        json: bool,
+    },
+    #[command(about = "Move the current tracker item to a new state")]
+    Move {
+        #[arg(
+            long,
+            help = "Path to WORKFLOW.md. Defaults to the nearest WORKFLOW.md or workflow.md in the current directory tree."
+        )]
+        workflow: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Explicit issue locator. If omitted, Luna resolves the current issue from LUNA_ISSUE_* env vars or the current workspace."
+        )]
+        issue: Option<String>,
+        #[arg(value_name = "STATE", help = "Target tracker state name.")]
+        state: String,
     },
 }
 
@@ -70,6 +127,46 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some(Commands::Comment {
+            workflow,
+            issue,
+            body,
+        }) => {
+            let target = resolve_tracker_target(workflow, issue)?;
+            load_dotenv_file(&target.workflow_path)?;
+
+            let identifier = run_comment_command(CommentCommandOptions {
+                target,
+                body: read_comment_body(body)?,
+            })
+            .await?;
+            println!("commented on {identifier}");
+            Ok(())
+        }
+        Some(Commands::Show {
+            workflow,
+            issue,
+            json,
+        }) => {
+            let target = resolve_tracker_target(workflow, issue)?;
+            load_dotenv_file(&target.workflow_path)?;
+            println!(
+                "{}",
+                run_show_command(ShowCommandOptions { target, json }).await?
+            );
+            Ok(())
+        }
+        Some(Commands::Move {
+            workflow,
+            issue,
+            state,
+        }) => {
+            let target = resolve_tracker_target(workflow, issue)?;
+            load_dotenv_file(&target.workflow_path)?;
+            let identifier = run_move_command(MoveCommandOptions { target, state }).await?;
+            println!("moved {identifier}");
+            Ok(())
+        }
         None => {
             let workflow_path =
                 absolutize_path(&cli.workflow.unwrap_or_else(|| PathBuf::from("WORKFLOW.md")))?;
@@ -77,6 +174,46 @@ async fn main() -> Result<()> {
             orchestrator::run(workflow_path).await
         }
     }
+}
+
+fn resolve_tracker_target(
+    workflow: Option<PathBuf>,
+    issue: Option<String>,
+) -> Result<TrackerTargetOptions> {
+    let cwd = std::env::current_dir()?;
+    let workflow_path = match workflow {
+        Some(path) => absolutize_path(&path)?,
+        None => discover_workflow_path(&cwd)?,
+    };
+
+    Ok(TrackerTargetOptions {
+        workflow_path,
+        issue_locator: issue,
+        cwd,
+    })
+}
+
+fn read_comment_body(args: Vec<String>) -> Result<String> {
+    let body = if args.is_empty() {
+        if io::stdin().is_terminal() {
+            String::new()
+        } else {
+            let mut stdin = String::new();
+            io::stdin().read_to_string(&mut stdin)?;
+            stdin
+        }
+    } else {
+        args.join(" ")
+    };
+
+    let body = body.trim().to_string();
+    if body.is_empty() {
+        return Err(luna::error::LunaError::InvalidConfig(
+            "comment body is required; pass text or pipe stdin to `luna comment`".to_string(),
+        ));
+    }
+
+    Ok(body)
 }
 
 fn init_logging() {

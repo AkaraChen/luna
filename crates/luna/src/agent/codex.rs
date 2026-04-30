@@ -12,9 +12,7 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use crate::{
-    agent::{
-        SessionUpdate, StopReason, TurnExit, UsageUpdate, WorkerEvent,
-    },
+    agent::{SessionUpdate, StopReason, TurnExit, UsageUpdate, WorkerEvent},
     config::CodexRunner,
     error::{LunaError, Result},
     paths::absolutize_path,
@@ -80,6 +78,8 @@ impl CodexSession {
             .arg("-lc")
             .arg(&config.command)
             .current_dir(&workspace_path)
+            .env("LUNA_ISSUE_ID", &issue_id)
+            .env("LUNA_ISSUE_IDENTIFIER", &issue_identifier)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -195,7 +195,8 @@ impl CodexSession {
             self.emit("session_started", None, None, Some(turn_number));
         }
 
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(self.config.turn_timeout_ms);
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(self.config.turn_timeout_ms);
         loop {
             if let Some(status) = self.turn_terminal_status.take() {
                 return Ok(match status.as_str() {

@@ -10,6 +10,7 @@ use crate::{
     error::{LunaError, Result},
     model::Issue,
     tracker::Tracker,
+    workspace::sanitize_workspace_key,
 };
 
 #[derive(Clone, Debug)]
@@ -20,6 +21,21 @@ pub struct GitHubProjectTracker {
 impl GitHubProjectTracker {
     pub fn new(config: GitHubProjectTrackerConfig) -> Self {
         Self { config }
+    }
+
+    async fn graphql<T>(&self, query: &str, fields: &[(&str, String)]) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let mut command = Command::new(&self.config.gh_command);
+        command.arg("api").arg("graphql");
+        command.arg("-f").arg(format!("query={query}"));
+        for (key, value) in fields {
+            command.arg("-F").arg(format!("{key}={value}"));
+        }
+
+        let output = command.output().await?;
+        parse_gh_json_output("gh api graphql", output)
     }
 
     async fn fetch_all_items(&self) -> Result<Vec<Issue>> {
@@ -215,27 +231,128 @@ query ProjectItems(
 }
 "#;
 
-        let mut command = Command::new(&self.config.gh_command);
-        command.arg("api").arg("graphql");
-        command.arg("-f").arg(format!("query={query}"));
-        command
-            .arg("-F")
-            .arg(format!("owner={}", self.config.owner));
-        command
-            .arg("-F")
-            .arg(format!("projectNumber={}", self.config.project_number));
-        command
-            .arg("-F")
-            .arg(format!("statusField={}", self.config.status_field));
-        command
-            .arg("-F")
-            .arg(format!("priorityField={}", self.config.priority_field));
+        let mut fields = vec![
+            ("owner", self.config.owner.clone()),
+            ("projectNumber", self.config.project_number.to_string()),
+            ("statusField", self.config.status_field.clone()),
+            ("priorityField", self.config.priority_field.clone()),
+        ];
         if let Some(cursor) = cursor {
-            command.arg("-F").arg(format!("cursor={cursor}"));
+            fields.push(("cursor", cursor));
         }
 
-        let output = command.output().await?;
-        parse_gh_json_output("gh api graphql", output)
+        self.graphql(query, &fields).await
+    }
+
+    async fn resolve_status_field_option(
+        &self,
+        state_name: &str,
+    ) -> Result<ResolvedProjectStatusField> {
+        let query = r#"
+query ProjectStatusField(
+  $owner: String!
+  $projectNumber: Int!
+  $statusField: String!
+) {
+  repositoryOwner(login: $owner) {
+    ... on User {
+      projectV2(number: $projectNumber) {
+        id
+        fields(first: 50) {
+          nodes {
+            __typename
+            ... on ProjectV2SingleSelectField {
+              id
+              name
+              options {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+    ... on Organization {
+      projectV2(number: $projectNumber) {
+        id
+        fields(first: 50) {
+          nodes {
+            __typename
+            ... on ProjectV2SingleSelectField {
+              id
+              name
+              options {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#;
+
+        let payload: ProjectStatusFieldResponse = self
+            .graphql(
+                query,
+                &[
+                    ("owner", self.config.owner.clone()),
+                    ("projectNumber", self.config.project_number.to_string()),
+                    ("statusField", self.config.status_field.clone()),
+                ],
+            )
+            .await?;
+
+        let project = payload
+            .data
+            .repository_owner
+            .and_then(|owner| owner.project_v2)
+            .ok_or_else(|| {
+                LunaError::Tracker(format!(
+                    "github_project_not_found: owner={}, project_number={}",
+                    self.config.owner, self.config.project_number
+                ))
+            })?;
+
+        let field = project
+            .fields
+            .nodes
+            .into_iter()
+            .find_map(|field| match field {
+                ProjectFieldConfig::ProjectV2SingleSelectField { id, name, options }
+                    if name.eq_ignore_ascii_case(&self.config.status_field) =>
+                {
+                    Some((id, options))
+                }
+                _ => None,
+            })
+            .ok_or_else(|| {
+                LunaError::Tracker(format!(
+                    "github_project_status_field_not_found: {}",
+                    self.config.status_field
+                ))
+            })?;
+
+        let option_id = field
+            .1
+            .into_iter()
+            .find(|option| option.name.eq_ignore_ascii_case(state_name))
+            .map(|option| option.id)
+            .ok_or_else(|| {
+                LunaError::Tracker(format!(
+                    "github_project_state_option_not_found: {}",
+                    state_name
+                ))
+            })?;
+
+        Ok(ResolvedProjectStatusField {
+            project_id: project.id,
+            field_id: field.0,
+            option_id,
+        })
     }
 }
 
@@ -276,16 +393,107 @@ impl Tracker for GitHubProjectTracker {
             .collect())
     }
 
-    async fn create_comment(&self, _issue_id: &str, _body: &str) -> Result<()> {
-        Err(LunaError::Tracker(
-            "create_comment is not supported for github_project tracker".to_string(),
-        ))
+    async fn find_issue_by_locator(&self, locator: &str) -> Result<Option<Issue>> {
+        let locator = locator.trim();
+        if locator.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(self
+            .fetch_all_items()
+            .await?
+            .into_iter()
+            .find(|issue| issue_matches_locator(issue, locator)))
     }
 
-    async fn update_issue_state(&self, _issue_id: &str, _state_name: &str) -> Result<()> {
-        Err(LunaError::Tracker(
-            "update_issue_state is not supported for github_project tracker".to_string(),
-        ))
+    async fn create_comment(&self, issue: &Issue, body: &str) -> Result<()> {
+        let (repo, number) = parse_github_issue_reference(&issue.identifier).ok_or_else(|| {
+            LunaError::Tracker(format!(
+                "github_project comment requires a backing GitHub issue: {}",
+                issue.identifier
+            ))
+        })?;
+
+        let output = Command::new(&self.config.gh_command)
+            .arg("issue")
+            .arg("comment")
+            .arg(number.to_string())
+            .arg("-R")
+            .arg(repo)
+            .arg("--body")
+            .arg(body)
+            .output()
+            .await?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(LunaError::Tracker(format!(
+                "gh issue comment failed: status={}, stderr={}",
+                output.status,
+                truncate(&String::from_utf8_lossy(&output.stderr))
+            )))
+        }
+    }
+
+    async fn update_issue_state(&self, issue_id: &str, state_name: &str) -> Result<()> {
+        let state_name = state_name.trim();
+        if state_name.is_empty() {
+            return Err(LunaError::Tracker(
+                "state name must be non-empty".to_string(),
+            ));
+        }
+
+        let resolved = self.resolve_status_field_option(state_name).await?;
+        let query = r#"
+mutation UpdateProjectItemStatus(
+  $projectId: ID!
+  $itemId: ID!
+  $fieldId: ID!
+  $optionId: String!
+) {
+  updateProjectV2ItemFieldValue(
+    input: {
+      projectId: $projectId
+      itemId: $itemId
+      fieldId: $fieldId
+      value: {singleSelectOptionId: $optionId}
+    }
+  ) {
+    projectV2Item {
+      id
+    }
+  }
+}
+"#;
+
+        let response: UpdateProjectItemStatusResponse = self
+            .graphql(
+                query,
+                &[
+                    ("projectId", resolved.project_id),
+                    ("itemId", issue_id.to_string()),
+                    ("fieldId", resolved.field_id),
+                    ("optionId", resolved.option_id),
+                ],
+            )
+            .await?;
+
+        let updated_id = response
+            .data
+            .update_project_v2_item_field_value
+            .and_then(|update| update.project_v2_item)
+            .map(|item| item.id)
+            .ok_or_else(|| LunaError::Tracker("github_project_state_update_failed".to_string()))?;
+
+        if updated_id == issue_id {
+            Ok(())
+        } else {
+            Err(LunaError::Tracker(format!(
+                "github_project_state_update_failed: unexpected item id {}",
+                updated_id
+            )))
+        }
     }
 }
 
@@ -410,12 +618,77 @@ fn parse_datetime(value: Option<String>) -> Option<DateTime<Utc>> {
     })
 }
 
+struct ResolvedProjectStatusField {
+    project_id: String,
+    field_id: String,
+    option_id: String,
+}
+
+fn issue_matches_locator(issue: &Issue, locator: &str) -> bool {
+    issue.id == locator
+        || issue.identifier.eq_ignore_ascii_case(locator)
+        || sanitize_workspace_key(&issue.identifier).eq_ignore_ascii_case(locator)
+}
+
+fn parse_github_issue_reference(identifier: &str) -> Option<(&str, u64)> {
+    let (repo, number) = identifier.rsplit_once('#')?;
+    if !repo.contains('/') {
+        return None;
+    }
+    let number = number.parse().ok()?;
+    Some((repo, number))
+}
+
 fn truncate(value: &str) -> String {
     const LIMIT: usize = 400;
     if value.len() <= LIMIT {
         value.to_string()
     } else {
         format!("{}...", &value[..LIMIT])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::model::Issue;
+
+    use super::{issue_matches_locator, parse_github_issue_reference};
+
+    fn issue(identifier: &str) -> Issue {
+        Issue {
+            id: "project-item-id".to_string(),
+            identifier: identifier.to_string(),
+            title: "title".to_string(),
+            description: None,
+            priority: None,
+            state: "Todo".to_string(),
+            branch_name: None,
+            url: None,
+            labels: Vec::new(),
+            blocked_by: Vec::new(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn matches_issue_locator_against_identifier_and_workspace_key() {
+        let issue = issue("acme/repo#42");
+        assert!(issue_matches_locator(&issue, "acme/repo#42"));
+        assert!(issue_matches_locator(&issue, "acme_repo_42"));
+        assert!(!issue_matches_locator(&issue, "acme/repo#43"));
+    }
+
+    #[test]
+    fn parses_backing_issue_reference() {
+        assert_eq!(
+            parse_github_issue_reference("acme/repo#42"),
+            Some(("acme/repo", 42))
+        );
+        assert_eq!(
+            parse_github_issue_reference("acme/projects/1#draft-42"),
+            None
+        );
     }
 }
 
@@ -445,11 +718,67 @@ struct ProjectNode {
     items: ProjectItemConnection,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ProjectFieldConnection {
+    #[serde(default)]
+    nodes: Vec<ProjectFieldConfig>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectItemConnection {
     nodes: Vec<ProjectItemNode>,
     page_info: PageInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectStatusFieldResponse {
+    data: ProjectStatusFieldQueryData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectStatusFieldQueryData {
+    repository_owner: Option<StatusRepositoryOwnerNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusRepositoryOwnerNode {
+    #[serde(default)]
+    project_v2: Option<ProjectStatusNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectStatusNode {
+    id: String,
+    fields: ProjectFieldConnection,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateProjectItemStatusResponse {
+    data: UpdateProjectItemStatusData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProjectItemStatusData {
+    #[serde(default)]
+    update_project_v2_item_field_value: Option<UpdateProjectItemStatusPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProjectItemStatusPayload {
+    #[serde(default)]
+    project_v2_item: Option<UpdatedProjectItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdatedProjectItem {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -478,6 +807,24 @@ enum ProjectFieldValue {
     ProjectV2ItemFieldSingleSelectValue { name: Option<String> },
     ProjectV2ItemFieldTextValue { text: Option<String> },
     ProjectV2ItemFieldNumberValue { number: Option<f64> },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "__typename")]
+enum ProjectFieldConfig {
+    ProjectV2SingleSelectField {
+        id: String,
+        name: String,
+        options: Vec<ProjectFieldOption>,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectFieldOption {
+    id: String,
+    name: String,
 }
 
 impl ProjectFieldValue {
