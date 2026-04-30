@@ -26,6 +26,16 @@ export interface Comment {
   created_at: string;
 }
 
+export interface Activity {
+  id: string;
+  issue_id: string | null;
+  kind: string;
+  actor_id: string | null;
+  title: string;
+  body: string | null;
+  created_at: string;
+}
+
 export interface NotificationIssueRef {
   id: string;
   identifier: string;
@@ -56,6 +66,10 @@ export interface IssueListResponse {
 
 export interface CommentListResponse {
   comments: Comment[];
+}
+
+export interface ActivityListResponse {
+  activities: Activity[];
 }
 
 export interface NotificationListResponse {
@@ -122,6 +136,10 @@ export async function updateIssueState(issueId: string, state: string): Promise<
 
 export async function fetchComments(issueId: string): Promise<CommentListResponse> {
   return request<CommentListResponse>(`/api/issues/${encodeURIComponent(issueId)}/comments`);
+}
+
+export async function fetchActivities(issueId: string): Promise<ActivityListResponse> {
+  return request<ActivityListResponse>(`/api/issues/${encodeURIComponent(issueId)}/activities`);
 }
 
 export async function createComment(issueId: string, body: string): Promise<Comment> {

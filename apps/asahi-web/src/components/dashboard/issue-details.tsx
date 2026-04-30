@@ -6,10 +6,13 @@ import { useLocation } from "wouter";
 import {
   createComment,
   deleteIssue,
+  fetchActivities,
   fetchComments,
   fetchIssues,
   updateIssue,
   updateIssueState,
+  type Activity,
+  type Comment,
   type Issue,
 } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
@@ -34,6 +37,11 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     queryFn: () => fetchComments(issue.id),
   });
 
+  const activitiesQuery = useSuspenseQuery({
+    queryKey: ["activities", issue.id],
+    queryFn: () => fetchActivities(issue.id),
+  });
+
   const allIssuesQuery = useSuspenseQuery({
     queryKey: ["issues", "all"],
     queryFn: () => fetchIssues(),
@@ -44,6 +52,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      void queryClient.invalidateQueries({ queryKey: ["activities", issue.id] });
     },
   });
 
@@ -53,6 +62,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      void queryClient.invalidateQueries({ queryKey: ["activities", issue.id] });
     },
   });
 
@@ -71,6 +81,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     onSuccess: () => {
       setComment("");
       void queryClient.invalidateQueries({ queryKey: ["comments", issue.id] });
+      void queryClient.invalidateQueries({ queryKey: ["activities", issue.id] });
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
@@ -169,15 +180,10 @@ export function IssueDetails({ issue }: { issue: Issue }) {
       <div className="min-h-0 flex-1 overflow-auto border-t border-[#eceae5] px-5 py-4">
         <div className="mb-3 text-sm font-medium">Activity</div>
         <div className="space-y-3">
-          {commentsQuery.data.comments.map((item) => (
-            <div className="rounded-md bg-[#f7f6f2] p-3" key={item.id}>
-              <div className="mb-1 text-xs text-[#85827a]">{formatDate(item.created_at)}</div>
-              <div className="text-sm leading-6 text-[#33312d]">{item.body}</div>
-            </div>
-          ))}
-          {commentsQuery.data.comments.length === 0 ? (
-            <div className="text-sm text-[#77746c]">No activity yet.</div>
-          ) : null}
+          <Timeline
+            activities={activitiesQuery.data.activities}
+            comments={commentsQuery.data.comments}
+          />
         </div>
       </div>
 
@@ -195,6 +201,63 @@ export function IssueDetails({ issue }: { issue: Issue }) {
           </Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+type TimelineItem =
+  | { type: "activity"; data: Activity }
+  | { type: "comment"; data: Comment };
+
+function Timeline({
+  activities,
+  comments,
+}: {
+  activities: Activity[];
+  comments: Comment[];
+}) {
+  const items: TimelineItem[] = [
+    ...activities
+      .filter((a) => a.kind !== "comment_created")
+      .map((a): TimelineItem => ({ type: "activity", data: a })),
+    ...comments.map((c): TimelineItem => ({ type: "comment", data: c })),
+  ];
+
+  items.sort(
+    (a, b) =>
+      new Date(a.data.created_at).getTime() -
+      new Date(b.data.created_at).getTime(),
+  );
+
+  if (items.length === 0) {
+    return <div className="text-sm text-[#77746c]">No activity yet.</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.map((item) =>
+        item.type === "comment" ? (
+          <div className="rounded-md bg-[#f7f6f2] p-3" key={`comment-${item.data.id}`}>
+            <div className="mb-1 text-xs text-[#85827a]">
+              {formatDate(item.data.created_at)}
+            </div>
+            <div className="text-sm leading-6 text-[#33312d]">{item.data.body}</div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2 py-1" key={`activity-${item.data.id}`}>
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[#c9c4bb]" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm text-[#55524b]">{item.data.title}</div>
+              {item.data.body ? (
+                <div className="mt-0.5 text-sm text-[#85827a]">{item.data.body}</div>
+              ) : null}
+              <div className="mt-0.5 text-xs text-[#a8a59d]">
+                {formatDate(item.data.created_at)}
+              </div>
+            </div>
+          </div>
+        ),
+      )}
     </div>
   );
 }

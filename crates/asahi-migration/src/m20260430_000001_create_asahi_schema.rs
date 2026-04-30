@@ -69,6 +69,22 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
+                    .table(Activities::Table)
+                    .if_not_exists()
+                    .col(string(Activities::Id).primary_key().take())
+                    .col(string_null(Activities::IssueId))
+                    .col(string(Activities::Kind))
+                    .col(string_null(Activities::ActorId))
+                    .col(string(Activities::Title))
+                    .col(text_null(Activities::Body))
+                    .col(timestamp_with_time_zone(Activities::CreatedAt))
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_table(
+                Table::create()
                     .table(Notifications::Table)
                     .if_not_exists()
                     .col(string(Notifications::Id).primary_key().take())
@@ -128,11 +144,33 @@ impl MigrationTrait for Migration {
             Notifications::ArchivedAt,
         )
         .await?;
+        create_index(
+            manager,
+            "idx_activities_issue_id",
+            Activities::Table,
+            Activities::IssueId,
+        )
+        .await?;
+        create_index(
+            manager,
+            "idx_activities_created_at",
+            Activities::Table,
+            Activities::CreatedAt,
+        )
+        .await?;
+        create_composite_index(
+            manager,
+            "idx_notifications_issue_archived",
+        )
+        .await?;
 
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(Table::drop().table(Activities::Table).to_owned())
+            .await?;
         manager
             .drop_table(Table::drop().table(Notifications::Table).to_owned())
             .await?;
@@ -171,6 +209,26 @@ where
                 .name(name)
                 .table(table)
                 .col(column)
+                .to_owned(),
+        )
+        .await
+}
+
+async fn create_composite_index(
+    manager: &SchemaManager<'_>,
+    name: &str,
+) -> Result<(), DbErr> {
+    if manager.has_index(Notifications::Table.to_string(), name).await? {
+        return Ok(());
+    }
+
+    manager
+        .create_index(
+            Index::create()
+                .name(name)
+                .table(Notifications::Table)
+                .col(Notifications::IssueId)
+                .col(Notifications::ArchivedAt)
                 .to_owned(),
         )
         .await
@@ -218,6 +276,18 @@ enum IssueRelations {
     Id,
     IssueId,
     BlockedByIssueId,
+}
+
+#[derive(DeriveIden)]
+enum Activities {
+    Table,
+    Id,
+    IssueId,
+    Kind,
+    ActorId,
+    Title,
+    Body,
+    CreatedAt,
 }
 
 #[derive(DeriveIden)]

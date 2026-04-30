@@ -10,10 +10,10 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        BlockerRef, Comment, Issue, Notification, NotificationIssueRef, default_team_key,
+        Activity, BlockerRef, Comment, Issue, Notification, NotificationIssueRef, default_team_key,
         issue_matches_locator,
     },
-    entity::{comment, issue, issue_label, issue_relation, notification},
+    entity::{activity, comment, issue, issue_label, issue_relation, notification},
 };
 
 #[derive(Clone, Debug)]
@@ -88,7 +88,14 @@ impl IssueService {
             .find_issue_by_id(&id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(id))?;
-        self.create_issue_notification(
+        self.create_activity(
+            &issue,
+            "issue_created",
+            format!("{} created", issue.identifier),
+            Some(issue.title.clone()),
+        )
+        .await?;
+        self.upsert_notification(
             &issue,
             "issue_created",
             format!("{} created", issue.identifier),
@@ -202,7 +209,14 @@ impl IssueService {
             .find_issue_by_id(&issue_id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
-        self.create_issue_notification(
+        self.create_activity(
+            &issue,
+            "issue_state_changed",
+            format!("{} moved to {}", issue.identifier, issue.state),
+            Some(issue.title.clone()),
+        )
+        .await?;
+        self.upsert_notification(
             &issue,
             "issue_updated",
             format!("{} moved to {}", issue.identifier, issue.state),
@@ -272,7 +286,14 @@ impl IssueService {
             .find_issue_by_id(&issue_id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
-        self.create_issue_notification(
+        self.create_activity(
+            &issue,
+            "issue_updated",
+            format!("{} updated", issue.identifier),
+            Some(issue.title.clone()),
+        )
+        .await?;
+        self.upsert_notification(
             &issue,
             "issue_updated",
             format!("{} updated", issue.identifier),
@@ -304,7 +325,14 @@ impl IssueService {
             .find_issue_by_id(&issue_id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
-        self.create_issue_notification(
+        self.create_activity(
+            &issue,
+            "comment_created",
+            format!("New comment on {}", issue.identifier),
+            Some(model.body.clone()),
+        )
+        .await?;
+        self.upsert_notification(
             &issue,
             "comment_created",
             format!("New comment on {}", issue.identifier),
@@ -512,7 +540,43 @@ impl IssueService {
         Ok(model_to_issue(model, labels, blockers))
     }
 
-    async fn create_issue_notification(
+    pub async fn list_activities(&self, locator: &str) -> ServiceResult<Vec<Activity>> {
+        let issue_id = self
+            .find_issue_id(locator)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(locator.to_string()))?;
+        let models = activity::Entity::find()
+            .filter(activity::Column::IssueId.eq(issue_id))
+            .order_by_desc(activity::Column::CreatedAt)
+            .all(&self.db)
+            .await?;
+        Ok(models.into_iter().map(model_to_activity).collect())
+    }
+
+    async fn create_activity(
+        &self,
+        issue: &Issue,
+        kind: &str,
+        title: String,
+        body: Option<String>,
+    ) -> ServiceResult<Activity> {
+        let now = Utc::now();
+        let model = activity::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            issue_id: Set(Some(issue.id.clone())),
+            kind: Set(kind.to_string()),
+            actor_id: Set(None),
+            title: Set(title),
+            body: Set(body),
+            created_at: Set(now),
+        }
+        .insert(&self.db)
+        .await?;
+
+        Ok(model_to_activity(model))
+    }
+
+    async fn upsert_notification(
         &self,
         issue: &Issue,
         kind: &str,
@@ -520,6 +584,23 @@ impl IssueService {
         body: Option<String>,
     ) -> ServiceResult<Notification> {
         let now = Utc::now();
+
+        if let Some(existing) = notification::Entity::find()
+            .filter(notification::Column::IssueId.eq(issue.id.clone()))
+            .filter(notification::Column::ArchivedAt.is_null())
+            .one(&self.db)
+            .await?
+        {
+            let mut active = existing.into_active_model();
+            active.kind = Set(kind.to_string());
+            active.title = Set(title);
+            active.body = Set(body);
+            active.read_at = Set(None);
+            active.updated_at = Set(now);
+            let model = active.update(&self.db).await?;
+            return self.hydrate_notification(model).await;
+        }
+
         let model = notification::ActiveModel {
             id: Set(Uuid::new_v4().to_string()),
             kind: Set(kind.to_string()),
@@ -684,6 +765,18 @@ fn model_to_notification(
         archived_at: model.archived_at,
         created_at: model.created_at,
         updated_at: model.updated_at,
+    }
+}
+
+fn model_to_activity(model: activity::Model) -> Activity {
+    Activity {
+        id: model.id,
+        issue_id: model.issue_id,
+        kind: model.kind,
+        actor_id: model.actor_id,
+        title: model.title,
+        body: model.body,
+        created_at: model.created_at,
     }
 }
 

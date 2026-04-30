@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     api::error::ApiError,
-    domain::{Comment, Issue},
+    domain::{Activity, Comment, Issue},
     service::{CreateIssueInput, IssueFilter, IssueService, UpdateIssueInput},
 };
 
@@ -59,6 +59,11 @@ pub struct IssueListResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CommentListResponse {
     pub comments: Vec<Comment>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ActivityListResponse {
+    pub activities: Vec<Activity>,
 }
 
 #[get("/issues?<query..>")]
@@ -174,6 +179,16 @@ async fn list_comments(
     }))
 }
 
+#[get("/issues/<locator>/activities")]
+async fn list_activities(
+    locator: &str,
+    service: &State<IssueService>,
+) -> Result<Json<ActivityListResponse>, ApiError> {
+    Ok(Json(ActivityListResponse {
+        activities: service.list_activities(locator).await?,
+    }))
+}
+
 #[get("/")]
 fn api_root() -> Json<Value> {
     Json(json!({
@@ -187,6 +202,7 @@ fn api_root() -> Json<Value> {
             "PATCH /api/issues/{locator}/state",
             "POST /api/issues/{locator}/comments",
             "GET /api/issues/{locator}/comments",
+            "GET /api/issues/{locator}/activities",
             "GET /api/notifications?include_archived=false&unread_only=false&recipient_id=&issue_id=&limit=50",
             "PATCH /api/notifications/{id}/read",
             "PATCH /api/notifications/{id}/archive"
@@ -204,7 +220,8 @@ pub fn routes() -> Vec<Route> {
         delete_issue,
         update_issue_state,
         create_comment,
-        list_comments
+        list_comments,
+        list_activities
     ]
 }
 
@@ -235,7 +252,7 @@ mod tests {
 
     use crate::{api::notifications::NotificationListResponse, app, domain::Issue};
 
-    use super::{CommentListResponse, IssueListResponse};
+    use super::{ActivityListResponse, CommentListResponse, IssueListResponse};
 
     #[test]
     fn manages_issue_lifecycle() {
@@ -330,26 +347,9 @@ mod tests {
         assert_eq!(notifications.status(), Status::Ok);
         let notifications: NotificationListResponse =
             notifications.into_json().expect("notifications json");
-        assert_eq!(notifications.notifications.len(), 5);
-        assert_eq!(notifications.unread_count, 5);
-        assert!(
-            notifications
-                .notifications
-                .iter()
-                .any(|notification| notification.kind == "issue_created")
-        );
-        assert!(
-            notifications
-                .notifications
-                .iter()
-                .any(|notification| notification.kind == "issue_updated")
-        );
-        assert!(
-            notifications
-                .notifications
-                .iter()
-                .any(|notification| notification.kind == "comment_created")
-        );
+        // After aggregation: 2 issues = 2 notifications
+        assert_eq!(notifications.notifications.len(), 2);
+        assert_eq!(notifications.unread_count, 2);
 
         let notification_id = notifications.notifications[0].id.clone();
         let read = client
@@ -360,7 +360,7 @@ mod tests {
         let unread = client.get("/api/notifications?unread_only=true").dispatch();
         assert_eq!(unread.status(), Status::Ok);
         let unread: NotificationListResponse = unread.into_json().expect("unread json");
-        assert_eq!(unread.notifications.len(), 4);
+        assert_eq!(unread.notifications.len(), 1);
 
         let archived = client
             .patch(format!("/api/notifications/{notification_id}/archive"))
@@ -370,7 +370,7 @@ mod tests {
         let active = client.get("/api/notifications").dispatch();
         assert_eq!(active.status(), Status::Ok);
         let active: NotificationListResponse = active.into_json().expect("active json");
-        assert_eq!(active.notifications.len(), 4);
+        assert_eq!(active.notifications.len(), 1);
 
         let deleted = client
             .delete(format!("/api/issues/{}", blocked.id))
@@ -387,5 +387,217 @@ mod tests {
             after_delete.into_json().expect("after delete list json");
         assert_eq!(after_delete.issues.len(), 1);
         assert_eq!(after_delete.issues[0].id, issue.id);
+    }
+
+    #[test]
+    fn notification_not_duplicated_on_priority_update() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let issue: Issue = created.into_json().expect("issue json");
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        assert_eq!(notifications.status(), Status::Ok);
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after create, got {}", notifications.notifications.len());
+
+        let updated = client
+            .patch(format!("/api/issues/{}", issue.id))
+            .header(ContentType::JSON)
+            .body(r#"{"priority":2}"#)
+            .dispatch();
+        assert_eq!(updated.status(), Status::Ok);
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        assert_eq!(notifications.status(), Status::Ok);
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 aggregated notification after priority update, got {}", notifications.notifications.len());
+    }
+
+    #[test]
+    fn notification_not_duplicated_on_state_update() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let issue: Issue = created.into_json().expect("issue json");
+
+        let updated = client
+            .patch(format!("/api/issues/{}/state", issue.id))
+            .header(ContentType::JSON)
+            .body(r#"{"state":"In Progress"}"#)
+            .dispatch();
+        assert_eq!(updated.status(), Status::Ok);
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        assert_eq!(notifications.status(), Status::Ok);
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 aggregated notification after state update, got {}", notifications.notifications.len());
+    }
+
+    #[test]
+    fn mark_read_does_not_duplicate_notification() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let _issue: Issue = created.into_json().expect("issue json");
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        assert_eq!(notifications.status(), Status::Ok);
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1);
+        let notification_id = notifications.notifications[0].id.clone();
+
+        let read = client
+            .patch(format!("/api/notifications/{}/read", notification_id))
+            .dispatch();
+        assert_eq!(read.status(), Status::Ok);
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        assert_eq!(notifications.status(), Status::Ok);
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after mark-read, got {}", notifications.notifications.len());
+
+        let archive = client
+            .patch(format!("/api/notifications/{}/archive", notification_id))
+            .dispatch();
+        assert_eq!(archive.status(), Status::Ok);
+
+        let notifications = client.get("/api/notifications?include_archived=true&limit=10").dispatch();
+        assert_eq!(notifications.status(), Status::Ok);
+        let notifications: NotificationListResponse =
+            notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after archive, got {}", notifications.notifications.len());
+    }
+
+    #[test]
+    fn notification_aggregates_per_issue() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let issue: Issue = created.into_json().expect("issue json");
+
+        // Multiple updates should still result in only 1 notification
+        let _ = client
+            .patch(format!("/api/issues/{}", issue.id))
+            .header(ContentType::JSON)
+            .body(r#"{"priority":2}"#)
+            .dispatch();
+        let _ = client
+            .patch(format!("/api/issues/{}/state", issue.id))
+            .header(ContentType::JSON)
+            .body(r#"{"state":"In Progress"}"#)
+            .dispatch();
+        let _ = client
+            .post(format!("/api/issues/{}/comments", issue.id))
+            .header(ContentType::JSON)
+            .body(r#"{"body":"A comment"}"#)
+            .dispatch();
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 aggregated notification, got {}", notifications.notifications.len());
+
+        // But activities should contain all operations
+        let activities = client.get(format!("/api/issues/{}/activities", issue.id)).dispatch();
+        assert_eq!(activities.status(), Status::Ok);
+        let activities: ActivityListResponse = activities.into_json().expect("activities json");
+        assert_eq!(activities.activities.len(), 4, "Expected 4 activities (create + priority + state + comment), got {}", activities.activities.len());
+    }
+
+    #[test]
+    fn archived_notification_creates_new_one_on_next_update() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let issue: Issue = created.into_json().expect("issue json");
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
+        let notification_id = notifications.notifications[0].id.clone();
+
+        // Archive the notification
+        let archived = client
+            .patch(format!("/api/notifications/{}/archive", notification_id))
+            .dispatch();
+        assert_eq!(archived.status(), Status::Ok);
+
+        // Update issue again — should create a brand new notification
+        let updated = client
+            .patch(format!("/api/issues/{}/state", issue.id))
+            .header(ContentType::JSON)
+            .body(r#"{"state":"In Progress"}"#)
+            .dispatch();
+        assert_eq!(updated.status(), Status::Ok);
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 new notification after archive + update, got {}", notifications.notifications.len());
+        assert_ne!(notifications.notifications[0].id, notification_id, "New notification should have a different id");
+    }
+
+    #[test]
+    fn concurrent_mark_read_should_not_duplicate() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
+        let notification_id = notifications.notifications[0].id.clone();
+
+        // Simulate double-click / rapid requests
+        let read1 = client
+            .patch(format!("/api/notifications/{}/read", notification_id))
+            .dispatch();
+        let read2 = client
+            .patch(format!("/api/notifications/{}/read", notification_id))
+            .dispatch();
+        assert_eq!(read1.status(), Status::Ok);
+        assert_eq!(read2.status(), Status::Ok);
+
+        let notifications = client.get("/api/notifications?limit=10").dispatch();
+        let notifications: NotificationListResponse = notifications.into_json().expect("notifications json");
+        assert_eq!(notifications.notifications.len(), 1, "Expected 1 notification after double mark-read, got {}", notifications.notifications.len());
     }
 }
