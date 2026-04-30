@@ -91,6 +91,8 @@ export interface CreateIssueInput {
 }
 
 export interface UpdateIssueInput {
+  title?: string;
+  description?: string | null;
   priority?: number | null;
   blocked_by?: string[];
 }

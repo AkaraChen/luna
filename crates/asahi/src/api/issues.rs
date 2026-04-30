@@ -41,6 +41,9 @@ pub struct UpdateStateRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateIssueRequest {
+    pub title: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub description: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub priority: Option<Option<i64>>,
     pub blocked_by: Option<Vec<String>>,
@@ -119,6 +122,8 @@ async fn update_issue(
             .update_issue(
                 locator,
                 UpdateIssueInput {
+                    title: body.title,
+                    description: body.description,
                     priority: body.priority,
                     blocked_by: body.blocked_by,
                 },

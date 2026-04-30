@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { IconChevronDown, IconLink, IconSend, IconTrash, IconX } from "@tabler/icons-react";
+import { IconChevronDown, IconEdit, IconLink, IconSend, IconTrash, IconX } from "@tabler/icons-react";
 import { useLocation } from "wouter";
 
 import {
@@ -31,6 +31,8 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
   const [blockersOpen, setBlockersOpen] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState(issue.description ?? "");
 
   const commentsQuery = useSuspenseQuery({
     queryKey: ["comments", issue.id],
@@ -57,7 +59,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (input: { priority?: number | null; blocked_by?: string[] }) =>
+    mutationFn: (input: { title?: string; description?: string | null; priority?: number | null; blocked_by?: string[] }) =>
       updateIssue(issue.id, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
@@ -128,9 +130,71 @@ export function IssueDetails({ issue }: { issue: Issue }) {
           </Button>
         </div>
         <h2 className="text-lg font-semibold leading-snug text-[#22211f]">{issue.title}</h2>
-        {issue.description ? (
-          <p className="mt-3 text-sm leading-6 text-[#69665f]">{issue.description}</p>
-        ) : null}
+        {editingDescription ? (
+          <div className="mt-3">
+            <Textarea
+              autoFocus
+              className="min-h-24 resize-none text-sm"
+              onChange={(event) => setDescriptionDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setEditingDescription(false);
+                  setDescriptionDraft(issue.description ?? "");
+                }
+              }}
+              placeholder="Add a description"
+              value={descriptionDraft}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <Button
+                disabled={updateMutation.isPending}
+                onClick={() => {
+                  updateMutation.mutate(
+                    { description: descriptionDraft || null },
+                    {
+                      onSuccess: () => {
+                        setEditingDescription(false);
+                      },
+                    },
+                  );
+                }}
+                size="sm"
+                type="button"
+              >
+                Save
+              </Button>
+              <Button
+                onClick={() => {
+                  setEditingDescription(false);
+                  setDescriptionDraft(issue.description ?? "");
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="group/description relative mt-3">
+            {issue.description ? (
+              <p className="text-sm leading-6 text-[#69665f]">{issue.description}</p>
+            ) : (
+              <p className="text-sm italic text-[#a8a59d]">No description</p>
+            )}
+            <Button
+              aria-label="Edit description"
+              className="absolute -right-1 -top-1 opacity-0 transition-opacity group-hover/description:opacity-100"
+              onClick={() => setEditingDescription(true)}
+              size="icon-xs"
+              type="button"
+              variant="ghost"
+            >
+              <IconEdit className="size-3.5 text-[#8a877e]" />
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="border-y border-[#eceae5] px-5 py-2">

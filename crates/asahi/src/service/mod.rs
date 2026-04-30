@@ -258,6 +258,12 @@ impl IssueService {
         let now = Utc::now();
         let transaction = self.db.begin().await?;
         let mut active = model.into_active_model();
+        if let Some(title) = input.title {
+            active.title = Set(title);
+        }
+        if let Some(description) = input.description {
+            active.description = Set(description);
+        }
         if let Some(priority) = input.priority {
             active.priority = Set(priority);
         }
@@ -688,6 +694,8 @@ pub struct NotificationFilter {
 
 #[derive(Clone, Debug, Default)]
 pub struct UpdateIssueInput {
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
     pub priority: Option<Option<i64>>,
     pub blocked_by: Option<Vec<String>>,
 }
