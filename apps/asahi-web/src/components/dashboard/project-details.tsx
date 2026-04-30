@@ -1,9 +1,11 @@
 import { type ReactNode } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { IconCircleDashed, IconFolder } from "@tabler/icons-react";
+import { IconCircleDashed, IconFolder, IconPlus } from "@tabler/icons-react";
 
 import { fetchIssues, fetchProjects, type Project } from "@/api/asahi";
+import { Button } from "@/components/ui/button";
 
+import { CreateIssueTrigger } from "./create-issue-trigger";
 import { Priority, StatusBadge } from "./issue-badges";
 import { IssueList } from "./issue-list";
 
@@ -85,8 +87,15 @@ function ProjectPage({
       <div>
         <div className="flex h-12 items-center justify-between px-5">
           <div className="text-sm font-medium">Issues</div>
-          <div className="text-xs text-[#8f8b82]">
-            {data.issues.length === 1 ? "1 issue" : `${data.issues.length} issues`}
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-[#8f8b82]">
+              {data.issues.length === 1 ? "1 issue" : `${data.issues.length} issues`}
+            </div>
+            <CreateIssueTrigger projectId={project.id}>
+              <Button aria-label="Create issue in project" size="icon-xs" variant="ghost">
+                <IconPlus className="size-3.5" />
+              </Button>
+            </CreateIssueTrigger>
           </div>
         </div>
 

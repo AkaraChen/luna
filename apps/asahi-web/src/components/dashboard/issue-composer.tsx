@@ -5,19 +5,33 @@ import { IconX } from "@tabler/icons-react";
 import { createIssue } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
 
-export function IssueComposer({ onClose }: { onClose: () => void }) {
+export function IssueComposer({
+  onClose,
+  projectId,
+}: {
+  onClose: () => void;
+  projectId?: string;
+}) {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
 
   const mutation = useMutation({
     mutationFn: () =>
-      createIssue({
-        project_slug: "engineering",
-        team_key: "ENG",
-        title,
-        description: description || undefined,
-      }),
+      createIssue(
+        projectId
+          ? {
+              project_id: projectId,
+              title,
+              description: description || undefined,
+            }
+          : {
+              project_slug: "engineering",
+              team_key: "ENG",
+              title,
+              description: description || undefined,
+            },
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });

@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 
 import { IssueComposer } from "./issue-composer";
 
-export function CreateIssueTrigger({ children }: { children: React.ReactNode }) {
+export function CreateIssueTrigger({
+  children,
+  projectId,
+}: {
+  children: React.ReactNode;
+  projectId?: string;
+}) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -18,14 +24,13 @@ export function CreateIssueTrigger({ children }: { children: React.ReactNode }) 
 
   return (
     <>
-      <button
+      <span
         className="inline-flex items-center"
         onClick={() => setOpen(true)}
-        type="button"
       >
         {children}
-      </button>
-      {open ? <IssueComposer onClose={() => setOpen(false)} /> : null}
+      </span>
+      {open ? <IssueComposer onClose={() => setOpen(false)} projectId={projectId} /> : null}
     </>
   );
 }
