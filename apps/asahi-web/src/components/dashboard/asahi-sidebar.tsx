@@ -1,39 +1,26 @@
-import {
-  IconCircleCheck,
-  IconCircleDashed,
-  IconCircleDot,
-  IconClockHour4,
-  IconSparkles,
-} from "@tabler/icons-react";
+import { IconBell, IconCircleDot, IconSparkles } from "@tabler/icons-react";
 
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-  SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
-import { statusColumns, type StatusFilter } from "./constants";
+export type View = "issues" | "notifications";
 
 export function AsahiSidebar({
-  counts,
-  onStatusFilterChange,
-  statusFilter,
-  totalIssues,
+  view,
+  onViewChange,
 }: {
-  counts: Map<string, number>;
-  onStatusFilterChange: (status: StatusFilter) => void;
-  statusFilter: StatusFilter;
-  totalIssues: number;
+  view: View;
+  onViewChange: (view: View) => void;
 }) {
   return (
     <Sidebar collapsible="icon" variant="inset">
@@ -58,63 +45,22 @@ export function AsahiSidebar({
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarItem
-                active={statusFilter === "all"}
-                count={totalIssues}
+                active={view === "notifications"}
+                icon={IconBell}
+                label="Inbox"
+                onClick={() => onViewChange("notifications")}
+              />
+              <SidebarItem
+                active={view === "issues"}
                 icon={IconCircleDot}
                 label="Issues"
-                onClick={() => onStatusFilterChange("all")}
+                onClick={() => onViewChange("issues")}
               />
-              <SidebarItem
-                active={statusFilter === "In Progress"}
-                count={counts.get("In Progress")}
-                icon={IconClockHour4}
-                label="Active"
-                onClick={() => onStatusFilterChange("In Progress")}
-              />
-              <SidebarItem
-                active={statusFilter === "Todo"}
-                count={counts.get("Todo")}
-                icon={IconCircleDashed}
-                label="Backlog"
-                onClick={() => onStatusFilterChange("Todo")}
-              />
-              <SidebarItem
-                active={statusFilter === "Done"}
-                count={counts.get("Done")}
-                icon={IconCircleCheck}
-                label="Completed"
-                onClick={() => onStatusFilterChange("Done")}
-              />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarSeparator />
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Views</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {statusColumns.map((status) => (
-                <SidebarItem
-                  active={statusFilter === status}
-                  count={counts.get(status) ?? 0}
-                  icon={
-                    status === "Done"
-                      ? IconCircleCheck
-                      : status === "In Progress"
-                        ? IconCircleDot
-                        : IconCircleDashed
-                  }
-                  key={status}
-                  label={status}
-                  onClick={() => onStatusFilterChange(status as StatusFilter)}
-                />
-              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
       <SidebarRail />
     </Sidebar>
   );
@@ -122,14 +68,12 @@ export function AsahiSidebar({
 
 function SidebarItem({
   active,
-  count,
   icon: Icon,
   label,
   onClick,
 }: {
   active?: boolean;
-  count?: number;
-  icon: typeof IconCircleDot;
+  icon: typeof IconBell;
   label: string;
   onClick: () => void;
 }) {
@@ -139,7 +83,6 @@ function SidebarItem({
         <Icon className={cn(active && "text-primary")} stroke={1.8} />
         <span>{label}</span>
       </SidebarMenuButton>
-      {typeof count === "number" ? <SidebarMenuBadge>{count}</SidebarMenuBadge> : null}
     </SidebarMenuItem>
   );
 }

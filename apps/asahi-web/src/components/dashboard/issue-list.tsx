@@ -1,10 +1,9 @@
-import { IconCircleDashed, IconHash } from "@tabler/icons-react";
+import { IconCircleDashed } from "@tabler/icons-react";
 
 import { type Issue } from "@/api/asahi";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-import { Priority, StatusBadge } from "./issue-badges";
+import { Priority, StatusIcon } from "./issue-badges";
 
 export function IssueList({
   issues,
@@ -28,33 +27,21 @@ export function IssueList({
   }
 
   return (
-    <div className="divide-y divide-[#eceae5]">
+    <div>
       {issues.map((issue) => (
         <button
           className={cn(
-            "grid w-full grid-cols-[96px_minmax(0,1fr)_132px_92px] items-center gap-3 px-4 py-3 text-left hover:bg-[#f7f6f2]",
+            "flex h-10 w-full items-center gap-3 px-4 text-left hover:bg-[#f7f6f2]",
             selectedId === issue.id && "bg-[#f2f1ec]",
           )}
           key={issue.id}
           onClick={() => onSelect(issue.id)}
           type="button"
         >
-          <div className="flex items-center gap-2 text-xs font-medium text-[#706d65]">
-            <IconHash className="size-3.5" />
-            {issue.identifier}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-[#262522]">{issue.title}</div>
-            <div className="mt-1 flex min-h-5 items-center gap-1.5 overflow-hidden">
-              {issue.labels.slice(0, 3).map((label) => (
-                <Badge key={label} variant="secondary">
-                  {label}
-                </Badge>
-              ))}
-            </div>
-          </div>
-          <StatusBadge state={issue.state} />
+          <StatusIcon state={issue.state} />
+          <span className="flex-1 truncate text-sm text-[#262522]">{issue.title}</span>
           <Priority priority={issue.priority} />
+          <span className="shrink-0 text-xs text-[#a09d97]">{issue.identifier}</span>
         </button>
       ))}
     </div>
