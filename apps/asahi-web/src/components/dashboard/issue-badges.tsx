@@ -23,8 +23,15 @@ export function StatusBadge({ state }: { state: string }) {
   );
 }
 
-export function Priority({ priority }: { priority: number | null }) {
+export function Priority({
+  priority,
+  showEmpty = true,
+}: {
+  priority: number | null;
+  showEmpty?: boolean;
+}) {
   if (priority == null) {
+    if (!showEmpty) return null;
     return <span className="text-xs text-[#99958b]">No priority</span>;
   }
 

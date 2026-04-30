@@ -54,7 +54,7 @@ export function IssueList({
               ) : null}
             </span>
           </span>
-          <Priority priority={issue.priority} />
+          <Priority priority={issue.priority} showEmpty={false} />
         </button>
       ))}
     </div>

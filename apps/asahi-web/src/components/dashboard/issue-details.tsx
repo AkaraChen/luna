@@ -161,9 +161,6 @@ export function IssueDetails({ issue }: { issue: Issue }) {
             setOpen={setBlockersOpen}
           />
         </PropertyRow>
-        <PropertyRow label="Updated">
-          <div className="text-xs text-[#55524b]">{formatDate(issue.updated_at)}</div>
-        </PropertyRow>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto border-t border-[#eceae5] px-5 py-4">
@@ -228,7 +225,7 @@ function EditableStatus({
       </button>
 
       {open ? (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-40 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
+        <div className="absolute right-0 top-full z-20 mt-1 min-w-40 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
           {statusColumns.map((option) => (
             <button
               className={cn(
@@ -276,7 +273,7 @@ function EditablePriority({
       </button>
 
       {open ? (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-34 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
+        <div className="absolute right-0 top-full z-20 mt-1 min-w-34 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
           {priorityOptions.map((option) => (
             <button
               className={cn(
@@ -334,7 +331,7 @@ function EditableBlockers({
       </button>
 
       {open ? (
-        <div className="absolute left-0 top-full z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
+        <div className="absolute right-0 top-full z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
           {issueOptions.length ? (
             issueOptions.map((candidate) => {
               const selected = selectedIds.includes(candidate.id);
@@ -391,7 +388,7 @@ function PropertyRow({ children, label }: { children: ReactNode; label: string }
   return (
     <div className="grid min-h-9 grid-cols-[6rem_minmax(0,1fr)] items-center gap-3">
       <div className="text-xs text-[#85827a]">{label}</div>
-      <div className="min-w-0 text-[#33312d]">{children}</div>
+      <div className="flex min-w-0 justify-end text-right text-[#33312d]">{children}</div>
     </div>
   );
 }
