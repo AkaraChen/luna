@@ -9,7 +9,6 @@ import {
   IconClockHour4,
   IconFilter,
   IconHash,
-  IconLayoutSidebarLeftCollapse,
   IconMessageCircle,
   IconPlus,
   IconRefresh,
@@ -30,6 +29,23 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -96,130 +112,172 @@ function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f8faf9] text-[#1f1f1d]">
-      <div className="grid min-h-screen lg:grid-cols-[248px_minmax(0,1fr)]">
-        <aside className="hidden border-r border-[#dfe7e4] bg-[#f1f5f4] lg:block">
-          <div className="flex h-14 items-center gap-2 border-b border-[#dfe7e4] px-4">
-            <div className="flex size-7 items-center justify-center rounded-md bg-[#20201d] text-white">
-              <IconSparkles className="size-4" stroke={1.8} />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">Asahi</div>
-              <div className="truncate text-xs text-[#6f6d66]">Task workspace</div>
-            </div>
-          </div>
-
-          <nav className="space-y-1 px-2 py-3">
-            <SidebarItem active icon={IconCircleDot} label="Issues" count={data.issues.length} />
-            <SidebarItem icon={IconClockHour4} label="Active" count={counts.get("In Progress")} />
-            <SidebarItem icon={IconCircleDashed} label="Backlog" count={counts.get("Todo")} />
-            <SidebarItem icon={IconCircleCheck} label="Completed" count={counts.get("Done")} />
-          </nav>
-
-          <div className="mx-4 mt-3 border-t border-[#dfe7e4] pt-4">
-            <div className="mb-2 px-1 text-[11px] font-medium uppercase tracking-[0.08em] text-[#85827a]">
-              Views
-            </div>
-            <div className="space-y-1">
-              {statusColumns.map((status) => (
-                <button
-                  key={status}
-                  className="flex h-8 w-full items-center justify-between rounded-md px-2 text-left text-sm text-[#57544d] hover:bg-[#e8efed]"
-                  onClick={() => setStatusFilter(status as StatusFilter)}
-                  type="button"
-                >
-                  <span>{status}</span>
-                  <span className="text-xs text-[#8a877e]">{counts.get(status) ?? 0}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </aside>
-
-        <main className="min-w-0">
-          <header className="flex h-14 items-center justify-between border-b border-[#dfe7e4] bg-[#f8faf9]/95 px-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <Button aria-label="Toggle sidebar" size="icon" variant="ghost">
-                <IconLayoutSidebarLeftCollapse className="size-4" />
-              </Button>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold">Dashboard</div>
-                <div className="text-xs text-[#77746c]">{visibleIssues.length} visible issues</div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-[#85827a]" />
-                <Input
-                  className="hidden h-8 w-[min(42vw,280px)] pl-8 sm:block"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search issues"
-                  value={search}
-                />
-              </div>
-              <Button aria-label="Refresh issues" onClick={refresh} size="icon" variant="ghost">
-                <IconRefresh className="size-4" />
-              </Button>
-              <Button aria-label="Notifications" size="icon" variant="ghost">
-                <IconBell className="size-4" />
-              </Button>
-              <Button aria-label="Settings" size="icon" variant="ghost">
-                <IconSettings className="size-4" />
-              </Button>
-              <Button onClick={() => setComposerOpen(true)} size="sm">
-                <IconPlus className="size-4" />
-                New issue
-              </Button>
-            </div>
-          </header>
-
-          <section className="grid min-h-[calc(100vh-3.5rem)] xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="min-w-0 border-r border-[#dfe7e4]">
-              <div className="flex h-12 items-center justify-between border-b border-[#eceae5] px-4">
-                <div className="flex items-center gap-1 rounded-md border border-[#dedbd2] bg-white p-0.5">
-                  {statusFilters.map((status) => (
-                    <button
-                      className={cn(
-                        "h-7 rounded-[5px] px-3 text-xs font-medium text-[#69665f]",
-                        statusFilter === status && "bg-[#20201d] text-white",
-                      )}
-                      key={status}
-                      onClick={() => setStatusFilter(status)}
-                      type="button"
-                    >
-                      {status === "all" ? "All" : status}
-                    </button>
-                  ))}
+    <SidebarProvider>
+      <Sidebar collapsible="icon" variant="inset">
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton className="gap-2.5" size="lg" tooltip="Asahi">
+                <div className="flex size-8 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                  <IconSparkles className="size-4" stroke={1.8} />
                 </div>
-                <Button size="sm" variant="outline">
-                  <IconFilter className="size-4" />
-                  Filter
-                </Button>
-              </div>
+                <div className="grid min-w-0 flex-1 text-left leading-tight">
+                  <span className="truncate text-sm font-semibold">Asahi</span>
+                  <span className="truncate text-xs text-muted-foreground">Task workspace</span>
+                </div>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
 
-              <IssueList
-                issues={visibleIssues}
-                onSelect={setSelectedId}
-                selectedId={selectedIssue?.id ?? null}
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarItem
+                  active={statusFilter === "all"}
+                  count={data.issues.length}
+                  icon={IconCircleDot}
+                  label="Issues"
+                  onClick={() => setStatusFilter("all")}
+                />
+                <SidebarItem
+                  active={statusFilter === "In Progress"}
+                  count={counts.get("In Progress")}
+                  icon={IconClockHour4}
+                  label="Active"
+                  onClick={() => setStatusFilter("In Progress")}
+                />
+                <SidebarItem
+                  active={statusFilter === "Todo"}
+                  count={counts.get("Todo")}
+                  icon={IconCircleDashed}
+                  label="Backlog"
+                  onClick={() => setStatusFilter("Todo")}
+                />
+                <SidebarItem
+                  active={statusFilter === "Done"}
+                  count={counts.get("Done")}
+                  icon={IconCircleCheck}
+                  label="Completed"
+                  onClick={() => setStatusFilter("Done")}
+                />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarSeparator />
+
+          <SidebarGroup>
+            <SidebarGroupLabel>Views</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {statusColumns.map((status) => (
+                  <SidebarItem
+                    active={statusFilter === status}
+                    count={counts.get(status) ?? 0}
+                    icon={
+                      status === "Done"
+                        ? IconCircleCheck
+                        : status === "In Progress"
+                          ? IconCircleDot
+                          : IconCircleDashed
+                    }
+                    key={status}
+                    label={status}
+                    onClick={() => setStatusFilter(status as StatusFilter)}
+                  />
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarRail />
+      </Sidebar>
+
+      <SidebarInset className="min-h-svh overflow-hidden border border-border/70 bg-background">
+        <header className="flex h-14 items-center justify-between border-b border-border bg-background/95 px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <SidebarTrigger />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">Dashboard</div>
+              <div className="text-xs text-muted-foreground">
+                {visibleIssues.length} visible issues
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="hidden h-8 w-[min(42vw,280px)] pl-8 sm:block"
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search issues"
+                value={search}
               />
             </div>
+            <Button aria-label="Refresh issues" onClick={refresh} size="icon-sm" variant="ghost">
+              <IconRefresh className="size-4" />
+            </Button>
+            <Button aria-label="Notifications" size="icon-sm" variant="ghost">
+              <IconBell className="size-4" />
+            </Button>
+            <Button aria-label="Settings" size="icon-sm" variant="ghost">
+              <IconSettings className="size-4" />
+            </Button>
+            <Button onClick={() => setComposerOpen(true)} size="sm">
+              <IconPlus className="size-4" />
+              New issue
+            </Button>
+          </div>
+        </header>
 
-            <aside className="min-w-0 bg-white">
-              {selectedIssue ? (
-                <Suspense fallback={<DetailsSkeleton />}>
-                  <IssueDetails issue={selectedIssue} />
-                </Suspense>
-              ) : (
-                <EmptyDetails />
-              )}
-            </aside>
-          </section>
-        </main>
-      </div>
+        <section className="grid min-h-[calc(100svh-4.5rem)] xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="min-w-0 border-r border-border">
+            <div className="flex h-12 items-center justify-between border-b border-border px-4">
+              <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
+                {statusFilters.map((status) => (
+                  <button
+                    className={cn(
+                      "h-7 rounded-full px-3 text-xs font-medium text-muted-foreground",
+                      statusFilter === status && "bg-background text-foreground shadow-sm",
+                    )}
+                    key={status}
+                    onClick={() => setStatusFilter(status)}
+                    type="button"
+                  >
+                    {status === "all" ? "All" : status}
+                  </button>
+                ))}
+              </div>
+              <Button size="sm" variant="outline">
+                <IconFilter className="size-4" />
+                Filter
+              </Button>
+            </div>
+
+            <IssueList
+              issues={visibleIssues}
+              onSelect={setSelectedId}
+              selectedId={selectedIssue?.id ?? null}
+            />
+          </div>
+
+          <aside className="min-w-0 bg-card">
+            {selectedIssue ? (
+              <Suspense fallback={<DetailsSkeleton />}>
+                <IssueDetails issue={selectedIssue} />
+              </Suspense>
+            ) : (
+              <EmptyDetails />
+            )}
+          </aside>
+        </section>
+      </SidebarInset>
 
       {isComposerOpen ? <IssueComposer onClose={() => setComposerOpen(false)} /> : null}
-    </div>
+    </SidebarProvider>
   );
 }
 
@@ -228,24 +286,22 @@ function SidebarItem({
   count,
   icon: Icon,
   label,
+  onClick,
 }: {
   active?: boolean;
   count?: number;
   icon: typeof IconCircleDot;
   label: string;
+  onClick: () => void;
 }) {
   return (
-    <button
-      className={cn(
-        "flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm text-[#55524b]",
-        active ? "bg-white text-[#20201d] shadow-[0_1px_0_rgba(0,0,0,0.04)]" : "hover:bg-[#e8efed]",
-      )}
-      type="button"
-    >
-      <Icon className="size-4 text-[#7f7b72]" stroke={1.8} />
-      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-      {typeof count === "number" ? <span className="text-xs text-[#8a877e]">{count}</span> : null}
-    </button>
+    <SidebarMenuItem>
+      <SidebarMenuButton isActive={active} onClick={onClick} tooltip={label}>
+        <Icon className={cn(active && "text-primary")} stroke={1.8} />
+        <span>{label}</span>
+      </SidebarMenuButton>
+      {typeof count === "number" ? <SidebarMenuBadge>{count}</SidebarMenuBadge> : null}
+    </SidebarMenuItem>
   );
 }
 
@@ -566,13 +622,13 @@ function Priority({ priority }: { priority: number | null }) {
 
 function DashboardSkeleton() {
   return (
-    <div className="grid min-h-screen bg-[#f8faf9] lg:grid-cols-[248px_minmax(0,1fr)]">
-      <div className="hidden border-r border-[#dfe7e4] bg-[#f1f5f4] lg:block" />
+    <div className="grid min-h-screen bg-background lg:grid-cols-[248px_minmax(0,1fr)]">
+      <div className="hidden border-r border-sidebar-border bg-sidebar lg:block" />
       <div>
-        <div className="h-14 border-b border-[#dfe7e4]" />
+        <div className="h-14 border-b border-border" />
         <div className="space-y-3 p-4">
           {Array.from({ length: 8 }).map((_, index) => (
-            <div className="h-14 animate-pulse rounded-md bg-[#eceae5]" key={index} />
+            <div className="h-14 animate-pulse rounded-md bg-muted" key={index} />
           ))}
         </div>
       </div>
