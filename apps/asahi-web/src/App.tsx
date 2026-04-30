@@ -1,6 +1,6 @@
 import { Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { IconPlus, IconSearch } from "@tabler/icons-react";
+import { IconChevronLeft, IconPlus, IconSearch } from "@tabler/icons-react";
 import { useLocation } from "wouter";
 
 import { fetchIssues } from "@/api/asahi";
@@ -8,7 +8,7 @@ import { AsahiSidebar, type View } from "@/components/dashboard/asahi-sidebar";
 import { statusFilters, type StatusFilter } from "@/components/dashboard/constants";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { IssueDetails, DetailsSkeleton } from "@/components/dashboard/issue-details";
-import { EmptyDetails, IssueList } from "@/components/dashboard/issue-list";
+import { IssueList } from "@/components/dashboard/issue-list";
 import { IssueComposer } from "@/components/dashboard/issue-composer";
 import { NotificationsView } from "@/components/dashboard/notifications-view";
 import { Button } from "@/components/ui/button";
@@ -44,12 +44,23 @@ function Dashboard() {
       <SidebarInset className="min-h-svh overflow-hidden border border-border/70 bg-background">
         <header className="flex h-14 items-center justify-between border-b border-border bg-background/95 px-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="text-sm font-semibold">
-              {view === "notifications" ? "Inbox" : "Issues"}
-            </span>
+            {view === "issues" && selectedId ? (
+              <button
+                className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground"
+                onClick={() => navigate("/issues")}
+                type="button"
+              >
+                <IconChevronLeft className="size-4" />
+                Issues
+              </button>
+            ) : (
+              <span className="text-sm font-semibold">
+                {view === "notifications" ? "Inbox" : "Issues"}
+              </span>
+            )}
           </div>
 
-          {view === "issues" ? (
+          {view === "issues" && !selectedId ? (
             <div className="flex items-center gap-2">
               <div className="relative">
                 <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -70,11 +81,12 @@ function Dashboard() {
 
         {view === "notifications" ? (
           <NotificationsView />
+        ) : selectedId ? (
+          <IssueDetailPage selectedId={selectedId} />
         ) : (
           <IssuesView
             onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
             search={search}
-            selectedId={selectedId}
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
           />
@@ -94,13 +106,11 @@ function issueIdFromLocation(location: string) {
 function IssuesView({
   onSelect,
   search,
-  selectedId,
   setStatusFilter,
   statusFilter,
 }: {
   onSelect: (id: string) => void;
   search: string;
-  selectedId: string | null;
   setStatusFilter: (status: StatusFilter) => void;
   statusFilter: StatusFilter;
 }) {
@@ -127,48 +137,52 @@ function IssuesView({
     });
   }, [data.issues, search]);
 
-  const selectedIssue =
-    visibleIssues.find((issue) => issue.id === selectedId || issue.identifier === selectedId) ??
-    visibleIssues[0] ??
-    null;
-
   return (
-    <section className="grid min-h-[calc(100svh-3.5rem)] xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="min-w-0 border-r border-border">
-        <div className="flex h-12 items-center justify-between px-4">
-          <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
-            {statusFilters.map((status) => (
-              <button
-                className={cn(
-                  "h-7 rounded-full px-3 text-xs font-medium text-muted-foreground",
-                  statusFilter === status && "bg-background text-foreground shadow-sm",
-                )}
-                key={status}
-                onClick={() => setStatusFilter(status)}
-                type="button"
-              >
-                {status === "all" ? "All" : status}
-              </button>
-            ))}
-          </div>
+    <section className="min-h-[calc(100svh-3.5rem)]">
+      <div className="flex h-12 items-center justify-between px-4">
+        <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
+          {statusFilters.map((status) => (
+            <button
+              className={cn(
+                "h-7 rounded-full px-3 text-xs font-medium text-muted-foreground",
+                statusFilter === status && "bg-background text-foreground shadow-sm",
+              )}
+              key={status}
+              onClick={() => setStatusFilter(status)}
+              type="button"
+            >
+              {status === "all" ? "All" : status}
+            </button>
+          ))}
         </div>
-
-        <IssueList
-          issues={visibleIssues}
-          onSelect={onSelect}
-          selectedId={selectedIssue?.id ?? null}
-        />
       </div>
 
-      <aside className="min-w-0 bg-card">
-        {selectedIssue ? (
-          <Suspense fallback={<DetailsSkeleton />}>
-            <IssueDetails issue={selectedIssue} />
-          </Suspense>
-        ) : (
-          <EmptyDetails />
-        )}
-      </aside>
+      <IssueList issues={visibleIssues} onSelect={onSelect} selectedId={null} />
     </section>
+  );
+}
+
+function IssueDetailPage({ selectedId }: { selectedId: string }) {
+  const { data } = useSuspenseQuery({
+    queryKey: ["issues", "all"],
+    queryFn: () => fetchIssues(),
+  });
+
+  const issue = data.issues.find((i) => i.id === selectedId || i.identifier === selectedId);
+
+  if (!issue) {
+    return (
+      <div className="flex min-h-[calc(100svh-3.5rem)] items-center justify-center">
+        <p className="text-sm text-muted-foreground">Issue not found.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-[calc(100svh-3.5rem)] overflow-hidden">
+      <Suspense fallback={<DetailsSkeleton />}>
+        <IssueDetails issue={issue} />
+      </Suspense>
+    </div>
   );
 }

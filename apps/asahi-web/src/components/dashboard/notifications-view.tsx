@@ -1,9 +1,10 @@
+import { Suspense, useState } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { IconArchive, IconBell, IconCircleCheck } from "@tabler/icons-react";
-import { useLocation } from "wouter";
 
 import {
   archiveNotification,
+  fetchIssues,
   fetchNotifications,
   markNotificationRead,
   type AsahiNotification,
@@ -12,9 +13,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { Priority, StatusIcon } from "./issue-badges";
+import { IssueDetails, DetailsSkeleton } from "./issue-details";
+import { EmptyDetails } from "./issue-list";
 
 export function NotificationsView() {
   const queryClient = useQueryClient();
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+
   const { data } = useSuspenseQuery({
     queryKey: ["notifications", "inbox"],
     queryFn: () => fetchNotifications({ limit: 50 }),
@@ -51,27 +56,53 @@ export function NotificationsView() {
   }
 
   return (
-    <section className="min-h-[calc(100svh-3.5rem)] bg-background">
-      <div className="flex h-12 items-center justify-between px-4">
-        <div className="text-xs text-muted-foreground">
-          {data.unread_count ? `${data.unread_count} unread` : "All caught up"}
+    <section className="grid min-h-[calc(100svh-3.5rem)] xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="min-w-0 border-r border-border">
+        <div className="flex h-12 items-center justify-between px-4">
+          <div className="text-xs text-muted-foreground">
+            {data.unread_count ? `${data.unread_count} unread` : "All caught up"}
+          </div>
+        </div>
+
+        <div>
+          {data.notifications.map((notification) => (
+            <NotificationRow
+              archiveDisabled={archiveMutation.isPending}
+              key={notification.id}
+              notification={notification}
+              onArchive={() => archiveMutation.mutate(notification.id)}
+              onRead={() => readMutation.mutate(notification.id)}
+              onSelectIssue={setSelectedIssueId}
+              readDisabled={readMutation.isPending}
+              selected={notification.issue != null && notification.issue.id === selectedIssueId}
+            />
+          ))}
         </div>
       </div>
 
-      <div>
-        {data.notifications.map((notification) => (
-          <NotificationRow
-            archiveDisabled={archiveMutation.isPending}
-            key={notification.id}
-            notification={notification}
-            onArchive={() => archiveMutation.mutate(notification.id)}
-            onRead={() => readMutation.mutate(notification.id)}
-            readDisabled={readMutation.isPending}
-          />
-        ))}
-      </div>
+      <aside className="min-w-0 bg-card">
+        {selectedIssueId ? (
+          <Suspense fallback={<DetailsSkeleton />}>
+            <NotificationIssueDetails issueId={selectedIssueId} />
+          </Suspense>
+        ) : (
+          <EmptyDetails />
+        )}
+      </aside>
     </section>
   );
+}
+
+function NotificationIssueDetails({ issueId }: { issueId: string }) {
+  const { data } = useSuspenseQuery({
+    queryKey: ["issues", "all"],
+    queryFn: () => fetchIssues(),
+  });
+
+  const issue = data.issues.find((i) => i.id === issueId);
+  if (!issue) return <EmptyDetails />;
+
+  return <IssueDetails issue={issue} />;
 }
 
 function NotificationRow({
@@ -79,15 +110,18 @@ function NotificationRow({
   notification,
   onArchive,
   onRead,
+  onSelectIssue,
   readDisabled,
+  selected,
 }: {
   archiveDisabled: boolean;
   notification: AsahiNotification;
   onArchive: () => void;
   onRead: () => void;
+  onSelectIssue: (issueId: string) => void;
   readDisabled: boolean;
+  selected: boolean;
 }) {
-  const [, navigate] = useLocation();
   const unread = notification.read_at == null;
   const issue = notification.issue;
 
@@ -96,17 +130,18 @@ function NotificationRow({
       className={cn(
         "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f6f2]",
         unread ? "bg-[#fbfaf7]" : "bg-background",
-        issue && "cursor-default",
+        selected && "bg-[#f2f1ec]",
+        issue && "cursor-pointer",
       )}
       onClick={() => {
         if (issue) {
-          navigate(`/issues/${encodeURIComponent(issue.id)}`);
+          onSelectIssue(issue.id);
         }
       }}
       onKeyDown={(event) => {
         if (issue && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
-          navigate(`/issues/${encodeURIComponent(issue.id)}`);
+          onSelectIssue(issue.id);
         }
       }}
       role={issue ? "button" : undefined}
@@ -140,10 +175,7 @@ function NotificationRow({
         <Button
           aria-label="Mark as read"
           aria-disabled={readDisabled || !unread}
-          className={cn(
-            "aria-disabled:opacity-50",
-            !unread && "text-[#b7b2aa]",
-          )}
+          className={cn("aria-disabled:opacity-50", !unread && "text-[#b7b2aa]")}
           onClick={(event) => {
             event.stopPropagation();
             if (readDisabled || !unread) return;

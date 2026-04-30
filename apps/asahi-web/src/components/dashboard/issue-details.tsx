@@ -62,7 +62,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
       navigate("/issues");
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      void queryClient.removeQueries({ queryKey: ["comments", issue.id] });
+      queryClient.removeQueries({ queryKey: ["comments", issue.id] });
     },
   });
 
@@ -176,9 +176,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
             </div>
           ))}
           {commentsQuery.data.comments.length === 0 ? (
-            <div className="text-sm text-[#77746c]">
-              No activity yet.
-            </div>
+            <div className="text-sm text-[#77746c]">No activity yet.</div>
           ) : null}
         </div>
       </div>
