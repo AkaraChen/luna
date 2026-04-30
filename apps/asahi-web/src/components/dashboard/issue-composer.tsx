@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { IconX } from "@tabler/icons-react";
 
@@ -24,10 +24,17 @@ export function IssueComposer({ onClose }: { onClose: () => void }) {
     },
   });
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+  const submit = (event?: FormEvent) => {
+    event?.preventDefault();
     if (title.trim()) {
       mutation.mutate();
+    }
+  };
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      submit();
     }
   };
 
@@ -60,12 +67,14 @@ export function IssueComposer({ onClose }: { onClose: () => void }) {
             autoFocus
             className="block h-8 w-full bg-transparent font-semibold text-foreground outline-none placeholder:text-[#9da0a6]"
             onChange={(event) => setTitle(event.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Issue title"
             value={title}
           />
           <textarea
             className="mt-2 block min-h-16 w-full resize-none bg-transparent text-foreground outline-none placeholder:text-[#a9abb1]"
             onChange={(event) => setDescription(event.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Add description..."
             value={description}
           />

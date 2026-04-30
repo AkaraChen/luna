@@ -5,11 +5,11 @@ import { useLocation } from "wouter";
 
 import { fetchIssues } from "@/api/asahi";
 import { AsahiSidebar, type View } from "@/components/dashboard/asahi-sidebar";
+import { CreateIssueTrigger } from "@/components/dashboard/create-issue-trigger";
 import { statusFilters, type StatusFilter } from "@/components/dashboard/constants";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { IssueDetails, DetailsSkeleton } from "@/components/dashboard/issue-details";
 import { IssueList } from "@/components/dashboard/issue-list";
-import { IssueComposer } from "@/components/dashboard/issue-composer";
 import { NotificationsView } from "@/components/dashboard/notifications-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +29,6 @@ function Dashboard() {
   const view: View = location.startsWith("/inbox") ? "notifications" : "issues";
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
-  const [isComposerOpen, setComposerOpen] = useState(false);
   const selectedId = issueIdFromLocation(location);
 
   return (
@@ -73,10 +72,12 @@ function Dashboard() {
               </div>
             ) : null}
             {view === "issues" && !selectedId || view === "notifications" ? (
-              <Button onClick={() => setComposerOpen(true)} size="sm">
-                <IconPlus className="size-4" />
-                New issue
-              </Button>
+              <CreateIssueTrigger>
+                <Button size="sm">
+                  <IconPlus className="size-4" />
+                  New issue
+                </Button>
+              </CreateIssueTrigger>
             ) : null}
           </div>
         </header>
@@ -95,7 +96,6 @@ function Dashboard() {
         )}
       </SidebarInset>
 
-      {isComposerOpen ? <IssueComposer onClose={() => setComposerOpen(false)} /> : null}
     </SidebarProvider>
   );
 }
