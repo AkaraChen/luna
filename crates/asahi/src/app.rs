@@ -4,6 +4,7 @@ use crate::{
     api::{health, issues},
     db,
     service::IssueService,
+    web,
 };
 
 pub fn rocket() -> Rocket<Build> {
@@ -26,4 +27,5 @@ pub fn rocket_with_database_url(database_url: impl Into<String>) -> Rocket<Build
         }))
         .mount("/api", health::routes())
         .mount("/api", issues::routes())
+        .mount("/", web::routes())
 }

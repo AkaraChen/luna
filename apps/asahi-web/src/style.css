@@ -127,4 +127,7 @@
   html {
     @apply font-sans;
   }
+  button {
+    @apply cursor-default;
+  }
 }
