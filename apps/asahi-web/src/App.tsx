@@ -60,8 +60,8 @@ function Dashboard() {
             )}
           </div>
 
-          {view === "issues" && !selectedId ? (
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            {view === "issues" && !selectedId ? (
               <div className="relative">
                 <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -71,12 +71,14 @@ function Dashboard() {
                   value={search}
                 />
               </div>
+            ) : null}
+            {view === "issues" && !selectedId || view === "notifications" ? (
               <Button onClick={() => setComposerOpen(true)} size="sm">
                 <IconPlus className="size-4" />
                 New issue
               </Button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </header>
 
         {view === "notifications" ? (
