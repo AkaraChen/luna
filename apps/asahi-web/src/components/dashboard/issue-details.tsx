@@ -15,6 +15,16 @@ import {
   type Comment,
   type Issue,
 } from "@/api/asahi";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -33,6 +43,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   const [blockersOpen, setBlockersOpen] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState(issue.description ?? "");
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const commentsQuery = useSuspenseQuery({
     queryKey: ["comments", issue.id],
@@ -113,21 +124,37 @@ export function IssueDetails({ issue }: { issue: Issue }) {
             <span className="h-1 w-1 rounded-full bg-[#c9c4bb]" />
             <span className="text-xs text-[#8a877e]">{formatDate(issue.updated_at)}</span>
           </div>
-          <Button
-            aria-label="Delete issue"
-            className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
-            disabled={deleteMutation.isPending}
-            onClick={() => {
-              if (window.confirm(`Delete ${issue.identifier}?`)) {
-                deleteMutation.mutate();
-              }
-            }}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <IconTrash className="size-3.5" />
-          </Button>
+          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <Button
+              aria-label="Delete issue"
+              className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+              disabled={deleteMutation.isPending}
+              onClick={() => setDeleteOpen(true)}
+              size="icon-xs"
+              type="button"
+              variant="ghost"
+            >
+              <IconTrash className="size-3.5" />
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete {issue.identifier}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This action cannot be undone. This will permanently delete the issue.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={deleteMutation.isPending}
+                  onClick={() => deleteMutation.mutate()}
+                  variant="destructive"
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
         <h2 className="text-lg font-semibold leading-snug text-[#22211f]">{issue.title}</h2>
         {editingDescription ? (
