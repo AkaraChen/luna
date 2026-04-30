@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { IconChevronDown, IconLink, IconSend, IconTrash, IconX } from "@tabler/icons-react";
+import { useLocation } from "wouter";
 
 import {
   createComment,
@@ -22,6 +23,7 @@ const priorityOptions = [null, 1, 2, 3, 4] as const;
 
 export function IssueDetails({ issue }: { issue: Issue }) {
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [comment, setComment] = useState("");
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
@@ -57,6 +59,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   const deleteMutation = useMutation({
     mutationFn: () => deleteIssue(issue.id),
     onSuccess: () => {
+      navigate("/issues");
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
       void queryClient.removeQueries({ queryKey: ["comments", issue.id] });

@@ -1,12 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import {
-  IconArchive,
-  IconBell,
-  IconCircleCheck,
-  IconMessage,
-  IconPencil,
-  IconPlus,
-} from "@tabler/icons-react";
+import { IconArchive, IconBell, IconCircleCheck } from "@tabler/icons-react";
+import { useLocation } from "wouter";
 
 import {
   archiveNotification,
@@ -17,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { Priority, StatusBadge } from "./issue-badges";
+import { Priority, StatusIcon } from "./issue-badges";
 
 export function NotificationsView() {
   const queryClient = useQueryClient();
@@ -93,69 +87,83 @@ function NotificationRow({
   onRead: () => void;
   readDisabled: boolean;
 }) {
+  const [, navigate] = useLocation();
   const unread = notification.read_at == null;
-  const Icon = notificationIcon(notification.type);
+  const issue = notification.issue;
 
   return (
-    <article
+    <div
       className={cn(
-        "grid min-h-16 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 border-b border-border px-4 py-3",
+        "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border px-4 py-2 text-left hover:bg-[#f7f6f2]",
         unread ? "bg-[#fbfaf7]" : "bg-background",
+        issue && "cursor-default",
       )}
+      onClick={() => {
+        if (issue) {
+          navigate(`/issues/${encodeURIComponent(issue.id)}`);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (issue && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          navigate(`/issues/${encodeURIComponent(issue.id)}`);
+        }
+      }}
+      role={issue ? "button" : undefined}
+      tabIndex={issue ? 0 : undefined}
     >
-      <div className="pt-1">
-        <span
-          className={cn(
-            "block size-2 rounded-full",
-            unread ? "bg-[#276ef1]" : "bg-transparent",
-          )}
-        />
-      </div>
+      {issue ? (
+        <StatusIcon state={issue.state} />
+      ) : (
+        <IconBell className="size-4 shrink-0 text-[#6f6d66]" stroke={1.8} />
+      )}
 
       <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <Icon className="size-4 shrink-0 text-[#76736b]" stroke={1.8} />
-          <span className="truncate text-sm font-medium text-[#25231f]">{notification.title}</span>
-          <span className="shrink-0 text-xs text-[#9a968d]">
-            {formatDate(notification.created_at)}
-          </span>
-        </div>
-
-        {notification.body ? (
-          <p className="mt-1 line-clamp-2 text-sm leading-5 text-[#625f58]">{notification.body}</p>
-        ) : null}
-
-        {notification.issue ? (
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-[#5f5b53]">
-              {notification.issue.identifier}
-            </span>
-            <span className="min-w-0 truncate text-xs text-[#7e7a72]">
-              {notification.issue.title}
-            </span>
-            <StatusBadge state={notification.issue.state} />
-            <Priority priority={notification.issue.priority} />
-          </div>
-        ) : null}
+        <span
+          className={cn(
+            "block truncate text-sm text-[#262522]",
+            unread && "font-medium text-[#1f1e1b]",
+          )}
+        >
+          {issue?.title ?? notification.title}
+        </span>
+        <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-[#8f8b82]">
+          {issue ? <span className="shrink-0">{issue.identifier}</span> : null}
+          <span className="shrink-0">{formatDate(notification.created_at)}</span>
+          <span className="truncate">{notification.title}</span>
+        </span>
       </div>
 
+      <Priority priority={issue?.priority ?? null} showEmpty={false} />
+
       <div className="flex items-center gap-1">
-        {unread ? (
-          <Button
-            aria-label="Mark as read"
-            disabled={readDisabled}
-            onClick={onRead}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <IconCircleCheck className="size-3.5" />
-          </Button>
-        ) : null}
+        <Button
+          aria-label="Mark as read"
+          aria-disabled={readDisabled || !unread}
+          className={cn(
+            "aria-disabled:opacity-50",
+            !unread && "text-[#b7b2aa]",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (readDisabled || !unread) return;
+            onRead();
+          }}
+          size="icon-xs"
+          type="button"
+          variant="ghost"
+        >
+          <IconCircleCheck className="size-3.5" />
+        </Button>
         <Button
           aria-label="Archive notification"
-          disabled={archiveDisabled}
-          onClick={onArchive}
+          aria-disabled={archiveDisabled}
+          className="aria-disabled:opacity-50"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (archiveDisabled) return;
+            onArchive();
+          }}
           size="icon-xs"
           type="button"
           variant="ghost"
@@ -163,15 +171,8 @@ function NotificationRow({
           <IconArchive className="size-3.5" />
         </Button>
       </div>
-    </article>
+    </div>
   );
-}
-
-function notificationIcon(type: string) {
-  if (type === "comment_created") return IconMessage;
-  if (type === "issue_created") return IconPlus;
-  if (type === "issue_updated") return IconPencil;
-  return IconBell;
 }
 
 function formatDate(value: string) {

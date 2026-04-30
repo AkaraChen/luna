@@ -1,6 +1,7 @@
 import { Suspense, useMemo, useState } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { IconPlus, IconSearch } from "@tabler/icons-react";
+import { useLocation } from "wouter";
 
 import { fetchIssues } from "@/api/asahi";
 import { AsahiSidebar, type View } from "@/components/dashboard/asahi-sidebar";
@@ -24,15 +25,21 @@ export function App() {
 }
 
 function Dashboard() {
-  const [view, setView] = useState<View>("issues");
+  const [location, navigate] = useLocation();
+  const view: View = location.startsWith("/inbox") ? "notifications" : "issues";
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isComposerOpen, setComposerOpen] = useState(false);
+  const selectedId = issueIdFromLocation(location);
 
   return (
     <SidebarProvider>
-      <AsahiSidebar view={view} onViewChange={setView} />
+      <AsahiSidebar
+        view={view}
+        onViewChange={(nextView) => {
+          navigate(nextView === "notifications" ? "/inbox" : "/issues");
+        }}
+      />
 
       <SidebarInset className="min-h-svh overflow-hidden border border-border/70 bg-background">
         <header className="flex h-14 items-center justify-between border-b border-border bg-background/95 px-4">
@@ -65,7 +72,7 @@ function Dashboard() {
           <NotificationsView />
         ) : (
           <IssuesView
-            onSelect={setSelectedId}
+            onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
             search={search}
             selectedId={selectedId}
             statusFilter={statusFilter}
@@ -77,6 +84,11 @@ function Dashboard() {
       {isComposerOpen ? <IssueComposer onClose={() => setComposerOpen(false)} /> : null}
     </SidebarProvider>
   );
+}
+
+function issueIdFromLocation(location: string) {
+  const match = /^\/issues\/([^/?#]+)/.exec(location);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 function IssuesView({
@@ -116,7 +128,9 @@ function IssuesView({
   }, [data.issues, search]);
 
   const selectedIssue =
-    visibleIssues.find((issue) => issue.id === selectedId) ?? visibleIssues[0] ?? null;
+    visibleIssues.find((issue) => issue.id === selectedId || issue.identifier === selectedId) ??
+    visibleIssues[0] ??
+    null;
 
   return (
     <section className="grid min-h-[calc(100svh-3.5rem)] xl:grid-cols-[minmax(0,1fr)_360px]">
