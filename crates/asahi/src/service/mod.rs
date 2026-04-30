@@ -427,6 +427,17 @@ impl IssueService {
         self.hydrate_notification(model).await
     }
 
+    pub async fn mark_notification_unread(&self, id: &str) -> ServiceResult<Notification> {
+        let model = notification::Entity::find_by_id(id.to_string())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::NotificationNotFound(id.to_string()))?;
+        let mut active = model.into_active_model();
+        active.read_at = Set(None);
+        let model = active.update(&self.db).await?;
+        self.hydrate_notification(model).await
+    }
+
     pub async fn archive_notification(&self, id: &str) -> ServiceResult<Notification> {
         let now = Utc::now();
         let model = notification::Entity::find_by_id(id.to_string())

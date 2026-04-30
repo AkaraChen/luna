@@ -63,6 +63,14 @@ async fn mark_notification_read(
     Ok(Json(service.mark_notification_read(id).await?))
 }
 
+#[patch("/notifications/<id>/unread")]
+async fn mark_notification_unread(
+    id: &str,
+    service: &State<IssueService>,
+) -> Result<Json<Notification>, ApiError> {
+    Ok(Json(service.mark_notification_unread(id).await?))
+}
+
 #[patch("/notifications/<id>/archive")]
 async fn archive_notification(
     id: &str,
@@ -75,6 +83,7 @@ pub fn routes() -> Vec<Route> {
     routes![
         list_notifications,
         mark_notification_read,
+        mark_notification_unread,
         archive_notification
     ]
 }

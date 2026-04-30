@@ -184,6 +184,13 @@ export async function markNotificationRead(notificationId: string): Promise<Asah
   );
 }
 
+export async function markNotificationUnread(notificationId: string): Promise<AsahiNotification> {
+  return request<AsahiNotification>(
+    `/api/notifications/${encodeURIComponent(notificationId)}/unread`,
+    { method: "PATCH" },
+  );
+}
+
 export async function archiveNotification(notificationId: string): Promise<AsahiNotification> {
   return request<AsahiNotification>(
     `/api/notifications/${encodeURIComponent(notificationId)}/archive`,

@@ -1,12 +1,13 @@
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { IconArchive, IconBell, IconCircleCheck } from "@tabler/icons-react";
+import { IconArchive, IconBell } from "@tabler/icons-react";
 
 import {
   archiveNotification,
   fetchIssues,
   fetchNotifications,
   markNotificationRead,
+  markNotificationUnread,
   type AsahiNotification,
 } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,13 @@ export function NotificationsView() {
 
   const readMutation = useMutation({
     mutationFn: markNotificationRead,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+
+  const unreadMutation = useMutation({
+    mutationFn: markNotificationUnread,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
@@ -72,8 +80,8 @@ export function NotificationsView() {
               notification={notification}
               onArchive={() => archiveMutation.mutate(notification.id)}
               onRead={() => readMutation.mutate(notification.id)}
+              onUnread={() => unreadMutation.mutate(notification.id)}
               onSelectIssue={setSelectedIssueId}
-              readDisabled={readMutation.isPending}
               selected={notification.issue != null && notification.issue.id === selectedIssueId}
             />
           ))}
@@ -110,100 +118,148 @@ function NotificationRow({
   notification,
   onArchive,
   onRead,
+  onUnread,
   onSelectIssue,
-  readDisabled,
   selected,
 }: {
   archiveDisabled: boolean;
   notification: AsahiNotification;
   onArchive: () => void;
   onRead: () => void;
+  onUnread: () => void;
   onSelectIssue: (issueId: string) => void;
-  readDisabled: boolean;
   selected: boolean;
 }) {
   const unread = notification.read_at == null;
   const issue = notification.issue;
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenu(null);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(null);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [menu]);
 
   return (
-    <div
-      className={cn(
-        "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f6f2]",
-        unread ? "bg-[#fbfaf7]" : "bg-background",
-        selected && "bg-[#f2f1ec]",
-        issue && "cursor-pointer",
-      )}
-      onClick={() => {
-        if (issue) {
-          onSelectIssue(issue.id);
-        }
-      }}
-      onKeyDown={(event) => {
-        if (issue && (event.key === "Enter" || event.key === " ")) {
+    <>
+      <div
+        className={cn(
+          "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f6f2]",
+          unread ? "bg-[#fbfaf7]" : "bg-background",
+          selected && "bg-[#f2f1ec]",
+          issue && "cursor-pointer",
+        )}
+        onClick={() => {
+          if (issue) {
+            onSelectIssue(issue.id);
+            if (unread) {
+              onRead();
+            }
+          }
+        }}
+        onContextMenu={(event) => {
           event.preventDefault();
-          onSelectIssue(issue.id);
-        }
-      }}
-      role={issue ? "button" : undefined}
-      tabIndex={issue ? 0 : undefined}
-    >
-      {issue ? (
-        <StatusIcon state={issue.state} />
-      ) : (
-        <IconBell className="size-4 shrink-0 text-[#6f6d66]" stroke={1.8} />
-      )}
+          setMenu({ x: event.clientX, y: event.clientY });
+        }}
+        onKeyDown={(event) => {
+          if (issue && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            onSelectIssue(issue.id);
+            if (unread) {
+              onRead();
+            }
+          }
+        }}
+        role={issue ? "button" : undefined}
+        tabIndex={issue ? 0 : undefined}
+      >
+        {issue ? (
+          <StatusIcon state={issue.state} />
+        ) : (
+          <IconBell className="size-4 shrink-0 text-[#6f6d66]" stroke={1.8} />
+        )}
 
-      <div className="min-w-0">
-        <span
-          className={cn(
-            "block truncate text-sm text-[#262522]",
-            unread && "font-medium text-[#1f1e1b]",
+        <div className="min-w-0">
+          <span
+            className={cn(
+              "block truncate text-sm text-[#262522]",
+              unread && "font-medium text-[#1f1e1b]",
+            )}
+          >
+            {issue?.title ?? notification.title}
+          </span>
+          <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-[#8f8b82]">
+            {issue ? <span className="shrink-0">{issue.identifier}</span> : null}
+            <span className="shrink-0">{formatDate(notification.created_at)}</span>
+            <span className="truncate">{notification.title}</span>
+          </span>
+        </div>
+
+        <Priority priority={issue?.priority ?? null} showEmpty={false} />
+
+        <div className="flex items-center gap-1">
+          <Button
+            aria-label="Archive notification"
+            aria-disabled={archiveDisabled}
+            className="aria-disabled:opacity-50"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (archiveDisabled) return;
+              onArchive();
+            }}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <IconArchive className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {menu ? (
+        <div
+          ref={menuRef}
+          className="fixed z-50 min-w-40 rounded-md border border-[#eceae5] bg-white py-1 shadow-md"
+          style={{ left: menu.x, top: menu.y }}
+        >
+          {!unread && (
+            <button
+              className="flex h-8 w-full items-center px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]"
+              onClick={() => {
+                onUnread();
+                setMenu(null);
+              }}
+              type="button"
+            >
+              Mark as unread
+            </button>
           )}
-        >
-          {issue?.title ?? notification.title}
-        </span>
-        <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-[#8f8b82]">
-          {issue ? <span className="shrink-0">{issue.identifier}</span> : null}
-          <span className="shrink-0">{formatDate(notification.created_at)}</span>
-          <span className="truncate">{notification.title}</span>
-        </span>
-      </div>
-
-      <Priority priority={issue?.priority ?? null} showEmpty={false} />
-
-      <div className="flex items-center gap-1">
-        <Button
-          aria-label="Mark as read"
-          aria-disabled={readDisabled || !unread}
-          className={cn("aria-disabled:opacity-50", !unread && "text-[#b7b2aa]")}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (readDisabled || !unread) return;
-            onRead();
-          }}
-          size="icon-xs"
-          type="button"
-          variant="ghost"
-        >
-          <IconCircleCheck className="size-3.5" />
-        </Button>
-        <Button
-          aria-label="Archive notification"
-          aria-disabled={archiveDisabled}
-          className="aria-disabled:opacity-50"
-          onClick={(event) => {
-            event.stopPropagation();
-            if (archiveDisabled) return;
-            onArchive();
-          }}
-          size="icon-xs"
-          type="button"
-          variant="ghost"
-        >
-          <IconArchive className="size-3.5" />
-        </Button>
-      </div>
-    </div>
+          <button
+            className="flex h-8 w-full items-center px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]"
+            onClick={() => {
+              onArchive();
+              setMenu(null);
+            }}
+            type="button"
+          >
+            Archive
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
