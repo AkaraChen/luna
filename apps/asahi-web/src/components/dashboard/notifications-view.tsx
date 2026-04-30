@@ -52,7 +52,7 @@ export function NotificationsView() {
 
   return (
     <section className="min-h-[calc(100svh-3.5rem)] bg-background">
-      <div className="flex h-12 items-center justify-between border-b border-border px-4">
+      <div className="flex h-12 items-center justify-between px-4">
         <div className="text-xs text-muted-foreground">
           {data.unread_count ? `${data.unread_count} unread` : "All caught up"}
         </div>
@@ -94,7 +94,7 @@ function NotificationRow({
   return (
     <div
       className={cn(
-        "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border px-4 py-2 text-left hover:bg-[#f7f6f2]",
+        "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f6f2]",
         unread ? "bg-[#fbfaf7]" : "bg-background",
         issue && "cursor-default",
       )}
