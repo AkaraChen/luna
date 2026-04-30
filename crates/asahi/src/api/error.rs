@@ -6,7 +6,7 @@ use rocket::{
 };
 use serde::Serialize;
 
-use crate::store::StoreError;
+use crate::service::ServiceError;
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -20,12 +20,12 @@ struct ErrorBody {
     error: String,
 }
 
-impl From<StoreError> for ApiError {
-    fn from(error: StoreError) -> Self {
+impl From<ServiceError> for ApiError {
+    fn from(error: ServiceError) -> Self {
         match error {
-            StoreError::InvalidInput(message) => Self::BadRequest(message),
-            StoreError::IssueNotFound(locator) => Self::NotFound(locator),
-            StoreError::LockPoisoned => Self::Internal(error.to_string()),
+            ServiceError::InvalidInput(message) => Self::BadRequest(message),
+            ServiceError::IssueNotFound(locator) => Self::NotFound(locator),
+            ServiceError::Database(_) => Self::Internal(error.to_string()),
         }
     }
 }

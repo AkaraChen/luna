@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     api::error::ApiError,
     domain::{Comment, Issue},
-    store::{CreateIssueInput, IssueFilter, IssueStore},
+    service::{CreateIssueInput, IssueFilter, IssueService},
 };
 
 #[derive(Debug, FromForm)]
@@ -55,74 +55,87 @@ pub struct CommentListResponse {
 }
 
 #[get("/issues?<query..>")]
-fn list_issues(
+async fn list_issues(
     query: ListIssuesQuery,
-    store: &State<IssueStore>,
+    service: &State<IssueService>,
 ) -> Result<Json<IssueListResponse>, ApiError> {
-    let issues = store.list_issues(IssueFilter {
-        project_slug: query.project_slug,
-        states: split_csv(query.states),
-        ids: split_csv(query.ids),
-        assignee_id: query.assignee_id,
-    })?;
+    let issues = service
+        .list_issues(IssueFilter {
+            project_slug: query.project_slug,
+            states: split_csv(query.states),
+            ids: split_csv(query.ids),
+            assignee_id: query.assignee_id,
+        })
+        .await?;
 
     Ok(Json(IssueListResponse { issues }))
 }
 
 #[post("/issues", data = "<body>")]
-fn create_issue(
+async fn create_issue(
     body: Json<CreateIssueRequest>,
-    store: &State<IssueStore>,
+    service: &State<IssueService>,
 ) -> Result<Json<Issue>, ApiError> {
     let body = body.into_inner();
-    let issue = store.create_issue(CreateIssueInput {
-        project_slug: body.project_slug,
-        team_key: body.team_key,
-        title: Some(body.title),
-        description: body.description,
-        priority: body.priority,
-        state: body.state,
-        branch_name: body.branch_name,
-        labels: body.labels,
-        blocked_by: body.blocked_by,
-        assignee_id: body.assignee_id,
-    })?;
+    let issue = service
+        .create_issue(CreateIssueInput {
+            project_slug: body.project_slug,
+            team_key: body.team_key,
+            title: Some(body.title),
+            description: body.description,
+            priority: body.priority,
+            state: body.state,
+            branch_name: body.branch_name,
+            labels: body.labels,
+            blocked_by: body.blocked_by,
+            assignee_id: body.assignee_id,
+        })
+        .await?;
 
     Ok(Json(issue))
 }
 
 #[get("/issues/<locator>")]
-fn get_issue(locator: &str, store: &State<IssueStore>) -> Result<Option<Json<Issue>>, ApiError> {
-    Ok(store.find_issue(locator)?.map(Json))
+async fn get_issue(
+    locator: &str,
+    service: &State<IssueService>,
+) -> Result<Option<Json<Issue>>, ApiError> {
+    Ok(service.find_issue(locator).await?.map(Json))
 }
 
 #[patch("/issues/<locator>/state", data = "<body>")]
-fn update_issue_state(
+async fn update_issue_state(
     locator: &str,
     body: Json<UpdateStateRequest>,
-    store: &State<IssueStore>,
+    service: &State<IssueService>,
 ) -> Result<Json<Issue>, ApiError> {
     Ok(Json(
-        store.update_issue_state(locator, body.into_inner().state)?,
+        service
+            .update_issue_state(locator, body.into_inner().state)
+            .await?,
     ))
 }
 
 #[post("/issues/<locator>/comments", data = "<body>")]
-fn create_comment(
+async fn create_comment(
     locator: &str,
     body: Json<CreateCommentRequest>,
-    store: &State<IssueStore>,
+    service: &State<IssueService>,
 ) -> Result<Json<Comment>, ApiError> {
-    Ok(Json(store.create_comment(locator, body.into_inner().body)?))
+    Ok(Json(
+        service
+            .create_comment(locator, body.into_inner().body)
+            .await?,
+    ))
 }
 
 #[get("/issues/<locator>/comments")]
-fn list_comments(
+async fn list_comments(
     locator: &str,
-    store: &State<IssueStore>,
+    service: &State<IssueService>,
 ) -> Result<Json<CommentListResponse>, ApiError> {
     Ok(Json(CommentListResponse {
-        comments: store.list_comments(locator)?,
+        comments: service.list_comments(locator).await?,
     }))
 }
 
@@ -176,7 +189,8 @@ mod tests {
 
     #[test]
     fn manages_issue_lifecycle() {
-        let client = Client::tracked(app::rocket()).expect("valid rocket instance");
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
 
         let created = client
             .post("/api/issues")
