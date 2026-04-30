@@ -1,4 +1,4 @@
-import { IconBell, IconCircleDot, IconSparkles } from "@tabler/icons-react";
+import { IconBell, IconCircleDot } from "@tabler/icons-react";
 
 import {
   Sidebar,
@@ -27,14 +27,10 @@ export function AsahiSidebar({
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton className="gap-2.5" size="lg" tooltip="Asahi">
-              <div className="flex size-8 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-                <IconSparkles className="size-4" stroke={1.8} />
-              </div>
-              <div className="grid min-w-0 flex-1 text-left leading-tight">
-                <span className="truncate text-sm font-semibold">Asahi</span>
-                <span className="truncate text-xs text-muted-foreground">Task workspace</span>
-              </div>
+            <SidebarMenuButton className="h-10 justify-start px-2" size="lg" tooltip="Asahi">
+              <span className="truncate text-[1.0625rem] font-semibold leading-none text-foreground">
+                Asahi
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
