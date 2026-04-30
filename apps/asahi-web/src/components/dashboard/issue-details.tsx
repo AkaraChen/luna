@@ -100,6 +100,21 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     },
   });
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "d" && (event.metaKey || event.ctrlKey)) {
+        const target = event.target as HTMLElement;
+        if (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable) {
+          return;
+        }
+        event.preventDefault();
+        setDeleteOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const blockerIds = issue.blocked_by
     .map((blocker) => blocker.id)
     .filter((id): id is string => Boolean(id));
