@@ -1,13 +1,34 @@
-import { type ReactNode } from "react";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { IconCircleDashed, IconFolder, IconPlus } from "@tabler/icons-react";
+import { useState, type ReactNode } from "react";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { IconCircleDashed, IconFolder, IconPlus, IconTrash } from "@tabler/icons-react";
+import { useLocation } from "wouter";
 
-import { fetchIssues, fetchProjects, type Project } from "@/api/asahi";
+import {
+  deleteProject,
+  fetchIssues,
+  fetchProjects,
+  updateProject,
+  updateProjectState,
+  type Project,
+} from "@/api/asahi";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 
 import { CreateIssueTrigger } from "./create-issue-trigger";
-import { Priority, StatusBadge } from "./issue-badges";
+import { EditablePriority, EditableStatus } from "./editable-fields";
 import { IssueList } from "./issue-list";
+
+const PROJECT_STATES = ["Backlog", "Todo", "In Progress", "Done"];
+const PRIORITY_OPTIONS = [null, 1, 2, 3] as const;
 
 export function ProjectDetails({
   locator,
@@ -47,19 +68,81 @@ function ProjectPage({
   onSelectIssue: (issueId: string) => void;
   project: Project;
 }) {
+  const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [priorityOpen, setPriorityOpen] = useState(false);
   const { data } = useSuspenseQuery({
     queryKey: ["issues", "project", project.id],
     queryFn: () => fetchIssues({ projectId: project.id }),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteProject(project.id),
+    onSuccess: () => {
+      navigate("/issues");
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["issues"] });
+    },
+  });
+
+  const stateMutation = useMutation({
+    mutationFn: (state: string) => updateProjectState(project.id, state),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
+  const priorityMutation = useMutation({
+    mutationFn: (priority: number | null) => updateProject(project.id, { priority }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
   return (
     <section className="min-h-0 flex-1 overflow-auto">
       <div className="px-5 pb-5 pt-5">
-        <div className="mb-3 flex items-center gap-2 text-xs text-[#77746c]">
-          <IconFolder className="size-3.5" stroke={1.8} />
-          <span>{project.slug}</span>
-          <span className="h-1 w-1 rounded-full bg-[#c9c4bb]" />
-          <span>{formatDate(project.updated_at)}</span>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2 text-xs text-[#77746c]">
+            <IconFolder className="size-3.5 shrink-0" stroke={1.8} />
+            <span className="truncate">{project.slug}</span>
+            <span className="h-1 w-1 shrink-0 rounded-full bg-[#c9c4bb]" />
+            <span className="shrink-0">{formatDate(project.updated_at)}</span>
+          </div>
+          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <Button
+              aria-label="Delete project"
+              className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+              disabled={deleteMutation.isPending}
+              onClick={() => setDeleteOpen(true)}
+              size="icon-xs"
+              type="button"
+              variant="ghost"
+            >
+              <IconTrash className="size-3.5" />
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete {project.name}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This action cannot be undone. Issues in this project will be moved out of the
+                  project.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={deleteMutation.isPending}
+                  onClick={() => deleteMutation.mutate()}
+                  variant="destructive"
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
 
         <h2 className="text-lg font-semibold leading-snug text-[#22211f]">{project.name}</h2>
@@ -77,10 +160,30 @@ function ProjectPage({
 
       <div className="border-y border-[#eceae5] px-5 py-2">
         <PropertyRow label="Status">
-          <StatusBadge state={project.state} />
+          <EditableStatus
+            disabled={stateMutation.isPending}
+            onChange={(state) => {
+              stateMutation.mutate(state);
+              setStatusOpen(false);
+            }}
+            open={statusOpen}
+            options={PROJECT_STATES}
+            setOpen={setStatusOpen}
+            state={project.state}
+          />
         </PropertyRow>
         <PropertyRow label="Priority">
-          <Priority priority={project.priority} />
+          <EditablePriority
+            disabled={priorityMutation.isPending}
+            onChange={(priority) => {
+              priorityMutation.mutate(priority);
+              setPriorityOpen(false);
+            }}
+            open={priorityOpen}
+            options={[...PRIORITY_OPTIONS]}
+            priority={project.priority}
+            setOpen={setPriorityOpen}
+          />
         </PropertyRow>
       </div>
 

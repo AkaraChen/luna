@@ -13,8 +13,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import { IssueDetailSkeleton } from "@/components/dashboard/dashboard-skeleton";
+
 import { Priority, StatusIcon } from "./issue-badges";
-import { IssueDetails, DetailsSkeleton } from "./issue-details";
+import { IssueDetails } from "./issue-details";
 import { EmptyDetails } from "./issue-list";
 
 export function NotificationsView() {
@@ -90,7 +92,7 @@ export function NotificationsView() {
 
       <aside className="min-w-0 bg-card">
         {selectedIssueId ? (
-          <Suspense fallback={<DetailsSkeleton />}>
+          <Suspense fallback={<IssueDetailSkeleton />}>
             <NotificationIssueDetails issueId={selectedIssueId} />
           </Suspense>
         ) : (

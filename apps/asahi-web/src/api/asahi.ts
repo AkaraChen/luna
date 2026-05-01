@@ -192,6 +192,12 @@ export async function updateProjectState(projectId: string, state: string): Prom
   });
 }
 
+export async function deleteProject(projectId: string): Promise<Project> {
+  return request<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function createIssue(input: CreateIssueInput): Promise<Issue> {
   return request<Issue>("/api/issues", {
     body: JSON.stringify(input),

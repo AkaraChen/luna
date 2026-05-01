@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { IconChevronDown, IconEdit, IconLink, IconSend, IconTrash, IconX } from "@tabler/icons-react";
 import { useLocation } from "wouter";
@@ -27,10 +27,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { ActivitySkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { cn } from "@/lib/utils";
 
 import { statusColumns } from "./constants";
-import { Priority, StatusIcon } from "./issue-badges";
+import { EditablePriority, EditableStatus } from "./editable-fields";
 
 const priorityOptions = [null, 1, 2, 3, 4] as const;
 
@@ -44,16 +45,6 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   const [editingDescription, setEditingDescription] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState(issue.description ?? "");
   const [deleteOpen, setDeleteOpen] = useState(false);
-
-  const commentsQuery = useSuspenseQuery({
-    queryKey: ["comments", issue.id],
-    queryFn: () => fetchComments(issue.id),
-  });
-
-  const activitiesQuery = useSuspenseQuery({
-    queryKey: ["activities", issue.id],
-    queryFn: () => fetchActivities(issue.id),
-  });
 
   const allIssuesQuery = useSuspenseQuery({
     queryKey: ["issues", "all"],
@@ -248,6 +239,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
               setStatusOpen(false);
             }}
             open={statusOpen}
+            options={statusColumns}
             setOpen={setStatusOpen}
             state={issue.state}
           />
@@ -260,6 +252,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
               setPriorityOpen(false);
             }}
             open={priorityOpen}
+            options={[...priorityOptions]}
             priority={issue.priority}
             setOpen={setPriorityOpen}
           />
@@ -283,14 +276,10 @@ export function IssueDetails({ issue }: { issue: Issue }) {
         </PropertyRow>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto border-t border-[#eceae5] px-5 py-4">
-        <div className="mb-3 text-sm font-medium">Activity</div>
-        <div className="space-y-3">
-          <Timeline
-            activities={activitiesQuery.data.activities}
-            comments={commentsQuery.data.comments}
-          />
-        </div>
+      <div className="min-h-0 flex-1 overflow-auto border-t border-[#eceae5]">
+        <Suspense fallback={<ActivitySkeleton />}>
+          <IssueActivity issueId={issue.id} />
+        </Suspense>
       </div>
 
       <form className="p-4 pt-0" onSubmit={submitComment}>
@@ -359,102 +348,6 @@ function Timeline({
           </div>
         ),
       )}
-    </div>
-  );
-}
-
-function EditableStatus({
-  disabled,
-  onChange,
-  open,
-  setOpen,
-  state,
-}: {
-  disabled: boolean;
-  onChange: (state: string) => void;
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  state: string;
-}) {
-  return (
-    <div className="relative min-w-0">
-      <button
-        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left text-xs font-medium text-[#55524b] hover:bg-[#f7f6f2] disabled:opacity-50"
-        disabled={disabled}
-        onClick={() => setOpen(!open)}
-        type="button"
-      >
-        <StatusIcon state={state} />
-        <span className="truncate">{state}</span>
-        <IconChevronDown className="size-3.5 shrink-0 text-[#8a877e]" />
-      </button>
-
-      {open ? (
-        <div className="absolute right-0 top-full z-20 mt-1 min-w-40 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
-          {statusColumns.map((option) => (
-            <button
-              className={cn(
-                "flex h-8 w-full items-center gap-2 px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]",
-                state === option && "bg-[#f2f1ec]",
-              )}
-              disabled={disabled || state === option}
-              key={option}
-              onClick={() => onChange(option)}
-              type="button"
-            >
-              <StatusIcon state={option} />
-              {option}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function EditablePriority({
-  disabled,
-  onChange,
-  open,
-  priority,
-  setOpen,
-}: {
-  disabled: boolean;
-  onChange: (priority: number | null) => void;
-  open: boolean;
-  priority: number | null;
-  setOpen: (open: boolean) => void;
-}) {
-  return (
-    <div className="relative min-w-0">
-      <button
-        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left hover:bg-[#f7f6f2] disabled:opacity-50"
-        disabled={disabled}
-        onClick={() => setOpen(!open)}
-        type="button"
-      >
-        <Priority priority={priority} />
-        <IconChevronDown className="size-3.5 shrink-0 text-[#8a877e]" />
-      </button>
-
-      {open ? (
-        <div className="absolute right-0 top-full z-20 mt-1 min-w-34 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
-          {priorityOptions.map((option) => (
-            <button
-              className={cn(
-                "flex h-8 w-full items-center px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]",
-                priority === option && "bg-[#f2f1ec]",
-              )}
-              disabled={disabled || priority === option}
-              key={option ?? "none"}
-              onClick={() => onChange(option)}
-              type="button"
-            >
-              <Priority priority={option} />
-            </button>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -558,12 +451,26 @@ function PropertyRow({ children, label }: { children: ReactNode; label: string }
   );
 }
 
-export function DetailsSkeleton() {
+function IssueActivity({ issueId }: { issueId: string }) {
+  const { data: commentsData } = useSuspenseQuery({
+    queryKey: ["comments", issueId],
+    queryFn: () => fetchComments(issueId),
+  });
+
+  const { data: activitiesData } = useSuspenseQuery({
+    queryKey: ["activities", issueId],
+    queryFn: () => fetchActivities(issueId),
+  });
+
   return (
-    <div className="space-y-4 p-5">
-      <div className="h-6 w-32 animate-pulse rounded bg-[#eceae5]" />
-      <div className="h-8 w-full animate-pulse rounded bg-[#eceae5]" />
-      <div className="h-24 w-full animate-pulse rounded bg-[#eceae5]" />
+    <div className="px-5 py-4">
+      <div className="mb-3 text-sm font-medium">Activity</div>
+      <div className="space-y-3">
+        <Timeline
+          activities={activitiesData.activities}
+          comments={commentsData.comments}
+        />
+      </div>
     </div>
   );
 }

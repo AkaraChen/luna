@@ -7,8 +7,14 @@ import { fetchIssues } from "@/api/asahi";
 import { AsahiSidebar, type View } from "@/components/dashboard/asahi-sidebar";
 import { CreateIssueTrigger } from "@/components/dashboard/create-issue-trigger";
 import { statusFilters, type StatusFilter } from "@/components/dashboard/constants";
-import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
-import { IssueDetails, DetailsSkeleton } from "@/components/dashboard/issue-details";
+import {
+  IssueDetailSkeleton,
+  IssuesViewSkeleton,
+  NotificationsViewSkeleton,
+  ProjectDetailsSkeleton,
+  SidebarSkeleton,
+} from "@/components/dashboard/dashboard-skeleton";
+import { IssueDetails } from "@/components/dashboard/issue-details";
 import { IssueList } from "@/components/dashboard/issue-list";
 import { NotificationsView } from "@/components/dashboard/notifications-view";
 import { ProjectDetails } from "@/components/dashboard/project-details";
@@ -18,11 +24,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
 export function App() {
-  return (
-    <Suspense fallback={<DashboardSkeleton />}>
-      <Dashboard />
-    </Suspense>
-  );
+  return <Dashboard />;
 }
 
 function Dashboard() {
@@ -40,16 +42,18 @@ function Dashboard() {
 
   return (
     <SidebarProvider>
-      <AsahiSidebar
-        activeProjectLocator={selectedProjectLocator}
-        onProjectSelect={(projectLocator) => {
-          navigate(`/projects/${encodeURIComponent(projectLocator)}`);
-        }}
-        view={view}
-        onViewChange={(nextView) => {
-          navigate(nextView === "notifications" ? "/inbox" : "/issues");
-        }}
-      />
+      <Suspense fallback={<SidebarSkeleton />}>
+        <AsahiSidebar
+          activeProjectLocator={selectedProjectLocator}
+          onProjectSelect={(projectLocator) => {
+            navigate(`/projects/${encodeURIComponent(projectLocator)}`);
+          }}
+          view={view}
+          onViewChange={(nextView) => {
+            navigate(nextView === "notifications" ? "/inbox" : "/issues");
+          }}
+        />
+      </Suspense>
 
       <SidebarInset className="border border-border/70 bg-background">
         <header className="flex h-14 items-center justify-between border-b border-border bg-background/95 px-4">
@@ -94,25 +98,33 @@ function Dashboard() {
         </header>
 
         {view === "notifications" ? (
-          <NotificationsView />
+          <Suspense fallback={<NotificationsViewSkeleton />}>
+            <NotificationsView />
+          </Suspense>
         ) : view === "project" ? (
           selectedProjectLocator ? (
-            <ProjectDetails
-              locator={selectedProjectLocator}
-              onSelectIssue={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
-            />
+            <Suspense fallback={<ProjectDetailsSkeleton />}>
+              <ProjectDetails
+                locator={selectedProjectLocator}
+                onSelectIssue={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
+              />
+            </Suspense>
           ) : (
             <NoProjectSelected />
           )
         ) : selectedId ? (
-          <IssueDetailPage selectedId={selectedId} />
+          <Suspense fallback={<IssueDetailSkeleton />}>
+            <IssueDetailPage selectedId={selectedId} />
+          </Suspense>
         ) : (
-          <IssuesView
-            onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
-            search={search}
-            statusFilter={statusFilter}
-            setStatusFilter={setStatusFilter}
-          />
+          <Suspense fallback={<IssuesViewSkeleton />}>
+            <IssuesView
+              onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
+              search={search}
+              statusFilter={statusFilter}
+              setStatusFilter={setStatusFilter}
+            />
+          </Suspense>
         )}
       </SidebarInset>
     </SidebarProvider>
@@ -219,9 +231,7 @@ function IssueDetailPage({ selectedId }: { selectedId: string }) {
 
   return (
     <div className="min-h-0 flex-1 overflow-hidden">
-      <Suspense fallback={<DetailsSkeleton />}>
-        <IssueDetails issue={issue} />
-      </Suspense>
+      <IssueDetails issue={issue} />
     </div>
   );
 }
