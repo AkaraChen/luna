@@ -300,7 +300,11 @@ mod tests {
         local::blocking::Client,
     };
 
-    use crate::{api::notifications::NotificationListResponse, app, domain::Issue};
+    use crate::{
+        api::{notifications::NotificationListResponse, projects::ProjectListResponse},
+        app,
+        domain::Issue,
+    };
 
     use super::{ActivityListResponse, CommentListResponse, IssueListResponse};
 
@@ -437,6 +441,27 @@ mod tests {
             after_delete.into_json().expect("after delete list json");
         assert_eq!(after_delete.issues.len(), 1);
         assert_eq!(after_delete.issues[0].id, issue.id);
+    }
+
+    #[test]
+    fn creates_issue_without_project_when_project_omitted() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"No project issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let issue: Issue = created.into_json().expect("issue json");
+        assert_eq!(issue.project_id, None);
+        assert_eq!(issue.project, None);
+
+        let projects = client.get("/api/projects").dispatch();
+        assert_eq!(projects.status(), Status::Ok);
+        let projects: ProjectListResponse = projects.into_json().expect("projects json");
+        assert!(projects.projects.is_empty());
     }
 
     #[test]
