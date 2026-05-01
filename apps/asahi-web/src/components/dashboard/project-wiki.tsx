@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import {
   useMutation,
   useQueries,
@@ -14,10 +21,12 @@ import {
   IconFolder,
   IconFolderOpen,
   IconPlus,
+  IconTrash,
 } from "@tabler/icons-react";
 
 import {
   createWikiNode,
+  deleteWikiNode,
   fetchWikiNodes,
   updateWikiNode,
   type CreateWikiNodeInput,
@@ -27,6 +36,16 @@ import {
   type WikiNodeKind,
   type WikiNodeListResponse,
 } from "@/api/asahi";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { cn } from "@/lib/utils";
@@ -36,6 +55,12 @@ type InlineComposerState = {
   kind: WikiNodeKind;
 };
 
+type WikiContextMenuState = {
+  node: WikiNode;
+  x: number;
+  y: number;
+};
+
 type WikiNodesQueryResult = UseQueryResult<WikiNodeListResponse, Error>;
 
 export function ProjectWiki({ project }: { project: Project }) {
@@ -43,6 +68,9 @@ export function ProjectWiki({ project }: { project: Project }) {
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(() => new Set());
   const [selectedNode, setSelectedNode] = useState<WikiNode | null>(null);
   const [inlineComposer, setInlineComposer] = useState<InlineComposerState | null>(null);
+  const [contextMenu, setContextMenu] = useState<WikiContextMenuState | null>(null);
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WikiNode | null>(null);
 
   const rootQuery = useQuery({
     queryKey: wikiNodesQueryKey(project.id, null),
@@ -102,6 +130,63 @@ export function ProjectWiki({ project }: { project: Project }) {
         return next;
       });
       setSelectedNode(node);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", project.id] });
+    },
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: ({ node, title }: { node: WikiNode; title: string }) =>
+      updateWikiNode(project.id, node.id, {
+        actor_kind: "human",
+        summary: "Rename wiki node",
+        title,
+      }),
+    onSuccess: (updatedNode) => {
+      queryClient.setQueryData<WikiNodeListResponse>(
+        wikiNodesQueryKey(project.id, updatedNode.parent_id ?? null),
+        (current) =>
+          current
+            ? {
+                nodes: sortWikiNodes(
+                  current.nodes.map((node) => (node.id === updatedNode.id ? updatedNode : node)),
+                ),
+              }
+            : current,
+      );
+      setSelectedNode((current) => (current?.id === updatedNode.id ? updatedNode : current));
+      setRenamingNodeId(null);
+      void queryClient.invalidateQueries({ queryKey: ["wiki", project.id] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (node: WikiNode) => deleteWikiNode(project.id, node.id, { actorKind: "human" }),
+    onSuccess: (_deletedNode, node) => {
+      const deletedIds = collectLoadedWikiNodeIds(node.id, childrenByParentId);
+      queryClient.setQueryData<WikiNodeListResponse>(
+        wikiNodesQueryKey(project.id, node.parent_id ?? null),
+        (current) =>
+          current
+            ? {
+                nodes: current.nodes.filter((candidate) => candidate.id !== node.id),
+              }
+            : current,
+      );
+      queryClient.removeQueries({ queryKey: wikiNodesQueryKey(project.id, node.id) });
+      setExpandedFolderIds((current) => {
+        const next = new Set(current);
+        next.delete(node.id);
+        return next;
+      });
+      setInlineComposer((current) =>
+        current?.parentId && deletedIds.has(current.parentId) ? null : current,
+      );
+      setRenamingNodeId((current) => (current && deletedIds.has(current) ? null : current));
+      setSelectedNode((current) => {
+        if (!current) return current;
+        return deletedIds.has(current.id) || current.parent_id === node.id ? null : current;
+      });
+      setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["wiki", project.id] });
     },
   });
@@ -169,7 +254,37 @@ export function ProjectWiki({ project }: { project: Project }) {
     setInlineComposer({ parentId: folderId, kind: "page" });
   };
 
+  const openNodeContextMenu = (event: ReactMouseEvent, node: WikiNode) => {
+    event.preventDefault();
+    setContextMenu({ node, x: event.clientX, y: event.clientY });
+  };
+
+  const startRename = (node: WikiNode) => {
+    renameMutation.reset();
+    setInlineComposer(null);
+    setRenamingNodeId(node.id);
+  };
+
+  const submitRename = (node: WikiNode, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed || renameMutation.isPending) return;
+    if (trimmed === node.title) {
+      setRenamingNodeId(null);
+      return;
+    }
+    renameMutation.mutate({ node, title: trimmed });
+  };
+
+  const openDeleteDialog = (node: WikiNode) => {
+    deleteMutation.reset();
+    setDeleteTarget(node);
+  };
+
   const rootNodes = childrenByParentId.get(null) ?? [];
+  const renamingPendingId = renameMutation.isPending
+    ? (renameMutation.variables?.node.id ?? null)
+    : null;
+  const operationError = renameMutation.error ?? deleteMutation.error ?? null;
 
   return (
     <div className="min-h-[32rem] lg:grid lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)]">
@@ -218,9 +333,14 @@ export function ProjectWiki({ project }: { project: Project }) {
                   key={node.id}
                   node={node}
                   onCancelInline={cancelInline}
+                  onCancelRename={() => setRenamingNodeId(null)}
                   onCreatePage={handleCreatePageInFolder}
                   onNodeClick={handleNodeClick}
+                  onOpenContextMenu={openNodeContextMenu}
                   onSubmitInline={submitInline}
+                  onSubmitRename={submitRename}
+                  renamePendingId={renamingPendingId}
+                  renamingNodeId={renamingNodeId}
                   selectedId={activeNode?.id ?? null}
                 />
               ))}
@@ -240,6 +360,9 @@ export function ProjectWiki({ project }: { project: Project }) {
                   </div>
                 </div>
               ) : null}
+              {operationError ? (
+                <div className="px-4 py-2 text-xs text-destructive">{operationError.message}</div>
+              ) : null}
             </>
           )}
         </div>
@@ -250,6 +373,43 @@ export function ProjectWiki({ project }: { project: Project }) {
         childNodes={activeChildren}
         projectId={project.id}
       />
+      {contextMenu ? (
+        <WikiTreeContextMenu
+          menu={contextMenu}
+          onClose={() => setContextMenu(null)}
+          onDelete={openDeleteDialog}
+          onRename={startRename}
+        />
+      ) : null}
+      <AlertDialog
+        open={deleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.title}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.kind === "folder"
+                ? "This will delete the folder and its nested wiki items."
+                : "This will delete the wiki page."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteMutation.isPending || !deleteTarget}
+              onClick={() => {
+                if (deleteTarget) deleteMutation.mutate(deleteTarget);
+              }}
+              variant="destructive"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -262,11 +422,16 @@ function WikiTreeNode({
   expandedIds,
   inlineComposer,
   node,
+  onCancelRename,
   onNodeClick,
   onCreatePage,
+  onOpenContextMenu,
   selectedId,
   onSubmitInline,
+  onSubmitRename,
   onCancelInline,
+  renamePendingId,
+  renamingNodeId,
 }: {
   childrenByParentId: Map<string | null, WikiNode[]>;
   childQueries: WikiNodesQueryResult[];
@@ -275,62 +440,84 @@ function WikiTreeNode({
   expandedIds: string[];
   inlineComposer?: InlineComposerState | null;
   node: WikiNode;
+  onCancelRename?: () => void;
   onNodeClick: (node: WikiNode) => void;
   onCreatePage?: (folderId: string) => void;
+  onOpenContextMenu: (event: ReactMouseEvent, node: WikiNode) => void;
   selectedId: string | null;
   onSubmitInline?: (title: string) => void;
+  onSubmitRename?: (node: WikiNode, title: string) => void;
   onCancelInline?: () => void;
+  renamePendingId: string | null;
+  renamingNodeId: string | null;
 }) {
   const expanded = expandedFolderIds.has(node.id);
   const isFolder = node.kind === "folder";
   const isSelected = selectedId === node.id;
+  const isRenaming = renamingNodeId === node.id;
   const children = childrenByParentId.get(node.id) ?? [];
   const childQueryIndex = expandedIds.indexOf(node.id);
   const loadingChildren = childQueryIndex >= 0 && childQueries[childQueryIndex]?.isLoading;
 
   return (
     <div>
-      <button
-        className={cn(
-          "group grid min-h-9 w-full grid-cols-[1rem_1rem_minmax(0,1fr)_auto] items-center gap-2 pr-2 text-left hover:bg-[#f7f6f2]",
-          isSelected && "bg-[#f2f1ec]",
-        )}
-        onClick={() => onNodeClick(node)}
-        style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
-        type="button"
-      >
-        {isFolder ? (
-          <IconChevronRight
-            className={cn("size-3.5 text-[#8f8b82] transition-transform", expanded && "rotate-90")}
-          />
-        ) : (
-          <span className="size-3.5" />
-        )}
-        {isFolder ? (
-          expanded ? (
-            <IconFolderOpen className="size-4 text-[#6f6b62]" stroke={1.8} />
+      {isRenaming ? (
+        <RenameRow
+          depth={depth}
+          expanded={expanded}
+          kind={node.kind}
+          onCancel={onCancelRename}
+          onSubmit={(title) => onSubmitRename?.(node, title)}
+          pending={renamePendingId === node.id}
+          title={node.title}
+        />
+      ) : (
+        <button
+          className={cn(
+            "group grid min-h-9 w-full grid-cols-[1rem_1rem_minmax(0,1fr)_auto] items-center gap-2 pr-2 text-left hover:bg-[#f7f6f2]",
+            isSelected && "bg-[#f2f1ec]",
+          )}
+          onClick={() => onNodeClick(node)}
+          onContextMenu={(event) => onOpenContextMenu(event, node)}
+          style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
+          type="button"
+        >
+          {isFolder ? (
+            <IconChevronRight
+              className={cn(
+                "size-3.5 text-[#8f8b82] transition-transform",
+                expanded && "rotate-90",
+              )}
+            />
           ) : (
-            <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
-          )
-        ) : (
-          <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
-        )}
-        <span className="min-w-0 truncate text-sm text-[#33312d]">{node.title}</span>
-        {isFolder ? (
-          <span
-            className="flex size-5 cursor-pointer items-center justify-center rounded text-[#8f8b82] opacity-0 transition-opacity hover:bg-[#e8e6e0] hover:text-[#33312d] group-hover:opacity-100"
-            onClick={(event) => {
-              event.stopPropagation();
-              onCreatePage?.(node.id);
-            }}
-            role="button"
-            aria-label="Create page in folder"
-            title="Create page in folder"
-          >
-            <IconPlus className="size-3.5" />
-          </span>
-        ) : null}
-      </button>
+            <span className="size-3.5" />
+          )}
+          {isFolder ? (
+            expanded ? (
+              <IconFolderOpen className="size-4 text-[#6f6b62]" stroke={1.8} />
+            ) : (
+              <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+            )
+          ) : (
+            <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
+          )}
+          <span className="min-w-0 truncate text-sm text-[#33312d]">{node.title}</span>
+          {isFolder ? (
+            <span
+              className="flex size-5 cursor-pointer items-center justify-center rounded text-[#8f8b82] opacity-0 transition-opacity hover:bg-[#e8e6e0] hover:text-[#33312d] group-hover:opacity-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCreatePage?.(node.id);
+              }}
+              role="button"
+              aria-label="Create page in folder"
+              title="Create page in folder"
+            >
+              <IconPlus className="size-3.5" />
+            </span>
+          ) : null}
+        </button>
+      )}
 
       {isFolder && expanded ? (
         loadingChildren ? (
@@ -353,9 +540,14 @@ function WikiTreeNode({
                 key={child.id}
                 node={child}
                 onCancelInline={onCancelInline}
+                onCancelRename={onCancelRename}
                 onCreatePage={onCreatePage}
                 onNodeClick={onNodeClick}
+                onOpenContextMenu={onOpenContextMenu}
                 onSubmitInline={onSubmitInline}
+                onSubmitRename={onSubmitRename}
+                renamePendingId={renamePendingId}
+                renamingNodeId={renamingNodeId}
                 selectedId={selectedId}
               />
             ))}
@@ -378,6 +570,74 @@ function WikiTreeNode({
           </>
         )
       ) : null}
+    </div>
+  );
+}
+
+function WikiTreeContextMenu({
+  menu,
+  onClose,
+  onDelete,
+  onRename,
+}: {
+  menu: WikiContextMenuState;
+  onClose: () => void;
+  onDelete: (node: WikiNode) => void;
+  onRename: (node: WikiNode) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (event: globalThis.MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    const handleKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  const left = typeof window === "undefined" ? menu.x : Math.min(menu.x, window.innerWidth - 152);
+  const top = typeof window === "undefined" ? menu.y : Math.min(menu.y, window.innerHeight - 76);
+
+  return (
+    <div
+      ref={menuRef}
+      className="fixed z-50 min-w-36 rounded-md border border-[#eceae5] bg-white py-1 shadow-md"
+      role="menu"
+      style={{ left, top }}
+    >
+      <button
+        className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]"
+        onClick={() => {
+          onRename(menu.node);
+          onClose();
+        }}
+        role="menuitem"
+        type="button"
+      >
+        <IconEdit className="size-3.5" />
+        Rename
+      </button>
+      <button
+        className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs text-destructive hover:bg-destructive/10"
+        onClick={() => {
+          onDelete(menu.node);
+          onClose();
+        }}
+        role="menuitem"
+        type="button"
+      >
+        <IconTrash className="size-3.5" />
+        Delete
+      </button>
     </div>
   );
 }
@@ -538,6 +798,87 @@ function WikiNodeViewer({
   );
 }
 
+function RenameRow({
+  depth,
+  expanded,
+  kind,
+  onCancel,
+  onSubmit,
+  pending,
+  title,
+}: {
+  depth: number;
+  expanded: boolean;
+  kind: WikiNodeKind;
+  onCancel: (() => void) | undefined;
+  onSubmit: ((title: string) => void) | undefined;
+  pending: boolean;
+  title: string;
+}) {
+  const [draft, setDraft] = useState(title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const submit = () => {
+    if (pending) return;
+    const trimmed = draft.trim();
+    if (trimmed) {
+      onSubmit?.(trimmed);
+    } else {
+      onCancel?.();
+    }
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel?.();
+    }
+  };
+
+  return (
+    <div
+      className="grid min-h-9 w-full grid-cols-[1rem_1rem_minmax(0,1fr)_auto] items-center gap-2 pr-2"
+      style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
+    >
+      {kind === "folder" ? (
+        <IconChevronRight
+          className={cn("size-3.5 text-[#8f8b82] transition-transform", expanded && "rotate-90")}
+        />
+      ) : (
+        <span className="size-3.5" />
+      )}
+      {kind === "folder" ? (
+        expanded ? (
+          <IconFolderOpen className="size-4 text-[#6f6b62]" stroke={1.8} />
+        ) : (
+          <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+        )
+      ) : (
+        <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
+      )}
+      <input
+        ref={inputRef}
+        className="min-w-0 bg-transparent text-sm text-[#33312d] outline-none placeholder:text-[#a8a59d] disabled:opacity-60"
+        disabled={pending}
+        onBlur={submit}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={handleKeyDown}
+        type="text"
+        value={draft}
+      />
+      <span className="size-5" />
+    </div>
+  );
+}
+
 function InlineRow({
   depth,
   kind,
@@ -557,7 +898,7 @@ function InlineRow({
     inputRef.current?.select();
   }, []);
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
       onSubmit?.(title);
@@ -612,6 +953,26 @@ function sortWikiNodes(nodes: WikiNode[]) {
     }
     return a.title.localeCompare(b.title);
   });
+}
+
+function collectLoadedWikiNodeIds(
+  rootId: string,
+  childrenByParentId: Map<string | null, WikiNode[]>,
+) {
+  const ids = new Set([rootId]);
+  const queue = [rootId];
+
+  while (queue.length > 0) {
+    const parentId = queue.shift();
+    if (!parentId) continue;
+    const children = childrenByParentId.get(parentId) ?? [];
+    children.forEach((child) => {
+      ids.add(child.id);
+      queue.push(child.id);
+    });
+  }
+
+  return ids;
 }
 
 function formatDate(value: string | null) {
