@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconBox,
@@ -113,7 +114,7 @@ export function IssueComposer({
     )
     .join(", ");
 
-  return (
+  const composer = (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/24 px-4 pt-[18vh] backdrop-blur-[1px]">
       <button
         aria-label="Close composer"
@@ -335,4 +336,6 @@ export function IssueComposer({
       </form>
     </div>
   );
+
+  return createPortal(composer, document.body);
 }
