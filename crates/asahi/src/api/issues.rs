@@ -58,6 +58,13 @@ pub struct CreateCommentRequest {
     pub body: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateActivityRequest {
+    pub kind: String,
+    pub title: String,
+    pub body: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct IssueListResponse {
     pub issues: Vec<Issue>,
@@ -181,6 +188,20 @@ async fn create_comment(
     ))
 }
 
+#[post("/issues/<locator>/activities", data = "<body>")]
+async fn create_activity(
+    locator: &str,
+    body: Json<CreateActivityRequest>,
+    service: &State<IssueService>,
+) -> Result<Json<Activity>, ApiError> {
+    let body = body.into_inner();
+    Ok(Json(
+        service
+            .create_activity(locator, body.kind, body.title, body.body)
+            .await?,
+    ))
+}
+
 #[get("/issues/<locator>/comments")]
 async fn list_comments(
     locator: &str,
@@ -239,6 +260,7 @@ pub fn routes() -> Vec<Route> {
         update_issue_state,
         create_comment,
         list_comments,
+        create_activity,
         list_activities
     ]
 }

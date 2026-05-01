@@ -149,6 +149,20 @@ async fn run_agent_attempt_inner(
         attempt = attempt.unwrap_or(0),
         "agent attempt starting"
     );
+
+    let tracker = build_tracker(&workflow.config.tracker)?;
+    if let Err(err) = tracker
+        .create_activity(
+            &issue,
+            "agent_started",
+            &format!("Agent started on {}", issue.identifier),
+            Some(&format!("Working on: {}", issue.title)),
+        )
+        .await
+    {
+        tracing::warn!(error = %err, "failed to create agent_started activity");
+    }
+
     let workspace_manager = WorkspaceManager::new(
         workflow.config.workspace.root.clone(),
         workflow.config.hooks.clone(),
@@ -170,7 +184,6 @@ async fn run_agent_attempt_inner(
         return Ok(map_stop_reason(stop_rx.borrow().clone()));
     }
 
-    let tracker = build_tracker(&workflow.config.tracker)?;
     let mut session = build_agent_session(
         &workflow.config.runner,
         &workspace.path,

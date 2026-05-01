@@ -147,6 +147,32 @@ impl Tracker for AsahiTracker {
 
         Ok(())
     }
+
+    async fn create_activity(
+        &self,
+        issue: &Issue,
+        kind: &str,
+        title: &str,
+        body: Option<&str>,
+    ) -> Result<()> {
+        let url = self.base_url()?.join(&format!("api/issues/{}/activities", issue.id))
+            .map_err(|e| LunaError::InvalidConfig(format!("invalid asahi url: {e}")))?;
+        let payload = CreateActivityRequest {
+            kind: kind.to_string(),
+            title: title.to_string(),
+            body: body.map(|s| s.to_string()),
+        };
+        let response = self.client.post(url).json(&payload).send().await?;
+        let status = response.status();
+
+        if !status.is_success() {
+            return Err(LunaError::Tracker(format!(
+                "asahi create_activity failed: status={status}"
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,6 +183,13 @@ struct IssueListResponse {
 #[derive(Debug, Serialize)]
 struct CreateCommentRequest {
     body: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateActivityRequest {
+    kind: String,
+    title: String,
+    body: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
