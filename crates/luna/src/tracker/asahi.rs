@@ -120,10 +120,8 @@ impl AsahiTracker {
 #[async_trait]
 impl Tracker for AsahiTracker {
     async fn fetch_candidate_issues(&self) -> Result<Vec<Issue>> {
-        if self.config.active_states.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.list_issues(Some(&self.config.active_states), None).await
+        let active_states = vec!["Todo".to_string(), "In Progress".to_string()];
+        self.list_issues(Some(&active_states), None).await
     }
 
     async fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<Issue>> {

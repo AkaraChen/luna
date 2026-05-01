@@ -1,3 +1,4 @@
+use garde::Validate;
 use rocket::{
     FromForm, Route, State, delete, get, patch, post, routes,
     serde::json::{Json, Value, json},
@@ -19,25 +20,49 @@ pub struct ListIssuesQuery {
     assignee_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+fn valid_issue_state(state: &str, _: &()) -> garde::Result {
+    const VALID: &[&str] = &["Backlog", "Todo", "In Progress", "Done"];
+    if VALID.contains(&state) {
+        Ok(())
+    } else {
+        Err(garde::Error::new(format!(
+            "invalid issue state: {state}. valid states are: {}",
+            VALID.join(", ")
+        )))
+    }
+}
+
+#[derive(Debug, Deserialize, Validate)]
 pub struct CreateIssueRequest {
+    #[garde(skip)]
     pub project_id: Option<String>,
+    #[garde(skip)]
     pub project_slug: Option<String>,
+    #[garde(skip)]
     pub team_key: Option<String>,
+    #[garde(length(min = 1))]
     pub title: String,
+    #[garde(skip)]
     pub description: Option<String>,
+    #[garde(skip)]
     pub priority: Option<i64>,
+    #[garde(inner(custom(valid_issue_state)))]
     pub state: Option<String>,
+    #[garde(skip)]
     pub branch_name: Option<String>,
     #[serde(default)]
+    #[garde(skip)]
     pub labels: Vec<String>,
     #[serde(default)]
+    #[garde(skip)]
     pub blocked_by: Vec<String>,
+    #[garde(skip)]
     pub assignee_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 pub struct UpdateStateRequest {
+    #[garde(custom(valid_issue_state))]
     pub state: String,
 }
 
@@ -104,6 +129,8 @@ async fn create_issue(
     service: &State<IssueService>,
 ) -> Result<Json<Issue>, ApiError> {
     let body = body.into_inner();
+    body.validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let issue = service
         .create_issue(CreateIssueInput {
             project_id: body.project_id,
@@ -168,9 +195,12 @@ async fn update_issue_state(
     body: Json<UpdateStateRequest>,
     service: &State<IssueService>,
 ) -> Result<Json<Issue>, ApiError> {
+    let body = body.into_inner();
+    body.validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(
         service
-            .update_issue_state(locator, body.into_inner().state)
+            .update_issue_state(locator, body.state)
             .await?,
     ))
 }
@@ -243,7 +273,7 @@ fn api_root() -> Json<Value> {
             "GET /api/projects/{locator}/wiki/{page_locator}/versions/{version}",
             "POST /api/projects/{locator}/wiki/{page_locator}/rollback",
             "GET /api/projects/{locator}/wiki/{node_locator}/audits?actor_kind=&limit=50",
-            "GET /api/issues?project_id=&project_slug=&states=Todo,In%20Progress&ids=&assignee_id=",
+            "GET /api/issues?project_id=&project_slug=&states=Backlog,Todo,In%20Progress&ids=&assignee_id=",
             "POST /api/issues",
             "GET /api/issues/{locator}",
             "PATCH /api/issues/{locator}",
@@ -731,5 +761,54 @@ mod tests {
             "Expected 1 notification after double mark-read, got {}",
             notifications.notifications.len()
         );
+    }
+
+    #[test]
+    fn rejects_invalid_state_on_create() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue","state":"Invalid"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::BadRequest);
+    }
+
+    #[test]
+    fn rejects_invalid_state_on_update() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Test issue"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let issue: Issue = created.into_json().expect("issue json");
+
+        let updated = client
+            .patch(format!("/api/issues/{}/state", issue.id))
+            .header(ContentType::JSON)
+            .body(r#"{"state":"Invalid"}"#)
+            .dispatch();
+        assert_eq!(updated.status(), Status::BadRequest);
+    }
+
+    #[test]
+    fn creates_issue_with_backlog_state() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(r#"{"title":"Backlog issue","state":"Backlog"}"#)
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        let issue: Issue = created.into_json().expect("issue json");
+        assert_eq!(issue.state, "Backlog");
     }
 }

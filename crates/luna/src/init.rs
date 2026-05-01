@@ -310,12 +310,7 @@ fn render_workflow_template(context: &InitContext) -> String {
             r#"tracker:
   kind: asahi
   db: {db}
-  port: {port}
-  active_states:
-    - Todo
-    - In Progress
-  terminal_states:
-    - Done"#
+  port: {port}"#
         )
     } else {
         format!(

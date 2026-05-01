@@ -62,7 +62,10 @@ impl TrackerConfig {
         match self {
             Self::GitHubProject(c) => &c.terminal_states,
             Self::Linear(c) => &c.terminal_states,
-            Self::Asahi(c) => &c.terminal_states,
+            Self::Asahi(_) => {
+                static STATES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+                STATES.get_or_init(|| vec!["Done".to_string()])
+            }
         }
     }
 }
@@ -153,27 +156,15 @@ pub struct AsahiTrackerConfig {
     pub db: Option<String>,
     #[garde(range(min = 1))]
     pub port: Option<u16>,
-    #[serde(default = "default_asahi_active_states")]
-    #[garde(length(min = 1), inner(custom(not_blank)))]
-    pub active_states: Vec<String>,
-    #[serde(default = "default_asahi_terminal_states")]
-    #[garde(length(min = 1), inner(custom(not_blank)))]
-    pub terminal_states: Vec<String>,
-    #[serde(skip)]
-    #[garde(skip)]
-    active_lookup: HashSet<String>,
-    #[serde(skip)]
-    #[garde(skip)]
-    terminal_lookup: HashSet<String>,
 }
 
 impl AsahiTrackerConfig {
     pub fn is_active_state(&self, value: &str) -> bool {
-        self.active_lookup.contains(&value.to_lowercase())
+        matches!(value.to_lowercase().as_str(), "todo" | "in progress")
     }
 
     pub fn is_terminal_state(&self, value: &str) -> bool {
-        self.terminal_lookup.contains(&value.to_lowercase())
+        value.to_lowercase() == "done"
     }
 }
 
@@ -418,16 +409,6 @@ pub fn resolve_service_config(
             YamlValue::String("db".to_string()),
             YamlValue::String("./asahi.db".to_string()),
         );
-        tracker.insert(
-            YamlValue::String("active_states".to_string()),
-            serde_yaml::to_value(default_asahi_active_states())
-                .unwrap_or(YamlValue::Sequence(Vec::new())),
-        );
-        tracker.insert(
-            YamlValue::String("terminal_states".to_string()),
-            serde_yaml::to_value(default_asahi_terminal_states())
-                .unwrap_or(YamlValue::Sequence(Vec::new())),
-        );
         config_map.insert(
             YamlValue::String("tracker".to_string()),
             YamlValue::Mapping(tracker),
@@ -475,17 +456,8 @@ pub fn resolve_service_config(
                 .map(|s: &String| s.to_lowercase())
                 .collect();
         }
-        TrackerConfig::Asahi(t) => {
-            t.active_lookup = t
-                .active_states
-                .iter()
-                .map(|s: &String| s.to_lowercase())
-                .collect();
-            t.terminal_lookup = t
-                .terminal_states
-                .iter()
-                .map(|s: &String| s.to_lowercase())
-                .collect();
+        TrackerConfig::Asahi(_) => {
+            // Asahi tracker states are hard-coded and not configurable
         }
     }
 
@@ -632,12 +604,7 @@ fn default_linear_terminal_states() -> Vec<String> {
         "Done".to_string(),
     ]
 }
-fn default_asahi_active_states() -> Vec<String> {
-    vec!["Todo".to_string(), "In Progress".to_string()]
-}
-fn default_asahi_terminal_states() -> Vec<String> {
-    vec!["Done".to_string()]
-}
+
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -845,5 +812,34 @@ tracker:
             config.workspace.root,
             normalize_path(&cwd.join("fixtures/.luna/workspaces"))
         );
+    }
+
+    #[test]
+    fn default_asahi_tracker_does_not_treat_backlog_as_active() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: asahi
+  db: ./asahi.db
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert!(
+            !config.tracker.is_active_state("Backlog"),
+            "Backlog should not be an active state"
+        );
+        assert!(
+            !config.tracker.is_terminal_state("Backlog"),
+            "Backlog should not be a terminal state"
+        );
+        assert!(config.tracker.is_active_state("Todo"));
+        assert!(config.tracker.is_active_state("In Progress"));
+        assert!(config.tracker.is_terminal_state("Done"));
     }
 }
