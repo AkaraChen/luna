@@ -108,32 +108,47 @@ export function IssueDetailSkeleton() {
 
 export function ProjectDetailsSkeleton() {
   return (
-    <section className="min-h-0 flex-1 overflow-auto">
-      <div className="px-5 pb-5 pt-5">
-        <div className="mb-3 flex items-center gap-2">
-          <div className="h-4 w-4 animate-pulse rounded bg-[#eceae5]" />
-          <div className="h-4 w-24 animate-pulse rounded bg-[#eceae5]" />
-        </div>
-        <div className="h-8 w-3/4 animate-pulse rounded bg-[#eceae5]" />
-        <div className="mt-3 h-16 w-full animate-pulse rounded bg-[#eceae5]" />
-      </div>
-      <div className="border-y border-[#eceae5] px-5 py-2">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <div key={i} className="grid min-h-9 grid-cols-[6rem_minmax(0,1fr)] items-center gap-3">
-            <div className="h-4 w-12 animate-pulse rounded bg-[#eceae5]" />
-            <div className="h-7 w-32 animate-pulse rounded bg-[#eceae5]" />
+    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
+      <div className="min-w-0">
+        <div className="border-b border-[#eceae5] px-5 pb-6 pt-5">
+          <div className="mb-4 flex items-center gap-2">
+            <div className="h-4 w-4 animate-pulse rounded bg-[#eceae5]" />
+            <div className="h-4 w-24 animate-pulse rounded bg-[#eceae5]" />
+            <div className="h-1 w-1 rounded-full bg-[#eceae5]" />
+            <div className="h-4 w-16 animate-pulse rounded bg-[#eceae5]" />
           </div>
-        ))}
+          <div className="h-8 w-3/4 animate-pulse rounded bg-[#eceae5]" />
+          <div className="mt-3 h-16 w-full max-w-3xl animate-pulse rounded bg-[#eceae5]" />
+        </div>
+        <div className="border-b border-[#eceae5] px-5 py-2">
+          <div className="flex min-h-8 items-center justify-between gap-3">
+            <div className="h-8 w-36 animate-pulse rounded-full bg-[#eceae5]" />
+            <div className="h-6 w-6 animate-pulse rounded-full bg-[#eceae5]" />
+          </div>
+        </div>
+        <div className="flex h-12 items-center justify-between px-5">
+          <div className="h-5 w-24 animate-pulse rounded bg-[#eceae5]" />
+          <div className="h-4 w-20 animate-pulse rounded bg-[#eceae5]" />
+        </div>
+        <div className="space-y-3 px-5">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-14 animate-pulse rounded-md bg-muted" />
+          ))}
+        </div>
       </div>
-      <div className="flex h-12 items-center justify-between px-5">
-        <div className="h-5 w-12 animate-pulse rounded bg-[#eceae5]" />
-        <div className="h-4 w-20 animate-pulse rounded bg-[#eceae5]" />
-      </div>
-      <div className="space-y-3 px-5">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-14 animate-pulse rounded-md bg-muted" />
-        ))}
-      </div>
+      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
+        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3"
+            >
+              <div className="h-4 w-12 animate-pulse rounded bg-[#eceae5]" />
+              <div className="ml-auto h-6 w-24 animate-pulse rounded bg-[#eceae5]" />
+            </div>
+          ))}
+        </div>
+      </aside>
     </section>
   );
 }
