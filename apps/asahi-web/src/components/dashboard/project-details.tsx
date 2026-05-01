@@ -22,13 +22,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 import { CreateIssueTrigger } from "./create-issue-trigger";
 import { EditablePriority, EditableStatus } from "./editable-fields";
 import { IssueList } from "./issue-list";
+import { ProjectWiki } from "./project-wiki";
 
 const PROJECT_STATES = ["Backlog", "Todo", "In Progress", "Done"];
 const PRIORITY_OPTIONS = [null, 1, 2, 3] as const;
+const PROJECT_SECTIONS = ["issues", "wiki"] as const;
+
+type ProjectSection = (typeof PROJECT_SECTIONS)[number];
 
 export function ProjectDetails({
   locator,
@@ -70,6 +75,7 @@ function ProjectPage({
 }) {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
+  const [section, setSection] = useState<ProjectSection>("issues");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
@@ -187,32 +193,54 @@ function ProjectPage({
         </PropertyRow>
       </div>
 
-      <div>
-        <div className="flex h-12 items-center justify-between px-5">
-          <div className="text-sm font-medium">Issues</div>
-          <div className="flex items-center gap-2">
-            <div className="text-xs text-[#8f8b82]">
-              {data.issues.length === 1 ? "1 issue" : `${data.issues.length} issues`}
-            </div>
-            <CreateIssueTrigger projectId={project.id}>
-              <Button aria-label="Create issue in project" size="icon-xs" variant="ghost">
-                <IconPlus className="size-3.5" />
-              </Button>
-            </CreateIssueTrigger>
-          </div>
+      <div className="border-b border-[#eceae5] px-5 py-2">
+        <div className="inline-flex rounded-full border border-border bg-muted/60 p-0.5">
+          {PROJECT_SECTIONS.map((option) => (
+            <button
+              className={cn(
+                "h-7 rounded-full px-3 text-xs font-medium capitalize text-muted-foreground",
+                section === option && "bg-background text-foreground shadow-sm",
+              )}
+              key={option}
+              onClick={() => setSection(option)}
+              type="button"
+            >
+              {option}
+            </button>
+          ))}
         </div>
+      </div>
 
-        {data.issues.length ? (
-          <IssueList issues={data.issues} onSelect={onSelectIssue} selectedId={null} />
-        ) : (
-          <div className="flex h-[260px] items-center justify-center px-6 text-center">
-            <div>
-              <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
-              <div className="text-sm font-medium">No issues in this project</div>
+      {section === "issues" ? (
+        <>
+          <div className="flex h-12 items-center justify-between px-5">
+            <div className="text-sm font-medium">Issues</div>
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-[#8f8b82]">
+                {data.issues.length === 1 ? "1 issue" : `${data.issues.length} issues`}
+              </div>
+              <CreateIssueTrigger projectId={project.id}>
+                <Button aria-label="Create issue in project" size="icon-xs" variant="ghost">
+                  <IconPlus className="size-3.5" />
+                </Button>
+              </CreateIssueTrigger>
             </div>
           </div>
-        )}
-      </div>
+
+          {data.issues.length ? (
+            <IssueList issues={data.issues} onSelect={onSelectIssue} selectedId={null} />
+          ) : (
+            <div className="flex h-[260px] items-center justify-center px-6 text-center">
+              <div>
+                <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
+                <div className="text-sm font-medium">No issues in this project</div>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <ProjectWiki project={project} />
+      )}
     </section>
   );
 }

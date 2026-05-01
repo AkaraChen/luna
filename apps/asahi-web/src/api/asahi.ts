@@ -103,6 +103,32 @@ export interface NotificationListResponse {
   unread_count: number;
 }
 
+export type WikiNodeKind = "folder" | "page";
+
+export interface WikiVersionRef {
+  id: string;
+  version: number;
+  created_at: string | null;
+}
+
+export interface WikiNode {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  kind: WikiNodeKind;
+  title: string;
+  slug: string;
+  content: string | null;
+  current_version: WikiVersionRef | null;
+  created_at: string | null;
+  updated_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface WikiNodeListResponse {
+  nodes: WikiNode[];
+}
+
 export interface CreateIssueInput {
   project_id?: string;
   project_slug?: string;
@@ -137,6 +163,16 @@ export interface UpdateProjectInput {
   name?: string;
   description?: string | null;
   priority?: number | null;
+}
+
+export interface CreateWikiNodeInput {
+  parent_id?: string;
+  kind: WikiNodeKind;
+  title: string;
+  content?: string;
+  actor_kind?: "human" | "agent" | "system";
+  actor_id?: string;
+  summary?: string;
 }
 
 export async function fetchIssues(
@@ -195,6 +231,35 @@ export async function updateProjectState(projectId: string, state: string): Prom
 export async function deleteProject(projectId: string): Promise<Project> {
   return request<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE",
+  });
+}
+
+export async function fetchWikiNodes(
+  projectLocator: string,
+  options: {
+    parentId?: string | null;
+    includeDeleted?: boolean;
+  } = {},
+): Promise<WikiNodeListResponse> {
+  const params = new URLSearchParams();
+  if (options.parentId) {
+    params.set("parent_id", options.parentId);
+  }
+  if (options.includeDeleted != null) {
+    params.set("include_deleted", String(options.includeDeleted));
+  }
+  return request<WikiNodeListResponse>(
+    `/api/projects/${encodeURIComponent(projectLocator)}/wiki${queryString(params)}`,
+  );
+}
+
+export async function createWikiNode(
+  projectLocator: string,
+  input: CreateWikiNodeInput,
+): Promise<WikiNode> {
+  return request<WikiNode>(`/api/projects/${encodeURIComponent(projectLocator)}/wiki`, {
+    body: JSON.stringify(input),
+    method: "POST",
   });
 }
 
