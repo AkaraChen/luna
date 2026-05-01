@@ -175,17 +175,51 @@ async fn on_tick(
 
     info!(candidate_count = candidates.len(), running = state.running.len(), claimed = state.claimed.len(), "poll tick");
 
-    let mut sorted = candidates;
-    sorted.sort_by(sort_issues_for_dispatch);
+    // Group candidates by project slug, sort each group by created_at (oldest first)
+    let mut by_project: HashMap<Option<String>, Vec<Issue>> = HashMap::new();
+    for issue in candidates {
+        let key = issue.project.as_ref().map(|p| p.slug.clone());
+        by_project.entry(key).or_default().push(issue);
+    }
+    for issues in by_project.values_mut() {
+        issues.sort_by(sort_issues_for_dispatch);
+    }
+
+    // Determine dispatch order:
+    // 1. If there are running issues, prefer the same project to batch work
+    // 2. Otherwise pick the project with the oldest issue
+    let active_project = state
+        .running
+        .values()
+        .next()
+        .and_then(|e| e.issue.project.as_ref().map(|p| p.slug.clone()));
+
+    let mut ordered_issues = Vec::new();
+    if let Some(slug) = active_project {
+        if let Some(issues) = by_project.remove(&Some(slug)) {
+            ordered_issues.extend(issues);
+        }
+    }
+
+    // Sort remaining projects by their oldest issue's created_at
+    let mut remaining: Vec<_> = by_project.into_iter().collect();
+    remaining.sort_by(|(_, a), (_, b)| {
+        let a_oldest = a.first().and_then(|i| i.created_at);
+        let b_oldest = b.first().and_then(|i| i.created_at);
+        a_oldest.cmp(&b_oldest)
+    });
+    for (_, issues) in remaining {
+        ordered_issues.extend(issues);
+    }
 
     let mut dispatched = 0;
-    for issue in sorted {
+    for issue in ordered_issues {
         if available_global_slots(state, &workflow.config) == 0 {
             info!("no available global slots, skipping remaining issues");
             break;
         }
         if should_dispatch(&issue, state, &workflow.config) {
-            info!(issue_id = %issue.id, identifier = %issue.identifier, state = %issue.state, "dispatching agent");
+            info!(issue_id = %issue.id, identifier = %issue.identifier, state = %issue.state, project = ?issue.project.as_ref().map(|p| &p.slug), "dispatching agent");
             dispatch_issue(issue, None, workflow.clone(), state, events_tx);
             dispatched += 1;
         } else {
@@ -564,23 +598,23 @@ fn should_dispatch(issue: &Issue, state: &OrchestratorState, config: &ServiceCon
     {
         return false;
     }
-    if issue.state.eq_ignore_ascii_case("todo")
-        && issue.blocked_by.iter().any(|blocker| {
-            blocker
-                .state
-                .as_deref()
-                .map(|state| !config.tracker.is_terminal_state(state))
-                .unwrap_or(true)
-        })
-    {
+    // Skip issues blocked by unresolved blockers regardless of state
+    if issue.blocked_by.iter().any(|blocker| {
+        blocker
+            .state
+            .as_deref()
+            .map(|state| !config.tracker.is_terminal_state(state))
+            .unwrap_or(true)
+    }) {
         return false;
     }
     true
 }
 
 fn sort_issues_for_dispatch(left: &Issue, right: &Issue) -> Ordering {
-    match compare_priority(left.priority, right.priority) {
-        Ordering::Equal => match left.created_at.cmp(&right.created_at) {
+    // Oldest first, then by priority, then by identifier
+    match left.created_at.cmp(&right.created_at) {
+        Ordering::Equal => match compare_priority(left.priority, right.priority) {
             Ordering::Equal => left.identifier.cmp(&right.identifier),
             other => other,
         },
