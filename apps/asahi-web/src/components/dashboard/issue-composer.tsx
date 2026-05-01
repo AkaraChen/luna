@@ -44,6 +44,7 @@ export function IssueComposer({
 
   const [blockedByIds, setBlockedByIds] = useState<string[]>([]);
   const [blockersOpen, setBlockersOpen] = useState(false);
+  const [createMore, setCreateMore] = useState(false);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -73,7 +74,13 @@ export function IssueComposer({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      onClose();
+      if (createMore) {
+        setTitle("");
+        setDescription("");
+        setBlockedByIds([]);
+      } else {
+        onClose();
+      }
     },
   });
 
@@ -306,6 +313,16 @@ export function IssueComposer({
               ) : null}
             </div>
           </div>
+
+          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[#77746c]">
+            <input
+              checked={createMore}
+              className="size-3.5 rounded border-[#c9c4bb] text-foreground accent-foreground"
+              onChange={(e) => setCreateMore(e.target.checked)}
+              type="checkbox"
+            />
+            Create more
+          </label>
 
           <Button
             aria-disabled={mutation.isPending || !title.trim()}
