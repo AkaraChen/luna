@@ -68,13 +68,7 @@ export function RichTextEditor({
   }
 
   return (
-    <div
-      className={cn(
-        "rounded-md border border-[#eceae5] bg-background",
-        editable && "focus-within:border-[#c9c4bb] focus-within:ring-1 focus-within:ring-[#c9c4bb]/30",
-        className,
-      )}
-    >
+    <div className={cn("bg-background", className)}>
       <Tiptap instance={editor}>
         <div className="px-3 py-2">
           <Tiptap.Content />
