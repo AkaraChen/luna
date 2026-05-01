@@ -26,6 +26,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { Textarea } from "@/components/ui/textarea";
 import { ActivitySkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { cn } from "@/lib/utils";
@@ -115,7 +116,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
 
   const submitComment = (event: FormEvent) => {
     event.preventDefault();
-    const body = comment.trim();
+    const body = comment.replace(/<[^>]*>/g, "").trim();
     if (body) {
       commentMutation.mutate(body);
     }
@@ -238,14 +239,16 @@ export function IssueDetails({ issue }: { issue: Issue }) {
         </div>
 
         <form className="p-4 pt-0" onSubmit={submitComment}>
-          <Textarea
-            className="min-h-20 resize-none"
-            onChange={(event) => setComment(event.target.value)}
-            placeholder="Add a comment"
-            value={comment}
+          <RichTextEditor
+            content={comment}
+            onChange={(html) => setComment(html)}
           />
           <div className="mt-2 flex justify-end">
-            <Button disabled={commentMutation.isPending || !comment.trim()} size="sm" type="submit">
+            <Button
+              disabled={commentMutation.isPending || !comment.replace(/<[^>]*>/g, "").trim()}
+              size="sm"
+              type="submit"
+            >
               <IconSend className="size-4" />
               Send
             </Button>
