@@ -176,8 +176,11 @@ export interface CreateWikiNodeInput {
 }
 
 export interface UpdateWikiNodeInput {
+  actor_kind?: "human" | "agent" | "system";
+  actor_id?: string;
   title?: string;
   content?: string | null;
+  summary?: string;
 }
 
 export async function fetchIssues(
@@ -277,6 +280,27 @@ export async function updateWikiNode(
     body: JSON.stringify(input),
     method: "PATCH",
   });
+}
+
+export async function deleteWikiNode(
+  projectLocator: string,
+  nodeId: string,
+  options: {
+    actorKind?: "human" | "agent" | "system";
+    actorId?: string;
+  } = {},
+): Promise<WikiNode> {
+  const params = new URLSearchParams();
+  if (options.actorKind) {
+    params.set("actor_kind", options.actorKind);
+  }
+  if (options.actorId) {
+    params.set("actor_id", options.actorId);
+  }
+  return request<WikiNode>(
+    `/api/projects/${encodeURIComponent(projectLocator)}/wiki/${encodeURIComponent(nodeId)}${queryString(params)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function createIssue(input: CreateIssueInput): Promise<Issue> {
