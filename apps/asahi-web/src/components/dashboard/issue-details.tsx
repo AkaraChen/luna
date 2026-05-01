@@ -1,6 +1,6 @@
-import { Suspense, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { IconChevronDown, IconEdit, IconLink, IconSend, IconTrash, IconX } from "@tabler/icons-react";
+import { IconChevronDown, IconEdit, IconLink, IconTrash, IconX } from "@tabler/icons-react";
 import { useLocation } from "wouter";
 
 import {
@@ -26,9 +26,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { Textarea } from "@/components/ui/textarea";
 import { ActivitySkeleton } from "@/components/dashboard/dashboard-skeleton";
+import { IssueCommentForm } from "@/components/dashboard/issue-comment-form";
 import { cn } from "@/lib/utils";
 
 import { statusColumns } from "./constants";
@@ -113,14 +113,6 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   const availableBlockers = allIssuesQuery.data.issues.filter(
     (candidate) => candidate.id !== issue.id,
   );
-
-  const submitComment = (event: FormEvent) => {
-    event.preventDefault();
-    const body = comment.trim();
-    if (body && body !== "<p></p>") {
-      commentMutation.mutate(body);
-    }
-  };
 
   return (
     <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
@@ -238,22 +230,12 @@ export function IssueDetails({ issue }: { issue: Issue }) {
           </Suspense>
         </div>
 
-        <form className="p-4 pt-0" onSubmit={submitComment}>
-          <RichTextEditor
-            content={comment}
-            onChange={(html) => setComment(html)}
-          />
-          <div className="mt-2 flex justify-end">
-            <Button
-              disabled={commentMutation.isPending || !comment.replace(/<[^>]*>/g, "").trim()}
-              size="sm"
-              type="submit"
-            >
-              <IconSend className="size-4" />
-              Send
-            </Button>
-          </div>
-        </form>
+        <IssueCommentForm
+          isSubmitting={commentMutation.isPending}
+          onChange={setComment}
+          onSubmit={(body) => commentMutation.mutate(body)}
+          value={comment}
+        />
       </div>
 
       <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">

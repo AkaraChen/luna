@@ -60,7 +60,8 @@ export function RichTextEditor({
     return (
       <div
         className={cn(
-          "min-h-[6rem] animate-pulse rounded-md bg-muted",
+          editorFrameClassName(editable),
+          "animate-pulse",
           className,
         )}
       />
@@ -68,12 +69,20 @@ export function RichTextEditor({
   }
 
   return (
-    <div className={cn("bg-background", className)}>
+    <div className={cn(editorFrameClassName(editable), className)}>
       <Tiptap instance={editor}>
         <Tiptap.Content />
         <EditorBubbleMenu />
       </Tiptap>
     </div>
+  );
+}
+
+function editorFrameClassName(editable: boolean) {
+  return cn(
+    "bg-background",
+    editable &&
+      "w-full rounded-2xl border border-input bg-input/50 px-3 py-3 text-base transition-[color,box-shadow,background-color] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30 md:text-sm",
   );
 }
 
