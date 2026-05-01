@@ -257,6 +257,57 @@ impl Tracker for LinearTracker {
             .find(|issue| issue_matches_locator(issue, locator)))
     }
 
+    async fn fetch_comments(&self, issue: &Issue) -> Result<Vec<crate::model::Comment>> {
+        const QUERY: &str = r#"
+            query IssueComments($issueId: String!) {
+                issue(id: $issueId) {
+                    comments {
+                        nodes {
+                            id
+                            body
+                            createdAt
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let response = self.graphql(QUERY, json!({"issueId": issue.id})).await?;
+        let nodes = response
+            .pointer("/data/issue/comments/nodes")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| LunaError::Tracker("linear: failed to parse comments".to_string()))?;
+
+        let mut comments = Vec::new();
+        for node in nodes {
+            let id = node
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let body = node
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let created_at = node
+                .get("createdAt")
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(Utc::now);
+
+            comments.push(crate::model::Comment {
+                id,
+                issue_id: issue.id.clone(),
+                body,
+                created_at,
+            });
+        }
+
+        Ok(comments)
+    }
+
     async fn create_comment(&self, issue: &Issue, body: &str) -> Result<()> {
         let response = self
             .graphql(

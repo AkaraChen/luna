@@ -1,7 +1,54 @@
+use std::fmt;
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::project::ProjectRef;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum IssueState {
+    Backlog,
+    Todo,
+    #[serde(rename = "In Progress")]
+    InProgress,
+    Done,
+}
+
+impl IssueState {
+    pub const ALL: &[IssueState] = &[
+        IssueState::Backlog,
+        IssueState::Todo,
+        IssueState::InProgress,
+        IssueState::Done,
+    ];
+}
+
+impl fmt::Display for IssueState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backlog => write!(f, "Backlog"),
+            Self::Todo => write!(f, "Todo"),
+            Self::InProgress => write!(f, "In Progress"),
+            Self::Done => write!(f, "Done"),
+        }
+    }
+}
+
+impl FromStr for IssueState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Backlog" => Ok(Self::Backlog),
+            "Todo" => Ok(Self::Todo),
+            "In Progress" => Ok(Self::InProgress),
+            "Done" => Ok(Self::Done),
+            _ => Err(format!("invalid issue state: {s}")),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockerRef {

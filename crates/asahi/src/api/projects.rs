@@ -161,7 +161,7 @@ mod tests {
         local::blocking::Client,
     };
 
-    use crate::{app, domain::Issue};
+    use crate::{app, domain::{Issue, IssueState}};
 
     use super::ProjectListResponse;
 
@@ -174,20 +174,21 @@ mod tests {
             .post("/api/projects")
             .header(ContentType::JSON)
             .body(
-                r#"{
+                rocket::serde::json::json!({
                     "slug": "Project Alpha",
                     "name": "Project Alpha",
                     "description": "Goal: ship the first project abstraction.",
                     "priority": 1,
-                    "state": "Backlog"
-                }"#,
+                    "state": IssueState::Backlog.to_string()
+                })
+                .to_string(),
             )
             .dispatch();
         assert_eq!(created.status(), Status::Ok);
         let project: crate::domain::Project = created.into_json().expect("project json");
         assert_eq!(project.slug, "project-alpha");
         assert_eq!(project.priority, Some(1));
-        assert_eq!(project.state, "Backlog");
+        assert_eq!(project.state, IssueState::Backlog.to_string());
 
         let issue = client
             .post("/api/issues")
@@ -221,13 +222,16 @@ mod tests {
         let updated = client
             .patch(format!("/api/projects/{}/state", project.slug))
             .header(ContentType::JSON)
-            .body(r#"{"state":"In Progress"}"#)
+            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
         let updated: crate::domain::Project = updated.into_json().expect("updated project json");
-        assert_eq!(updated.state, "In Progress");
+        assert_eq!(updated.state, IssueState::InProgress.to_string());
 
-        let projects = client.get("/api/projects?states=In%20Progress").dispatch();
+        let states = IssueState::InProgress.to_string().replace(' ', "%20");
+        let projects = client
+            .get(format!("/api/projects?states={}", states))
+            .dispatch();
         assert_eq!(projects.status(), Status::Ok);
         let projects: ProjectListResponse = projects.into_json().expect("projects json");
         assert_eq!(projects.projects.len(), 1);

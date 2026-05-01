@@ -608,6 +608,31 @@ impl crate::agent::AgentSession for CodexSession {
         self.run_turn_inner(prompt, turn_number, stop_rx).await
     }
 
+    async fn send_comment(&mut self, body: &str) -> Result<()> {
+        let thread_id = self.thread_id.clone().ok_or_else(|| {
+            LunaError::Agent("missing thread id".to_string())
+        })?;
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": self.next_request_id,
+            "method": "thread/inject_items",
+            "params": {
+                "threadId": thread_id,
+                "items": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            { "type": "input_text", "text": body }
+                        ]
+                    }
+                ]
+            }
+        });
+        self.next_request_id += 1;
+        self.write_json(&payload).await
+    }
+
     async fn shutdown(&mut self) {
         self.kill_process().await;
         self.stderr_task.abort();

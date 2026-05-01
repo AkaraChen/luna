@@ -28,6 +28,7 @@ pub struct AcpSession {
     prompt_tx: mpsc::Sender<(String, oneshot::Sender<Result<TurnExit>>)>,
     shutdown_tx: mpsc::Sender<()>,
     session_ready_rx: Option<oneshot::Receiver<Result<String>>>,
+    pending_comments: Vec<String>,
 }
 
 impl AcpSession {
@@ -204,6 +205,7 @@ impl AcpSession {
             prompt_tx,
             shutdown_tx,
             session_ready_rx: Some(session_ready_rx),
+            pending_comments: Vec::new(),
         })
     }
 }
@@ -226,9 +228,19 @@ impl crate::agent::AgentSession for AcpSession {
         _turn_number: u32,
         stop_rx: &mut watch::Receiver<Option<StopReason>>,
     ) -> Result<TurnExit> {
+        let mut prompt = prompt.to_string();
+        if !self.pending_comments.is_empty() {
+            let comments = std::mem::take(&mut self.pending_comments);
+            let comments_text = comments.iter()
+                .map(|c| format!("- {}", c.trim()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            prompt = format!("{prompt}\n\nNew comments on this issue:\n{comments_text}");
+        }
+
         let (tx, rx) = oneshot::channel();
         self.prompt_tx
-            .send((prompt.to_string(), tx))
+            .send((prompt, tx))
             .await
             .map_err(|_| LunaError::Agent("acp prompt channel closed".to_string()))?;
 
@@ -245,6 +257,11 @@ impl crate::agent::AgentSession for AcpSession {
                 Ok(TurnExit::Stopped(StopReason::Shutdown))
             }
         }
+    }
+
+    async fn send_comment(&mut self, body: &str) -> Result<()> {
+        self.pending_comments.push(body.to_string());
+        Ok(())
     }
 
     async fn shutdown(&mut self) {

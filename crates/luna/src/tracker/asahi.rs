@@ -136,6 +136,25 @@ impl Tracker for AsahiTracker {
         self.get_issue(locator).await
     }
 
+    async fn fetch_comments(&self, issue: &Issue) -> Result<Vec<crate::model::Comment>> {
+        let url = self
+            .base_url()?
+            .join(&format!("api/issues/{}/comments", issue.id))
+            .map_err(|e| LunaError::InvalidConfig(format!("invalid asahi url: {e}")))?;
+
+        let response = self.client.get(url).send().await?;
+        let status = response.status();
+        let body: CommentListResponse = response.json().await?;
+
+        if !status.is_success() {
+            return Err(LunaError::Tracker(format!(
+                "asahi fetch_comments failed: status={status}"
+            )));
+        }
+
+        Ok(body.comments)
+    }
+
     async fn create_comment(&self, issue: &Issue, body: &str) -> Result<()> {
         let url = self.base_url()?.join(&format!("api/issues/{}/comments", issue.id))
             .map_err(|e| LunaError::InvalidConfig(format!("invalid asahi url: {e}")))?;
@@ -207,6 +226,11 @@ struct IssueListResponse {
 #[derive(Debug, Deserialize)]
 struct WikiNodeListResponse {
     nodes: Vec<WikiNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommentListResponse {
+    comments: Vec<crate::model::Comment>,
 }
 
 #[derive(Debug, Serialize)]

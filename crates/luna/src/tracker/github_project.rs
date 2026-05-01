@@ -406,6 +406,61 @@ impl Tracker for GitHubProjectTracker {
             .find(|issue| issue_matches_locator(issue, locator)))
     }
 
+    async fn fetch_comments(&self, issue: &Issue) -> Result<Vec<crate::model::Comment>> {
+        let (repo, number) = match parse_github_issue_reference(&issue.identifier) {
+            Some(v) => v,
+            None => return Ok(vec![]),
+        };
+
+        let output = Command::new(&self.config.gh_command)
+            .arg("api")
+            .arg(format!("repos/{repo}/issues/{number}/comments"))
+            .arg("--paginate")
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(LunaError::Tracker(format!(
+                "gh api issue comments failed: status={}, stderr={}",
+                output.status,
+                truncate(&String::from_utf8_lossy(&output.stderr))
+            )));
+        }
+
+        let nodes: Vec<serde_json::Value> =
+            serde_json::from_slice(&output.stdout).map_err(LunaError::Json)?;
+
+        let mut comments = Vec::new();
+        for node in nodes {
+            let id = node
+                .get("node_id")
+                .or_else(|| node.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let body = node
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let created_at = node
+                .get("created_at")
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(Utc::now);
+
+            comments.push(crate::model::Comment {
+                id,
+                issue_id: issue.id.clone(),
+                body,
+                created_at,
+            });
+        }
+
+        Ok(comments)
+    }
+
     async fn create_comment(&self, issue: &Issue, body: &str) -> Result<()> {
         let (repo, number) = parse_github_issue_reference(&issue.identifier).ok_or_else(|| {
             LunaError::Tracker(format!(

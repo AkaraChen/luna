@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use garde::Validate;
 use rocket::{
     FromForm, Route, State, delete, get, patch, post, routes,
@@ -7,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     api::error::ApiError,
-    domain::{Activity, Comment, Issue},
+    domain::{Activity, Comment, Issue, IssueState},
     service::{CreateIssueInput, IssueFilter, IssueService, UpdateIssueInput},
 };
 
@@ -21,13 +23,16 @@ pub struct ListIssuesQuery {
 }
 
 fn valid_issue_state(state: &str, _: &()) -> garde::Result {
-    const VALID: &[&str] = &["Backlog", "Todo", "In Progress", "Done"];
-    if VALID.contains(&state) {
+    if IssueState::from_str(state).is_ok() {
         Ok(())
     } else {
+        let valid = IssueState::ALL
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         Err(garde::Error::new(format!(
-            "invalid issue state: {state}. valid states are: {}",
-            VALID.join(", ")
+            "invalid issue state: {state}. valid states are: {valid}"
         )))
     }
 }
@@ -333,7 +338,7 @@ mod tests {
     use crate::{
         api::{notifications::NotificationListResponse, projects::ProjectListResponse},
         app,
-        domain::Issue,
+        domain::{Issue, IssueState},
     };
 
     use super::{ActivityListResponse, CommentListResponse, IssueListResponse};
@@ -361,7 +366,7 @@ mod tests {
         let issue: Issue = created.into_json().expect("issue json");
         assert_eq!(issue.identifier, "ENG-1");
         assert_eq!(issue.priority, Some(1));
-        assert_eq!(issue.state, "Todo");
+        assert_eq!(issue.state, IssueState::Todo.to_string());
         assert!(issue.updated_at.is_some());
 
         let blocked = client
@@ -406,11 +411,11 @@ mod tests {
         let updated = client
             .patch(format!("/api/issues/{}/state", issue.identifier))
             .header(ContentType::JSON)
-            .body(r#"{"state":"In Progress"}"#)
+            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
         let updated: Issue = updated.into_json().expect("updated issue json");
-        assert_eq!(updated.state, "In Progress");
+        assert_eq!(updated.state, IssueState::InProgress.to_string());
 
         let commented = client
             .post(format!("/api/issues/{}/comments", issue.id))
@@ -553,7 +558,7 @@ mod tests {
         let updated = client
             .patch(format!("/api/issues/{}/state", issue.id))
             .header(ContentType::JSON)
-            .body(r#"{"state":"In Progress"}"#)
+            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
 
@@ -646,7 +651,7 @@ mod tests {
         let _ = client
             .patch(format!("/api/issues/{}/state", issue.id))
             .header(ContentType::JSON)
-            .body(r#"{"state":"In Progress"}"#)
+            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
             .dispatch();
         let _ = client
             .post(format!("/api/issues/{}/comments", issue.id))
@@ -706,7 +711,7 @@ mod tests {
         let updated = client
             .patch(format!("/api/issues/{}/state", issue.id))
             .header(ContentType::JSON)
-            .body(r#"{"state":"In Progress"}"#)
+            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
 
@@ -805,10 +810,16 @@ mod tests {
         let created = client
             .post("/api/issues")
             .header(ContentType::JSON)
-            .body(r#"{"title":"Backlog issue","state":"Backlog"}"#)
+            .body(
+                rocket::serde::json::json!({
+                    "title": "Backlog issue",
+                    "state": IssueState::Backlog.to_string()
+                })
+                .to_string(),
+            )
             .dispatch();
         assert_eq!(created.status(), Status::Ok);
         let issue: Issue = created.into_json().expect("issue json");
-        assert_eq!(issue.state, "Backlog");
+        assert_eq!(issue.state, IssueState::Backlog.to_string());
     }
 }

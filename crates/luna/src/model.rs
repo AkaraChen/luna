@@ -40,6 +40,14 @@ pub struct Issue {
     pub source_data: Option<serde_json::Value>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Comment {
+    pub id: String,
+    pub issue_id: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkflowDefinition {
     pub config: Mapping,

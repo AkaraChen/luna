@@ -92,6 +92,7 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
     );
 
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+
     let mut state = OrchestratorState::new(&initial.config);
 
     startup_terminal_workspace_cleanup(&initial).await;
@@ -100,6 +101,9 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
         initial.config.polling.interval_ms.max(1),
     ));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut comment_ticker = interval(Duration::from_secs(2));
+    comment_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -122,6 +126,11 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
             }
             Some(event) = events_rx.recv() => {
                 handle_worker_event(event, &mut store, &mut state, &events_tx).await;
+            }
+            _ = comment_ticker.tick() => {
+                if let Err(err) = poll_comments(&mut store, &mut state, &events_tx).await {
+                    error!(error = %err, "comment poll failed");
+                }
             }
         }
     }
@@ -470,12 +479,14 @@ fn dispatch_issue(
     let attempt_num = attempt.unwrap_or(0);
     info!(issue_id = %issue_id, identifier = %identifier, attempt = attempt_num, "agent spawned");
     let (stop_tx, stop_rx) = watch::channel(None);
+    let (comment_tx, comment_rx) = mpsc::channel::<String>(16);
     let worker = tokio::spawn(run_agent_attempt(
         issue.clone(),
         attempt,
         workflow,
         events_tx.clone(),
         stop_rx,
+        comment_rx,
     ));
 
     if let Some(existing) = state.retry_attempts.remove(&issue_id) {
@@ -487,6 +498,8 @@ fn dispatch_issue(
         RunningEntry {
             worker,
             stop_tx,
+            comment_tx: Some(comment_tx),
+            seen_comment_ids: HashSet::new(),
             identifier,
             issue,
             session_id: None,
@@ -733,6 +746,40 @@ async fn startup_terminal_workspace_cleanup(workflow: &LoadedWorkflow) {
     }
 }
 
+async fn poll_comments(
+    store: &mut WorkflowStore,
+    state: &mut OrchestratorState,
+    _events_tx: &mpsc::UnboundedSender<WorkerEvent>,
+) -> Result<()> {
+    if state.running.is_empty() {
+        return Ok(());
+    }
+
+    let workflow = store.current().clone();
+    let tracker = build_tracker(&workflow.config.tracker)?;
+
+    for entry in state.running.values_mut() {
+        let comments = match tracker.fetch_comments(&entry.issue).await {
+            Ok(c) => c,
+            Err(err) => {
+                warn!(issue_id = %entry.issue.id, error = %err, "failed to fetch comments");
+                continue;
+            }
+        };
+
+        for comment in comments {
+            if entry.seen_comment_ids.insert(comment.id.clone()) {
+                if let Some(tx) = entry.comment_tx.take() {
+                    let _ = tx.send(comment.body).await;
+                    entry.comment_tx = Some(tx);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn shutdown_running(state: &mut OrchestratorState) {
     for running in state.running.values_mut() {
         let _ = running.stop_tx.send(Some(StopReason::Shutdown));
@@ -774,6 +821,8 @@ impl OrchestratorState {
 struct RunningEntry {
     worker: JoinHandle<()>,
     stop_tx: watch::Sender<Option<StopReason>>,
+    comment_tx: Option<mpsc::Sender<String>>,
+    seen_comment_ids: HashSet<String>,
     identifier: String,
     issue: Issue,
     session_id: Option<String>,

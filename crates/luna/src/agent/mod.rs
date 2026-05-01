@@ -1,4 +1,4 @@
-use std::{path::Path, time::Instant};
+use std::{collections::HashSet, path::Path, time::Instant};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, watch};
 use crate::{
     config::RunnerConfig,
     error::{LunaError, Result},
-    model::Issue,
+    model::{Comment, Issue},
     prompt::{build_continuation_prompt, render_issue_prompt},
     tracker::build_tracker,
     workflow::LoadedWorkflow,
@@ -93,6 +93,7 @@ pub trait AgentSession: Send {
         turn_number: u32,
         stop_rx: &mut watch::Receiver<Option<StopReason>>,
     ) -> Result<TurnExit>;
+    async fn send_comment(&mut self, body: &str) -> Result<()>;
     async fn shutdown(&mut self);
 }
 
@@ -102,10 +103,11 @@ pub async fn run_agent_attempt(
     workflow: LoadedWorkflow,
     events: mpsc::UnboundedSender<WorkerEvent>,
     stop_rx: watch::Receiver<Option<StopReason>>,
+    comment_rx: mpsc::Receiver<String>,
 ) {
     let started = Instant::now();
     let outcome =
-        run_agent_attempt_inner(issue.clone(), attempt, workflow, events.clone(), stop_rx).await;
+        run_agent_attempt_inner(issue.clone(), attempt, workflow, events.clone(), stop_rx, comment_rx).await;
 
     let (worker_outcome, error) = match outcome {
         Ok(WorkerOutcome::Normal) => (WorkerOutcome::Normal, None),
@@ -142,6 +144,7 @@ async fn run_agent_attempt_inner(
     workflow: LoadedWorkflow,
     events: mpsc::UnboundedSender<WorkerEvent>,
     mut stop_rx: watch::Receiver<Option<StopReason>>,
+    mut comment_rx: mpsc::Receiver<String>,
 ) -> Result<WorkerOutcome> {
     tracing::info!(
         issue_id = %issue.id,
@@ -197,11 +200,35 @@ async fn run_agent_attempt_inner(
     session.start().await?;
 
     let mut turn_number = 1_u32;
+    let mut seen_comment_ids = HashSet::new();
     loop {
+        while let Ok(body) = comment_rx.try_recv() {
+            if let Err(err) = session.send_comment(&body).await {
+                tracing::warn!(issue_id = %issue.id, error = %err, "failed to send comment to agent session");
+            }
+        }
+
+        let new_comments = match tracker.fetch_comments(&issue).await {
+            Ok(comments) => {
+                let new_ones: Vec<Comment> = comments
+                    .into_iter()
+                    .filter(|c| !seen_comment_ids.contains(&c.id))
+                    .collect();
+                for c in &new_ones {
+                    seen_comment_ids.insert(c.id.clone());
+                }
+                new_ones
+            }
+            Err(err) => {
+                tracing::warn!(issue_id = %issue.id, error = %err, "failed to fetch comments");
+                vec![]
+            }
+        };
+
         let prompt = if turn_number == 1 {
             prompt.clone()
         } else {
-            build_continuation_prompt(&issue, turn_number, workflow.config.scheduler.max_turns)
+            build_continuation_prompt(&issue, turn_number, workflow.config.scheduler.max_turns, &new_comments)
         };
 
         match session.run_turn(&prompt, turn_number, &mut stop_rx).await? {

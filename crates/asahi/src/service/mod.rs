@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        Activity, BlockerRef, Comment, Issue, Notification, NotificationIssueRef, Project,
-        ProjectRef, WikiAudit, WikiNode, WikiNodeKind, WikiPageVersion, WikiVersionRef,
+        Activity, BlockerRef, Comment, Issue, IssueState, Notification, NotificationIssueRef,
+        Project, ProjectRef, WikiAudit, WikiNode, WikiNodeKind, WikiPageVersion, WikiVersionRef,
         default_team_key, issue_matches_locator, project_matches_locator,
         wiki_node_matches_locator,
     },
@@ -46,7 +46,7 @@ impl IssueService {
             .map(|value| value.trim().to_ascii_uppercase())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| default_team_key(&project_slug));
-        let state = non_empty_or(input.state, "Todo");
+        let state = non_empty_or(input.state, &IssueState::Todo.to_string());
         let labels = normalize_list(input.labels);
         let blocked_by_ids = self.resolve_issue_locators(&input.blocked_by).await?;
         let number = self.next_issue_number(&team_key).await?;
@@ -133,7 +133,7 @@ impl IssueService {
         }
 
         let name = name.unwrap_or_else(|| slug.clone());
-        let state = non_empty_or(input.state, "Backlog");
+        let state = non_empty_or(input.state, &IssueState::Backlog.to_string());
         let now = Utc::now();
         let id = Uuid::new_v4().to_string();
         let url = Some(format!("/api/projects/{}", url_safe_identifier(&slug)));
@@ -1019,6 +1019,10 @@ impl IssueService {
         )
         .await?;
 
+        if issue.state == IssueState::Done.to_string() {
+            self.update_issue_state(locator, IssueState::InProgress.to_string()).await?;
+        }
+
         Ok(model.into())
     }
 
@@ -1368,7 +1372,7 @@ impl IssueService {
             name: Set(slug.clone()),
             description: Set(None),
             priority: Set(None),
-            state: Set("Backlog".to_string()),
+            state: Set(IssueState::Backlog.to_string()),
             url: Set(Some(format!(
                 "/api/projects/{}",
                 url_safe_identifier(&slug)

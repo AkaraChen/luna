@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::{config::TrackerConfig, error::Result, model::Issue};
+use crate::{config::TrackerConfig, error::Result, model::{Comment, Issue}};
 
 pub mod commands;
 pub mod context;
@@ -24,6 +24,7 @@ pub trait Tracker: Send + Sync {
     async fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<Issue>>;
     async fn fetch_issue_states_by_ids(&self, issue_ids: &[String]) -> Result<Vec<Issue>>;
     async fn find_issue_by_locator(&self, locator: &str) -> Result<Option<Issue>>;
+    async fn fetch_comments(&self, issue: &Issue) -> Result<Vec<Comment>>;
     async fn create_comment(&self, issue: &Issue, body: &str) -> Result<()>;
     async fn update_issue_state(&self, issue_id: &str, state_name: &str) -> Result<()>;
     async fn create_activity(
