@@ -482,7 +482,7 @@ function WikiNodeViewer({
         )}
       </div>
 
-      <div className="px-5 py-5">
+      <div className="px-5 pb-5 pt-0">
         {isFolder ? (
           <div className="text-sm text-[#69665f]">
             {childNodes
