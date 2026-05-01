@@ -101,7 +101,7 @@ impl IssueService {
             .find_issue_by_id(&id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(id))?;
-        self.create_activity(
+        self.create_activity_internal(
             &issue,
             "issue_created",
             format!("{} created", issue.identifier),
@@ -864,7 +864,7 @@ impl IssueService {
             .find_issue_by_id(&issue_id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
-        self.create_activity(
+        self.create_activity_internal(
             &issue,
             "issue_state_changed",
             format!("{} moved to {}", issue.identifier, issue.state),
@@ -964,7 +964,7 @@ impl IssueService {
             .find_issue_by_id(&issue_id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
-        self.create_activity(
+        self.create_activity_internal(
             &issue,
             "issue_updated",
             format!("{} updated", issue.identifier),
@@ -1003,7 +1003,7 @@ impl IssueService {
             .find_issue_by_id(&issue_id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(issue_id.clone()))?;
-        self.create_activity(
+        self.create_activity_internal(
             &issue,
             "comment_created",
             format!("New comment on {}", issue.identifier),
@@ -1523,7 +1523,34 @@ impl IssueService {
         Ok(models.into_iter().map(model_to_activity).collect())
     }
 
-    async fn create_activity(
+    pub async fn create_activity(
+        &self,
+        locator: &str,
+        kind: String,
+        title: String,
+        body: Option<String>,
+    ) -> ServiceResult<Activity> {
+        let issue = self
+            .find_issue(locator)
+            .await?
+            .ok_or_else(|| ServiceError::IssueNotFound(locator.to_string()))?;
+        let now = Utc::now();
+        let model = activity::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            issue_id: Set(Some(issue.id.clone())),
+            kind: Set(kind),
+            actor_id: Set(None),
+            title: Set(title),
+            body: Set(body),
+            created_at: Set(now),
+        }
+        .insert(&self.db)
+        .await?;
+
+        Ok(model_to_activity(model))
+    }
+
+    async fn create_activity_internal(
         &self,
         issue: &Issue,
         kind: &str,

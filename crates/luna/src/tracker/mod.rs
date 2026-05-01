@@ -26,6 +26,15 @@ pub trait Tracker: Send + Sync {
     async fn find_issue_by_locator(&self, locator: &str) -> Result<Option<Issue>>;
     async fn create_comment(&self, issue: &Issue, body: &str) -> Result<()>;
     async fn update_issue_state(&self, issue_id: &str, state_name: &str) -> Result<()>;
+    async fn create_activity(
+        &self,
+        _issue: &Issue,
+        _kind: &str,
+        _title: &str,
+        _body: Option<&str>,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub fn build_tracker(config: &TrackerConfig) -> Result<Box<dyn Tracker>> {
