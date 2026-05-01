@@ -39,7 +39,8 @@ pub fn rocket_with_database_url_and_port(
     let database_url = database_url.into();
     let figment = rocket::Config::figment()
         .merge(("port", port))
-        .merge(("address", "127.0.0.1"));
+        .merge(("address", "127.0.0.1"))
+        .merge(("cli_colors", false));
     rocket::custom(figment)
         .attach(AdHoc::try_on_ignite("Asahi Database", move |rocket| {
             Box::pin(async move {
