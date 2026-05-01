@@ -230,7 +230,7 @@ function IssueDetailPage({ selectedId }: { selectedId: string }) {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-hidden">
+    <div className="min-h-0 flex-1">
       <IssueDetails issue={issue} />
     </div>
   );
