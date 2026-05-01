@@ -33,6 +33,7 @@ impl MigrationTrait for Migration {
                 CURRENT_TIMESTAMP
             FROM issues i
             WHERE trim(i.project_slug) != ''
+              AND lower(trim(i.project_slug)) != 'default'
               AND NOT EXISTS (
                   SELECT 1
                   FROM projects p
@@ -54,6 +55,7 @@ impl MigrationTrait for Migration {
             )
             WHERE project_id IS NULL
               AND trim(project_slug) != ''
+              AND lower(trim(project_slug)) != 'default'
             "#,
         )
         .await?;

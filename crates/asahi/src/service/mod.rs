@@ -40,7 +40,7 @@ impl IssueService {
         let project_slug = project_model
             .as_ref()
             .map(|project| project.slug.clone())
-            .unwrap_or_else(|| non_empty_or(input.project_slug.clone(), "default"));
+            .unwrap_or_else(|| "default".to_string());
         let team_key = input
             .team_key
             .map(|value| value.trim().to_ascii_uppercase())
@@ -1338,9 +1338,7 @@ impl IssueService {
             return self.find_or_create_project_for_slug(slug).await.map(Some);
         }
 
-        self.find_or_create_project_for_slug("default")
-            .await
-            .map(Some)
+        Ok(None)
     }
 
     async fn resolve_project_locator(&self, locator: &str) -> ServiceResult<project::Model> {
