@@ -1,0 +1,8 @@
+{
+  "ignoreDependencies": ["react-grab"],
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  },
+  "ignore": ["src/components/ui/**"]
+}

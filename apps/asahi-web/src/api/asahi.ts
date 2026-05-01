@@ -1,10 +1,10 @@
-export interface BlockerRef {
+interface BlockerRef {
   id: string | null;
   identifier: string | null;
   state: string | null;
 }
 
-export interface ProjectRef {
+interface ProjectRef {
   id: string;
   slug: string;
   name: string;
@@ -58,7 +58,7 @@ export interface Activity {
   created_at: string;
 }
 
-export interface NotificationIssueRef {
+interface NotificationIssueRef {
   id: string;
   identifier: string;
   title: string;
@@ -82,30 +82,30 @@ export interface AsahiNotification {
   updated_at: string;
 }
 
-export interface IssueListResponse {
+interface IssueListResponse {
   issues: Issue[];
 }
 
-export interface ProjectListResponse {
+interface ProjectListResponse {
   projects: Project[];
 }
 
-export interface CommentListResponse {
+interface CommentListResponse {
   comments: Comment[];
 }
 
-export interface ActivityListResponse {
+interface ActivityListResponse {
   activities: Activity[];
 }
 
-export interface NotificationListResponse {
+interface NotificationListResponse {
   notifications: AsahiNotification[];
   unread_count: number;
 }
 
 export type WikiNodeKind = "folder" | "page";
 
-export interface WikiVersionRef {
+interface WikiVersionRef {
   id: string;
   version: number;
   created_at: string | null;
@@ -129,7 +129,7 @@ export interface WikiNodeListResponse {
   nodes: WikiNode[];
 }
 
-export interface CreateIssueInput {
+interface CreateIssueInput {
   project_id?: string;
   project_slug?: string;
   team_key?: string;
@@ -143,7 +143,7 @@ export interface CreateIssueInput {
   assignee_id?: string;
 }
 
-export interface UpdateIssueInput {
+interface UpdateIssueInput {
   title?: string;
   project_id?: string | null;
   description?: string | null;
@@ -151,7 +151,7 @@ export interface UpdateIssueInput {
   blocked_by?: string[];
 }
 
-export interface CreateProjectInput {
+interface CreateProjectInput {
   slug?: string;
   name?: string;
   description?: string;
@@ -159,7 +159,7 @@ export interface CreateProjectInput {
   state?: string;
 }
 
-export interface UpdateProjectInput {
+interface UpdateProjectInput {
   name?: string;
   description?: string | null;
   priority?: number | null;

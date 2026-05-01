@@ -13,16 +13,6 @@ export function StatusIcon({ state }: { state: string }) {
   return <Icon className="size-4 shrink-0 text-[#6f6d66]" stroke={1.8} />;
 }
 
-export function StatusBadge({ state }: { state: string }) {
-  const Icon = statusIcon(state);
-  return (
-    <span className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[#dedbd2] bg-white px-2 text-xs font-medium text-[#55524b]">
-      <Icon className="size-3.5 text-[#6f6d66]" />
-      <span className="truncate">{state}</span>
-    </span>
-  );
-}
-
 export function Priority({
   priority,
   showEmpty = true,
