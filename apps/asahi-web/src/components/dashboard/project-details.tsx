@@ -1,6 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { IconCircleDashed, IconFolder, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconCalendar,
+  IconCircleDashed,
+  IconClock,
+  IconFolder,
+  IconPlus,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useLocation } from "wouter";
 
 import {
@@ -106,152 +113,197 @@ function ProjectPage({
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });
+  const issueCountLabel = formatCount(data.issues.length, "issue");
 
   return (
-    <section className="min-h-0 flex-1 overflow-auto">
-      <div className="px-5 pb-5 pt-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2 text-xs text-[#77746c]">
-            <IconFolder className="size-3.5 shrink-0" stroke={1.8} />
-            <span className="truncate">{project.slug}</span>
-            <span className="h-1 w-1 shrink-0 rounded-full bg-[#c9c4bb]" />
-            <span className="shrink-0">{formatDate(project.updated_at)}</span>
+    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
+      <div className="min-w-0">
+        <div className="border-b border-[#eceae5] px-5 pb-6 pt-5">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2 text-xs text-[#77746c]">
+              <IconFolder className="size-3.5 shrink-0" stroke={1.8} />
+              <span className="truncate">{project.slug}</span>
+              <span className="h-1 w-1 shrink-0 rounded-full bg-[#c9c4bb]" />
+              <span className="shrink-0">{project.state}</span>
+            </div>
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <Button
+                aria-label="Delete project"
+                className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+                disabled={deleteMutation.isPending}
+                onClick={() => setDeleteOpen(true)}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                <IconTrash className="size-3.5" />
+              </Button>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {project.name}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This action cannot be undone. Issues in this project will be moved out of the
+                    project.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={deleteMutation.isPending}
+                    onClick={() => deleteMutation.mutate()}
+                    variant="destructive"
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
-          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-            <Button
-              aria-label="Delete project"
-              className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
-              disabled={deleteMutation.isPending}
-              onClick={() => setDeleteOpen(true)}
-              size="icon-xs"
-              type="button"
-              variant="ghost"
-            >
-              <IconTrash className="size-3.5" />
-            </Button>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {project.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This action cannot be undone. Issues in this project will be moved out of the
-                  project.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  disabled={deleteMutation.isPending}
-                  onClick={() => deleteMutation.mutate()}
-                  variant="destructive"
+
+          <h2 className="max-w-3xl text-[1.45rem] font-semibold leading-tight text-[#22211f]">
+            {project.name}
+          </h2>
+
+          <div className="mt-3 max-w-3xl">
+            {project.description ? (
+              <p className="whitespace-pre-wrap text-sm leading-6 text-[#69665f]">
+                {project.description}
+              </p>
+            ) : (
+              <p className="text-sm italic text-[#a8a59d]">No description</p>
+            )}
+          </div>
+        </div>
+
+        <div className="sticky top-0 z-10 border-b border-[#eceae5] bg-background/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex min-h-8 items-center justify-between gap-3">
+            <div className="inline-flex rounded-full border border-border bg-muted/60 p-0.5">
+              {PROJECT_SECTIONS.map((option) => (
+                <button
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-medium capitalize text-muted-foreground",
+                    section === option && "bg-background text-foreground shadow-sm",
+                  )}
+                  key={option}
+                  onClick={() => setSection(option)}
+                  type="button"
                 >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
+                  <span>{option}</span>
+                  {option === "issues" ? (
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 text-[0.625rem] leading-4 text-[#8f8b82]",
+                        section === option && "bg-muted text-[#55524b]",
+                      )}
+                    >
+                      {data.issues.length}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
 
-        <h2 className="text-lg font-semibold leading-snug text-[#22211f]">{project.name}</h2>
-
-        <div className="mt-3 max-w-3xl">
-          {project.description ? (
-            <p className="whitespace-pre-wrap text-sm leading-6 text-[#69665f]">
-              {project.description}
-            </p>
-          ) : (
-            <p className="text-sm italic text-[#a8a59d]">No description</p>
-          )}
-        </div>
-      </div>
-
-      <div className="border-y border-[#eceae5] px-5 py-2">
-        <PropertyRow label="Status">
-          <EditableStatus
-            disabled={stateMutation.isPending}
-            onChange={(state) => {
-              stateMutation.mutate(state);
-              setStatusOpen(false);
-            }}
-            open={statusOpen}
-            options={PROJECT_STATES}
-            setOpen={setStatusOpen}
-            state={project.state}
-          />
-        </PropertyRow>
-        <PropertyRow label="Priority">
-          <EditablePriority
-            disabled={priorityMutation.isPending}
-            onChange={(priority) => {
-              priorityMutation.mutate(priority);
-              setPriorityOpen(false);
-            }}
-            open={priorityOpen}
-            options={[...PRIORITY_OPTIONS]}
-            priority={project.priority}
-            setOpen={setPriorityOpen}
-          />
-        </PropertyRow>
-      </div>
-
-      <div className="border-b border-[#eceae5] px-5 py-2">
-        <div className="inline-flex rounded-full border border-border bg-muted/60 p-0.5">
-          {PROJECT_SECTIONS.map((option) => (
-            <button
-              className={cn(
-                "h-7 rounded-full px-3 text-xs font-medium capitalize text-muted-foreground",
-                section === option && "bg-background text-foreground shadow-sm",
-              )}
-              key={option}
-              onClick={() => setSection(option)}
-              type="button"
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {section === "issues" ? (
-        <>
-          <div className="flex h-12 items-center justify-between px-5">
-            <div className="text-sm font-medium">Issues</div>
-            <div className="flex items-center gap-2">
-              <div className="text-xs text-[#8f8b82]">
-                {data.issues.length === 1 ? "1 issue" : `${data.issues.length} issues`}
-              </div>
+            {section === "issues" ? (
               <CreateIssueTrigger projectId={project.id}>
                 <Button aria-label="Create issue in project" size="icon-xs" variant="ghost">
                   <IconPlus className="size-3.5" />
                 </Button>
               </CreateIssueTrigger>
-            </div>
+            ) : null}
           </div>
+        </div>
 
-          {data.issues.length ? (
-            <IssueList issues={data.issues} onSelect={onSelectIssue} selectedId={null} />
-          ) : (
-            <div className="flex h-[260px] items-center justify-center px-6 text-center">
-              <div>
-                <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
-                <div className="text-sm font-medium">No issues in this project</div>
+        {section === "issues" ? (
+          <>
+            <div className="flex h-12 items-center justify-between px-5">
+              <div className="text-sm font-medium">Project issues</div>
+              <div className="flex items-center gap-2">
+                <div className="text-xs text-[#8f8b82]">{issueCountLabel}</div>
               </div>
             </div>
-          )}
-        </>
-      ) : (
-        <ProjectWiki project={project} />
-      )}
+
+            {data.issues.length ? (
+              <IssueList issues={data.issues} onSelect={onSelectIssue} selectedId={null} />
+            ) : (
+              <div className="flex h-[260px] items-center justify-center px-6 text-center">
+                <div>
+                  <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
+                  <div className="text-sm font-medium">No issues in this project</div>
+                  <CreateIssueTrigger projectId={project.id}>
+                    <Button className="mt-4" size="sm" type="button" variant="outline">
+                      <IconPlus className="size-3.5" />
+                      New issue
+                    </Button>
+                  </CreateIssueTrigger>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <ProjectWiki project={project} />
+        )}
+      </div>
+
+      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
+        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1">
+          <PropertyRow label="Status">
+            <EditableStatus
+              disabled={stateMutation.isPending}
+              onChange={(state) => {
+                stateMutation.mutate(state);
+                setStatusOpen(false);
+              }}
+              open={statusOpen}
+              options={PROJECT_STATES}
+              setOpen={setStatusOpen}
+              state={project.state}
+            />
+          </PropertyRow>
+          <PropertyRow label="Priority">
+            <EditablePriority
+              disabled={priorityMutation.isPending}
+              onChange={(priority) => {
+                priorityMutation.mutate(priority);
+                setPriorityOpen(false);
+              }}
+              open={priorityOpen}
+              options={[...PRIORITY_OPTIONS]}
+              priority={project.priority}
+              setOpen={setPriorityOpen}
+            />
+          </PropertyRow>
+          <PropertyRow label="Issues">
+            <span className="text-xs font-medium text-[#55524b]">{issueCountLabel}</span>
+          </PropertyRow>
+          <PropertyRow label="Updated">
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#55524b]">
+              <IconClock className="size-3.5 text-[#8a877e]" stroke={1.8} />
+              {formatDate(project.updated_at)}
+            </span>
+          </PropertyRow>
+          <PropertyRow label="Created">
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#55524b]">
+              <IconCalendar className="size-3.5 text-[#8a877e]" stroke={1.8} />
+              {formatDate(project.created_at)}
+            </span>
+          </PropertyRow>
+        </div>
+      </aside>
     </section>
   );
 }
 
 function PropertyRow({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="grid min-h-9 grid-cols-[6rem_minmax(0,1fr)] items-center gap-3">
+    <div className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3">
       <div className="text-xs text-[#85827a]">{label}</div>
       <div className="flex min-w-0 justify-end text-right text-[#33312d]">{children}</div>
     </div>
   );
+}
+
+function formatCount(count: number, singular: string) {
+  return count === 1 ? `1 ${singular}` : `${count} ${singular}s`;
 }
 
 function formatDate(value: string | null) {
