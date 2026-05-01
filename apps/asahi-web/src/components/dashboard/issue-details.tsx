@@ -122,181 +122,185 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="px-5 pb-4 pt-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="text-xs font-medium text-[#77746c]">{issue.identifier}</span>
-            <span className="h-1 w-1 rounded-full bg-[#c9c4bb]" />
-            <span className="text-xs text-[#8a877e]">{formatDate(issue.updated_at)}</span>
-          </div>
-          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-            <Button
-              aria-label="Delete issue"
-              className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
-              disabled={deleteMutation.isPending}
-              onClick={() => setDeleteOpen(true)}
-              size="icon-xs"
-              type="button"
-              variant="ghost"
-            >
-              <IconTrash className="size-3.5" />
-            </Button>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {issue.identifier}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This action cannot be undone. This will permanently delete the issue.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  disabled={deleteMutation.isPending}
-                  onClick={() => deleteMutation.mutate()}
-                  variant="destructive"
-                >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-        <h2 className="text-lg font-semibold leading-snug text-[#22211f]">{issue.title}</h2>
-        {editingDescription ? (
-          <div className="mt-3">
-            <Textarea
-              autoFocus
-              className="min-h-24 resize-none text-sm"
-              onChange={(event) => setDescriptionDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setEditingDescription(false);
-                  setDescriptionDraft(issue.description ?? "");
-                }
-              }}
-              placeholder="Add a description"
-              value={descriptionDraft}
-            />
-            <div className="mt-2 flex items-center gap-2">
+    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
+      <div className="min-w-0 flex flex-col">
+        <div className="px-5 pb-4 pt-5">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="text-xs font-medium text-[#77746c]">{issue.identifier}</span>
+              <span className="h-1 w-1 rounded-full bg-[#c9c4bb]" />
+              <span className="text-xs text-[#8a877e]">{formatDate(issue.updated_at)}</span>
+            </div>
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
               <Button
-                disabled={updateMutation.isPending}
-                onClick={() => {
-                  updateMutation.mutate(
-                    { description: descriptionDraft || null },
-                    {
-                      onSuccess: () => {
-                        setEditingDescription(false);
-                      },
-                    },
-                  );
-                }}
-                size="sm"
-                type="button"
-              >
-                Save
-              </Button>
-              <Button
-                onClick={() => {
-                  setEditingDescription(false);
-                  setDescriptionDraft(issue.description ?? "");
-                }}
-                size="sm"
+                aria-label="Delete issue"
+                className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+                disabled={deleteMutation.isPending}
+                onClick={() => setDeleteOpen(true)}
+                size="icon-xs"
                 type="button"
                 variant="ghost"
               >
-                Cancel
+                <IconTrash className="size-3.5" />
+              </Button>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {issue.identifier}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This action cannot be undone. This will permanently delete the issue.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={deleteMutation.isPending}
+                    onClick={() => deleteMutation.mutate()}
+                    variant="destructive"
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+          <h2 className="text-lg font-semibold leading-snug text-[#22211f]">{issue.title}</h2>
+          {editingDescription ? (
+            <div className="mt-3">
+              <Textarea
+                autoFocus
+                className="min-h-24 resize-none text-sm"
+                onChange={(event) => setDescriptionDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setEditingDescription(false);
+                    setDescriptionDraft(issue.description ?? "");
+                  }
+                }}
+                placeholder="Add a description"
+                value={descriptionDraft}
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <Button
+                  disabled={updateMutation.isPending}
+                  onClick={() => {
+                    updateMutation.mutate(
+                      { description: descriptionDraft || null },
+                      {
+                        onSuccess: () => {
+                          setEditingDescription(false);
+                        },
+                      },
+                    );
+                  }}
+                  size="sm"
+                  type="button"
+                >
+                  Save
+                </Button>
+                <Button
+                  onClick={() => {
+                    setEditingDescription(false);
+                    setDescriptionDraft(issue.description ?? "");
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="group/description relative mt-3">
+              {issue.description ? (
+                <p className="text-sm leading-6 text-[#69665f]">{issue.description}</p>
+              ) : (
+                <p className="text-sm italic text-[#a8a59d]">No description</p>
+              )}
+              <Button
+                aria-label="Edit description"
+                className="absolute -right-1 -top-1 opacity-0 transition-opacity group-hover/description:opacity-100"
+                onClick={() => setEditingDescription(true)}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                <IconEdit className="size-3.5 text-[#8a877e]" />
               </Button>
             </div>
-          </div>
-        ) : (
-          <div className="group/description relative mt-3">
-            {issue.description ? (
-              <p className="text-sm leading-6 text-[#69665f]">{issue.description}</p>
-            ) : (
-              <p className="text-sm italic text-[#a8a59d]">No description</p>
-            )}
-            <Button
-              aria-label="Edit description"
-              className="absolute -right-1 -top-1 opacity-0 transition-opacity group-hover/description:opacity-100"
-              onClick={() => setEditingDescription(true)}
-              size="icon-xs"
-              type="button"
-              variant="ghost"
-            >
-              <IconEdit className="size-3.5 text-[#8a877e]" />
+          )}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto border-t border-[#eceae5]">
+          <Suspense fallback={<ActivitySkeleton />}>
+            <IssueActivity issueId={issue.id} />
+          </Suspense>
+        </div>
+
+        <form className="p-4 pt-0" onSubmit={submitComment}>
+          <Textarea
+            className="min-h-20 resize-none"
+            onChange={(event) => setComment(event.target.value)}
+            placeholder="Add a comment"
+            value={comment}
+          />
+          <div className="mt-2 flex justify-end">
+            <Button disabled={commentMutation.isPending || !comment.trim()} size="sm" type="submit">
+              <IconSend className="size-4" />
+              Send
             </Button>
           </div>
-        )}
+        </form>
       </div>
 
-      <div className="border-y border-[#eceae5] px-5 py-2">
-        <PropertyRow label="Status">
-          <EditableStatus
-            disabled={moveMutation.isPending}
-            onChange={(state) => {
-              moveMutation.mutate(state);
-              setStatusOpen(false);
-            }}
-            open={statusOpen}
-            options={statusColumns}
-            setOpen={setStatusOpen}
-            state={issue.state}
-          />
-        </PropertyRow>
-        <PropertyRow label="Priority">
-          <EditablePriority
-            disabled={updateMutation.isPending}
-            onChange={(priority) => {
-              updateMutation.mutate({ priority });
-              setPriorityOpen(false);
-            }}
-            open={priorityOpen}
-            options={[...priorityOptions]}
-            priority={issue.priority}
-            setOpen={setPriorityOpen}
-          />
-        </PropertyRow>
-        <PropertyRow label="Blocked by">
-          <EditableBlockers
-            blockers={issue.blocked_by}
-            disabled={updateMutation.isPending}
-            issueOptions={availableBlockers}
-            onToggle={(issueId) => {
-              const next = blockerIds.includes(issueId)
-                ? blockerIds.filter((id) => id !== issueId)
-                : [...blockerIds, issueId];
-              updateMutation.mutate({ blocked_by: next });
-            }}
-            onClear={() => updateMutation.mutate({ blocked_by: [] })}
-            open={blockersOpen}
-            selectedIds={blockerIds}
-            setOpen={setBlockersOpen}
-          />
-        </PropertyRow>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto border-t border-[#eceae5]">
-        <Suspense fallback={<ActivitySkeleton />}>
-          <IssueActivity issueId={issue.id} />
-        </Suspense>
-      </div>
-
-      <form className="p-4 pt-0" onSubmit={submitComment}>
-        <Textarea
-          className="min-h-20 resize-none"
-          onChange={(event) => setComment(event.target.value)}
-          placeholder="Add a comment"
-          value={comment}
-        />
-        <div className="mt-2 flex justify-end">
-          <Button disabled={commentMutation.isPending || !comment.trim()} size="sm" type="submit">
-            <IconSend className="size-4" />
-            Send
-          </Button>
+      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
+        <div className="grid gap-1">
+          <PropertyRow label="Status">
+            <EditableStatus
+              disabled={moveMutation.isPending}
+              onChange={(state) => {
+                moveMutation.mutate(state);
+                setStatusOpen(false);
+              }}
+              open={statusOpen}
+              options={statusColumns}
+              setOpen={setStatusOpen}
+              state={issue.state}
+            />
+          </PropertyRow>
+          <PropertyRow label="Priority">
+            <EditablePriority
+              disabled={updateMutation.isPending}
+              onChange={(priority) => {
+                updateMutation.mutate({ priority });
+                setPriorityOpen(false);
+              }}
+              open={priorityOpen}
+              options={[...priorityOptions]}
+              priority={issue.priority}
+              setOpen={setPriorityOpen}
+            />
+          </PropertyRow>
+          <PropertyRow label="Blocked by">
+            <EditableBlockers
+              blockers={issue.blocked_by}
+              disabled={updateMutation.isPending}
+              issueOptions={availableBlockers}
+              onToggle={(issueId) => {
+                const next = blockerIds.includes(issueId)
+                  ? blockerIds.filter((id) => id !== issueId)
+                  : [...blockerIds, issueId];
+                updateMutation.mutate({ blocked_by: next });
+              }}
+              onClear={() => updateMutation.mutate({ blocked_by: [] })}
+              open={blockersOpen}
+              selectedIds={blockerIds}
+              setOpen={setBlockersOpen}
+            />
+          </PropertyRow>
         </div>
-      </form>
-    </div>
+      </aside>
+    </section>
   );
 }
 
@@ -444,7 +448,7 @@ function EditableBlockers({
 
 function PropertyRow({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="grid min-h-9 grid-cols-[6rem_minmax(0,1fr)] items-center gap-3">
+    <div className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3">
       <div className="text-xs text-[#85827a]">{label}</div>
       <div className="flex min-w-0 justify-end text-right text-[#33312d]">{children}</div>
     </div>

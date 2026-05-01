@@ -84,25 +84,27 @@ export function IssuesViewSkeleton() {
 
 export function IssueDetailSkeleton() {
   return (
-    <div className="space-y-4 p-5">
-      <div className="h-4 w-32 animate-pulse rounded bg-[#eceae5]" />
-      <div className="h-8 w-3/4 animate-pulse rounded bg-[#eceae5]" />
-      <div className="h-20 w-full animate-pulse rounded bg-[#eceae5]" />
-      <div className="space-y-2">
+    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
+      <div className="flex flex-col space-y-4 p-5">
+        <div className="h-4 w-32 animate-pulse rounded bg-[#eceae5]" />
+        <div className="h-8 w-3/4 animate-pulse rounded bg-[#eceae5]" />
+        <div className="h-20 w-full animate-pulse rounded bg-[#eceae5]" />
+        <div className="min-h-0 flex-1 space-y-3 pt-4">
+          <div className="h-5 w-16 animate-pulse rounded bg-[#eceae5]" />
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-16 animate-pulse rounded-md bg-[#f2f1ec]" />
+          ))}
+        </div>
+      </div>
+      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-3">
+          <div key={i} className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3">
             <div className="h-4 w-12 animate-pulse rounded bg-[#eceae5]" />
-            <div className="h-7 w-32 animate-pulse rounded bg-[#eceae5]" />
+            <div className="ml-auto h-7 w-32 animate-pulse rounded bg-[#eceae5]" />
           </div>
         ))}
-      </div>
-      <div className="space-y-3 pt-4">
-        <div className="h-5 w-16 animate-pulse rounded bg-[#eceae5]" />
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-16 animate-pulse rounded-md bg-[#f2f1ec]" />
-        ))}
-      </div>
-    </div>
+      </aside>
+    </section>
   );
 }
 
