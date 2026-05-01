@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Tiptap, useEditor } from "@tiptap/react";
+import { Tiptap, useEditor, useTiptap } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 
 import { cn } from "@/lib/utils";
@@ -78,7 +79,113 @@ export function RichTextEditor({
         <div className="px-3 py-2">
           <Tiptap.Content />
         </div>
+        <EditorBubbleMenu />
       </Tiptap>
     </div>
+  );
+}
+
+function EditorBubbleMenu() {
+  const { editor } = useTiptap();
+
+  if (!editor) return null;
+
+  return (
+    <BubbleMenu editor={editor}>
+      <div className="inline-flex items-center gap-0.5 rounded-lg border border-[#eceae5] bg-white px-1 py-0.5 shadow-lg">
+        <MenuButton
+          active={editor.isActive("bold")}
+          label="Bold"
+          onClick={() => editor.chain().focus().toggleBold().run()}
+        >
+          <span className="text-xs font-bold">B</span>
+        </MenuButton>
+        <MenuButton
+          active={editor.isActive("italic")}
+          label="Italic"
+          onClick={() => editor.chain().focus().toggleItalic().run()}
+        >
+          <span className="text-xs italic">I</span>
+        </MenuButton>
+        <MenuButton
+          active={editor.isActive("strike")}
+          label="Strikethrough"
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+        >
+          <span className="text-xs line-through">S</span>
+        </MenuButton>
+        <div className="mx-0.5 h-4 w-px bg-[#eceae5]" />
+        <MenuButton
+          active={editor.isActive("heading", { level: 2 })}
+          label="Heading 2"
+          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+        >
+          <span className="text-xs font-bold">H2</span>
+        </MenuButton>
+        <MenuButton
+          active={editor.isActive("heading", { level: 3 })}
+          label="Heading 3"
+          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+        >
+          <span className="text-xs font-bold">H3</span>
+        </MenuButton>
+        <div className="mx-0.5 h-4 w-px bg-[#eceae5]" />
+        <MenuButton
+          active={editor.isActive("bulletList")}
+          label="Bullet list"
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+        >
+          <span className="text-xs">•</span>
+        </MenuButton>
+        <MenuButton
+          active={editor.isActive("orderedList")}
+          label="Ordered list"
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+        >
+          <span className="text-xs">1.</span>
+        </MenuButton>
+        <MenuButton
+          active={editor.isActive("blockquote")}
+          label="Quote"
+          onClick={() => editor.chain().focus().toggleBlockquote().run()}
+        >
+          <span className="text-xs">"</span>
+        </MenuButton>
+        <MenuButton
+          active={editor.isActive("codeBlock")}
+          label="Code block"
+          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+        >
+          <span className="text-xs font-mono">{`</>`}</span>
+        </MenuButton>
+      </div>
+    </BubbleMenu>
+  );
+}
+
+function MenuButton({
+  active,
+  children,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className={cn(
+        "flex size-7 items-center justify-center rounded text-[#55524b] transition-colors",
+        active ? "bg-[#f2f1ec]" : "hover:bg-[#f7f6f2]",
+      )}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }
