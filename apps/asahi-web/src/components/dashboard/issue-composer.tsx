@@ -122,7 +122,7 @@ export function IssueComposer({
         type="button"
       />
       <form
-        className="relative flex min-h-[18rem] w-[min(42rem,calc(100vw-2rem))] flex-col rounded-[1.15rem] bg-card text-card-foreground shadow-[0_18px_55px_rgba(15,23,42,0.2),0_1px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/10"
+        className="relative flex min-h-[24rem] w-[min(42rem,calc(100vw-2rem))] flex-col rounded-[1.15rem] bg-card text-card-foreground shadow-[0_18px_55px_rgba(15,23,42,0.2),0_1px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/10"
         onSubmit={submit}
       >
         <div className="flex items-center justify-between px-4 pt-3.5">
