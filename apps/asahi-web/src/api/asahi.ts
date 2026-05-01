@@ -175,6 +175,11 @@ export interface CreateWikiNodeInput {
   summary?: string;
 }
 
+export interface UpdateWikiNodeInput {
+  title?: string;
+  content?: string | null;
+}
+
 export async function fetchIssues(
   options: {
     projectId?: string;
@@ -260,6 +265,17 @@ export async function createWikiNode(
   return request<WikiNode>(`/api/projects/${encodeURIComponent(projectLocator)}/wiki`, {
     body: JSON.stringify(input),
     method: "POST",
+  });
+}
+
+export async function updateWikiNode(
+  projectLocator: string,
+  nodeId: string,
+  input: UpdateWikiNodeInput,
+): Promise<WikiNode> {
+  return request<WikiNode>(`/api/projects/${encodeURIComponent(projectLocator)}/wiki/${encodeURIComponent(nodeId)}`, {
+    body: JSON.stringify(input),
+    method: "PATCH",
   });
 }
 
