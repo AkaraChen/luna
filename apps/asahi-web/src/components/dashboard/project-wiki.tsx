@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   useMutation,
   useQueries,
@@ -9,18 +9,20 @@ import {
 import {
   IconChevronRight,
   IconCircleDashed,
+  IconEdit,
   IconFileText,
   IconFolder,
   IconFolderOpen,
   IconPlus,
-  IconX,
 } from "@tabler/icons-react";
 
 import {
   createWikiNode,
   fetchWikiNodes,
+  updateWikiNode,
   type CreateWikiNodeInput,
   type Project,
+  type UpdateWikiNodeInput,
   type WikiNode,
   type WikiNodeKind,
   type WikiNodeListResponse,
@@ -31,7 +33,7 @@ import { cn } from "@/lib/utils";
 
 type InlineComposerState = {
   parentId: string | null;
-  title: string;
+  kind: WikiNodeKind;
 };
 
 type WikiNodesQueryResult = UseQueryResult<WikiNodeListResponse, Error>;
@@ -41,7 +43,6 @@ export function ProjectWiki({ project }: { project: Project }) {
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(() => new Set());
   const [selectedNode, setSelectedNode] = useState<WikiNode | null>(null);
   const [inlineComposer, setInlineComposer] = useState<InlineComposerState | null>(null);
-  const [composer, setComposer] = useState<{ kind: WikiNodeKind; parentId: string | null } | null>(null);
 
   const rootQuery = useQuery({
     queryKey: wikiNodesQueryKey(project.id, null),
@@ -101,7 +102,6 @@ export function ProjectWiki({ project }: { project: Project }) {
         return next;
       });
       setSelectedNode(node);
-      setComposer(null);
       void queryClient.invalidateQueries({ queryKey: ["wiki", project.id] });
     },
   });
@@ -119,9 +119,10 @@ export function ProjectWiki({ project }: { project: Project }) {
   };
 
   const handleNodeClick = (node: WikiNode) => {
-    setSelectedNode(node);
     if (node.kind === "folder") {
       toggleFolder(node.id);
+    } else {
+      setSelectedNode(node);
     }
   };
 
@@ -129,19 +130,11 @@ export function ProjectWiki({ project }: { project: Project }) {
     return activeNode?.kind === "folder" ? activeNode.id : activeNode?.parent_id ?? null;
   };
 
-  const openComposer = (kind: WikiNodeKind) => {
+  const openInlineComposer = (kind: WikiNodeKind) => {
     createMutation.reset();
-    setComposer({
-      kind,
-      parentId: kind === "page" ? null : resolveParentId(),
-    });
-  };
-
-  const openInlineFolderComposer = () => {
-    createMutation.reset();
-    const parentId = resolveParentId();
-    setInlineComposer({ parentId, title: "" });
-    if (parentId) {
+    const parentId = kind === "page" ? null : resolveParentId();
+    setInlineComposer({ parentId, kind });
+    if (parentId && kind === "folder") {
       setExpandedFolderIds((current) => {
         const next = new Set(current);
         next.add(parentId);
@@ -150,25 +143,30 @@ export function ProjectWiki({ project }: { project: Project }) {
     }
   };
 
-  const submitInlineFolder = (title: string) => {
+  const submitInline = (title: string) => {
     const trimmed = title.trim();
-    if (!trimmed || createMutation.isPending) return;
+    if (!trimmed || !inlineComposer || createMutation.isPending) return;
     createMutation.mutate({
       actor_kind: "human",
-      kind: "folder",
-      parent_id: inlineComposer?.parentId ?? undefined,
+      kind: inlineComposer.kind,
+      parent_id: inlineComposer.parentId ?? undefined,
       title: trimmed,
     });
     setInlineComposer(null);
   };
 
-  const cancelInlineFolder = () => {
+  const cancelInline = () => {
     setInlineComposer(null);
   };
 
   const handleCreatePageInFolder = (folderId: string) => {
     createMutation.reset();
-    setComposer({ kind: "page", parentId: folderId });
+    setExpandedFolderIds((current) => {
+      const next = new Set(current);
+      next.add(folderId);
+      return next;
+    });
+    setInlineComposer({ parentId: folderId, kind: "page" });
   };
 
   const rootNodes = childrenByParentId.get(null) ?? [];
@@ -181,7 +179,7 @@ export function ProjectWiki({ project }: { project: Project }) {
           <div className="flex items-center gap-1">
             <Button
               aria-label="Create folder"
-              onClick={openInlineFolderComposer}
+              onClick={() => openInlineComposer("folder")}
               size="icon-xs"
               title="Create folder"
               type="button"
@@ -191,7 +189,7 @@ export function ProjectWiki({ project }: { project: Project }) {
             </Button>
             <Button
               aria-label="Create page"
-              onClick={() => openComposer("page")}
+              onClick={() => openInlineComposer("page")}
               size="icon-xs"
               title="Create page"
               type="button"
@@ -219,21 +217,22 @@ export function ProjectWiki({ project }: { project: Project }) {
                   inlineComposer={inlineComposer}
                   key={node.id}
                   node={node}
-                  onCancelInline={cancelInlineFolder}
+                  onCancelInline={cancelInline}
                   onCreatePage={handleCreatePageInFolder}
                   onNodeClick={handleNodeClick}
-                  onSubmitInline={submitInlineFolder}
+                  onSubmitInline={submitInline}
                   selectedId={activeNode?.id ?? null}
                 />
               ))}
               {inlineComposer?.parentId === null ? (
-                <InlineFolderRow
+                <InlineRow
                   depth={0}
-                  onCancel={cancelInlineFolder}
-                  onSubmit={submitInlineFolder}
+                  kind={inlineComposer.kind}
+                  onCancel={cancelInline}
+                  onSubmit={submitInline}
                 />
               ) : null}
-              {rootNodes.length === 0 && inlineComposer?.parentId !== null ? (
+              {rootNodes.length === 0 && !inlineComposer ? (
                 <div className="flex h-56 items-center justify-center px-4 text-center">
                   <div>
                     <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
@@ -246,26 +245,11 @@ export function ProjectWiki({ project }: { project: Project }) {
         </div>
       </div>
 
-      <WikiNodeViewer node={activeNode} childNodes={activeChildren} />
-
-      {composer ? (
-        <WikiComposer
-          error={createMutation.error}
-          key={`page:${composer.parentId ?? "root"}`}
-          onClose={() => setComposer(null)}
-          onSubmit={({ content, title }) => {
-            createMutation.mutate({
-              actor_kind: "human",
-              content,
-              kind: "page",
-              parent_id: composer.parentId ?? undefined,
-              title,
-            });
-          }}
-
-          pending={createMutation.isPending}
-        />
-      ) : null}
+      <WikiNodeViewer
+        node={activeNode}
+        childNodes={activeChildren}
+        projectId={project.id}
+      />
     </div>
   );
 }
@@ -376,8 +360,9 @@ function WikiTreeNode({
               />
             ))}
             {inlineComposer?.parentId === node.id ? (
-              <InlineFolderRow
+              <InlineRow
                 depth={depth + 1}
+                kind={inlineComposer.kind}
                 onCancel={onCancelInline}
                 onSubmit={onSubmitInline}
               />
@@ -400,10 +385,33 @@ function WikiTreeNode({
 function WikiNodeViewer({
   childNodes,
   node,
+  projectId,
 }: {
   childNodes: WikiNode[] | undefined;
   node: WikiNode | null;
+  projectId: string;
 }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [contentDraft, setContentDraft] = useState("");
+
+  const updateMutation = useMutation({
+    mutationFn: (input: UpdateWikiNodeInput) => updateWikiNode(projectId, node!.id, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["wiki", projectId] });
+      setEditing(false);
+    },
+  });
+
+  useEffect(() => {
+    if (node) {
+      setTitleDraft(node.title);
+      setContentDraft(node.content ?? "");
+    }
+    setEditing(false);
+  }, [node?.id]);
+
   if (!node) {
     return (
       <div className="flex min-h-[22rem] items-center justify-center px-6 text-center">
@@ -419,7 +427,7 @@ function WikiNodeViewer({
 
   return (
     <article className="min-w-0">
-      <div className="border-b border-[#eceae5] px-5 py-4">
+      <div className="px-5 py-4">
         <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-[#77746c]">
           {isFolder ? (
             <IconFolderOpen className="size-3.5 shrink-0" stroke={1.8} />
@@ -430,14 +438,48 @@ function WikiNodeViewer({
           <span className="h-1 w-1 shrink-0 rounded-full bg-[#c9c4bb]" />
           <span className="shrink-0">{formatDate(node.updated_at)}</span>
         </div>
-        <h3 className="truncate text-lg font-semibold leading-snug text-[#22211f]">
-          {node.title}
-        </h3>
-        {!isFolder ? (
-          <div className="mt-2 text-xs text-[#8f8b82]">
-            {node.current_version ? `Version ${node.current_version.version}` : "No versions"}
+
+        {editing ? (
+          <input
+            autoFocus
+            className="block w-full bg-transparent text-lg font-semibold leading-snug text-[#22211f] outline-none placeholder:text-[#a8a59d]"
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                updateMutation.mutate({ title: titleDraft, content: contentDraft || null });
+              }
+            }}
+            value={titleDraft}
+          />
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="truncate text-lg font-semibold leading-snug text-[#22211f]">
+              {node.title}
+            </h3>
+            {!isFolder && (
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-xs text-[#8f8b82]">
+                  {node.current_version ? `Version ${node.current_version.version}` : "No versions"}
+                </span>
+                <Button
+                  aria-label="Edit page"
+                  className="text-[#8a877e] hover:text-[#33312d]"
+                  onClick={() => {
+                    setEditing(true);
+                    setTitleDraft(node.title);
+                    setContentDraft(node.content ?? "");
+                  }}
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                >
+                  <IconEdit className="size-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
-        ) : null}
+        )}
       </div>
 
       <div className="px-5 py-5">
@@ -449,6 +491,42 @@ function WikiNodeViewer({
                 : `${childNodes.length} items`
               : "Folder"}
           </div>
+        ) : editing ? (
+          <div>
+            <Textarea
+              className="min-h-48 resize-none rounded-lg bg-transparent px-0 py-0 leading-6 shadow-none focus-visible:ring-0"
+              onChange={(e) => setContentDraft(e.target.value)}
+              placeholder="Add content..."
+              value={contentDraft}
+            />
+            <div className="mt-3 flex items-center gap-2">
+              <Button
+                disabled={updateMutation.isPending || !titleDraft.trim()}
+                onClick={() =>
+                  updateMutation.mutate({ title: titleDraft, content: contentDraft || null })
+                }
+                size="sm"
+                type="button"
+              >
+                Save
+              </Button>
+              <Button
+                onClick={() => {
+                  setEditing(false);
+                  setTitleDraft(node.title);
+                  setContentDraft(node.content ?? "");
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+              {updateMutation.error ? (
+                <span className="text-xs text-destructive">{updateMutation.error.message}</span>
+              ) : null}
+            </div>
+          </div>
         ) : node.content?.trim() ? (
           <div className="whitespace-pre-wrap text-sm leading-6 text-[#33312d]">{node.content}</div>
         ) : (
@@ -459,12 +537,14 @@ function WikiNodeViewer({
   );
 }
 
-function InlineFolderRow({
+function InlineRow({
   depth,
+  kind,
   onCancel,
   onSubmit,
 }: {
   depth: number;
+  kind: WikiNodeKind;
   onCancel: (() => void) | undefined;
   onSubmit: ((title: string) => void) | undefined;
 }) {
@@ -501,98 +581,21 @@ function InlineFolderRow({
       style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
     >
       <span className="size-3.5" />
-      <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+      {kind === "folder" ? (
+        <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+      ) : (
+        <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
+      )}
       <input
         ref={inputRef}
         className="min-w-0 bg-transparent text-sm text-[#33312d] outline-none placeholder:text-[#a8a59d]"
         onBlur={handleBlur}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="New folder"
+        placeholder={kind === "folder" ? "New folder" : "New page"}
         type="text"
         value={title}
       />
-    </div>
-  );
-}
-
-function WikiComposer({
-  error,
-  onClose,
-  onSubmit,
-  pending,
-}: {
-  error: Error | null;
-  onClose: () => void;
-  onSubmit: (input: { content: string; title: string }) => void;
-  pending: boolean;
-}) {
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
-
-  const submit = (event?: FormEvent) => {
-    event?.preventDefault();
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle || pending) return;
-    onSubmit({ content, title: trimmedTitle });
-  };
-
-  const handleKeyDown = (event: KeyboardEvent) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      submit();
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/24 px-4 pt-[14vh] backdrop-blur-[1px]">
-      <button
-        aria-label="Close wiki composer"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-        type="button"
-      />
-      <form
-        className="relative flex min-h-[20rem] w-[min(42rem,calc(100vw-2rem))] flex-col rounded-[1.15rem] bg-card text-card-foreground shadow-[0_18px_55px_rgba(15,23,42,0.2),0_1px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/10"
-        onSubmit={submit}
-      >
-        <div className="flex items-center justify-between px-4 pt-3.5">
-          <span className="text-sm font-medium text-foreground">New wiki item</span>
-          <button
-            aria-label="Close wiki composer"
-            className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={onClose}
-            type="button"
-          >
-            <IconX className="size-4" />
-          </button>
-        </div>
-
-        <div className="flex-1 px-5 pb-3 pt-5">
-          <input
-            autoFocus
-            className="block h-8 w-full bg-transparent font-semibold text-foreground outline-none placeholder:text-[#9da0a6]"
-            onChange={(event) => setTitle(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Page title"
-            value={title}
-          />
-          <Textarea
-            className="mt-3 min-h-32 rounded-lg bg-transparent px-0 py-0 leading-6 shadow-none focus-visible:ring-0"
-            onChange={(event) => setContent(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Add content..."
-            value={content}
-          />
-          {error ? <div className="mt-3 text-xs text-destructive">{error.message}</div> : null}
-        </div>
-
-        <div className="mt-auto flex items-center justify-end px-4 pb-4">
-          <Button disabled={pending || !title.trim()} type="submit">
-            Create page
-          </Button>
-        </div>
-      </form>
     </div>
   );
 }
