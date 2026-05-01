@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 asahi-migration = { path = "../asahi-migration" }
 chrono = { version = "0.4.42", features = ["clock", "serde"] }
-garde = { version = "0.21", features = ["derive"] }
+garde = { version = "0.22", features = ["derive"] }
 rocket = { version = "0.5.1", features = ["json"] }
 sea-orm = { version = "1.1.19", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-sqlite", "with-chrono"] }
 serde = { version = "1.0.228", features = ["derive"] }
