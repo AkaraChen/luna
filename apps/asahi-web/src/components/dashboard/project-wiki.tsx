@@ -525,8 +525,11 @@ function WikiNodeViewer({
               ) : null}
             </div>
           </div>
-        ) : node.content?.trim() ? (
-          <div className="whitespace-pre-wrap text-sm leading-6 text-[#33312d]">{node.content}</div>
+        ) : node.content?.trim() && node.content.trim() !== "<p></p>" ? (
+          <div
+            className="prose prose-sm max-w-none"
+            dangerouslySetInnerHTML={{ __html: node.content }}
+          />
         ) : (
           <p className="text-sm italic text-[#a8a59d]">Empty page</p>
         )}
