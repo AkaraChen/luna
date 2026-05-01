@@ -116,8 +116,8 @@ export function IssueDetails({ issue }: { issue: Issue }) {
 
   const submitComment = (event: FormEvent) => {
     event.preventDefault();
-    const body = comment.replace(/<[^>]*>/g, "").trim();
-    if (body) {
+    const body = comment.trim();
+    if (body && body !== "<p></p>") {
       commentMutation.mutate(body);
     }
   };
@@ -214,7 +214,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
           ) : (
             <div className="group/description relative mt-3">
               {issue.description ? (
-                <p className="text-sm leading-6 text-[#69665f]">{issue.description}</p>
+                <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: issue.description }} />
               ) : (
                 <p className="text-sm italic text-[#a8a59d]">No description</p>
               )}
@@ -343,7 +343,7 @@ function Timeline({
             <div className="mb-1 text-xs text-[#85827a]">
               {formatDate(item.data.created_at)}
             </div>
-            <div className="text-sm leading-6 text-[#33312d]">{item.data.body}</div>
+            <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: item.data.body }} />
           </div>
         ) : (
           <div className="flex items-center gap-2 py-1" key={`activity-${item.data.id}`}>
