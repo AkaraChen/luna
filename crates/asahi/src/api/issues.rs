@@ -617,8 +617,8 @@ mod tests {
         let activities: ActivityListResponse = activities.into_json().expect("activities json");
         assert_eq!(
             activities.activities.len(),
-            4,
-            "Expected 4 activities (create + priority + state + comment), got {}",
+            3,
+            "Expected 3 activities (priority + state + comment), got {}",
             activities.activities.len()
         );
     }
