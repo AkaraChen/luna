@@ -66,7 +66,7 @@ export function NotificationsView() {
   }
 
   return (
-    <section className="grid flex-1 overflow-auto xl:grid-cols-[minmax(0,1fr)_360px]">
+    <section className="grid flex-1 overflow-auto xl:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]">
       <div className="min-w-0 border-r border-border">
         <div className="flex h-12 items-center justify-between px-4">
           <div className="text-xs text-muted-foreground">
