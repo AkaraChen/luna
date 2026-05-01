@@ -349,14 +349,18 @@ workspace:
 hooks:
   timeout_ms: 60000
 
-agent:
-  max_concurrent_agents: 4
+scheduler:
+  max_concurrent: 4
   max_turns: 20
-  max_retry_backoff_ms: 300000
+  retry_backoff_ms: 300000
 
-codex:
+runner:
+  kind: codex
   command: codex app-server
-  permission_profile: high_trust
+  approval_policy: never
+  thread_sandbox: danger-full-access
+  turn_sandbox_policy:
+    type: dangerFullAccess
 ---
 # Luna Workflow
 

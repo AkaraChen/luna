@@ -3,8 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use garde::Validate;
 use serde::Deserialize;
-use serde_json::{Value as JsonValue, json};
+use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 
 use crate::{
@@ -29,15 +30,15 @@ const DEFAULT_GH_COMMAND: &str = "gh";
 
 // ─── Public Config Types ────────────────────────────────────────────────────
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
 #[serde(tag = "kind")]
 pub enum TrackerConfig {
     #[serde(rename = "github_project")]
-    GitHubProject(GitHubProjectTrackerConfig),
+    GitHubProject(#[garde(dive)] GitHubProjectTrackerConfig),
     #[serde(rename = "linear")]
-    Linear(LinearTrackerConfig),
+    Linear(#[garde(dive)] LinearTrackerConfig),
     #[serde(rename = "asahi")]
-    Asahi(AsahiTrackerConfig),
+    Asahi(#[garde(dive)] AsahiTrackerConfig),
 }
 
 impl TrackerConfig {
@@ -64,33 +65,35 @@ impl TrackerConfig {
             Self::Asahi(c) => &c.terminal_states,
         }
     }
-
-    pub fn validate(&self) -> Result<()> {
-        match self {
-            Self::GitHubProject(c) => c.validate(),
-            Self::Linear(c) => c.validate(),
-            Self::Asahi(c) => c.validate(),
-        }
-    }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct GitHubProjectTrackerConfig {
+    #[garde(custom(not_blank))]
     pub owner: String,
+    #[garde(range(min = 1))]
     pub project_number: u32,
     #[serde(default = "default_github_status_field")]
+    #[garde(custom(not_blank))]
     pub status_field: String,
     #[serde(default = "default_github_priority_field")]
+    #[garde(custom(not_blank))]
     pub priority_field: String,
     #[serde(default = "default_gh_command")]
+    #[garde(custom(not_blank))]
     pub gh_command: String,
     #[serde(default = "default_github_active_states")]
+    #[garde(length(min = 1), inner(custom(not_blank)))]
     pub active_states: Vec<String>,
     #[serde(default = "default_github_terminal_states")]
+    #[garde(length(min = 1), inner(custom(not_blank)))]
     pub terminal_states: Vec<String>,
     #[serde(skip)]
+    #[garde(skip)]
     active_lookup: HashSet<String>,
     #[serde(skip)]
+    #[garde(skip)]
     terminal_lookup: HashSet<String>,
 }
 
@@ -102,36 +105,31 @@ impl GitHubProjectTrackerConfig {
     pub fn is_terminal_state(&self, value: &str) -> bool {
         self.terminal_lookup.contains(&value.to_lowercase())
     }
-
-    pub fn validate(&self) -> Result<()> {
-        if self.owner.trim().is_empty() {
-            return Err(LunaError::InvalidConfig(
-                "tracker.owner is required for github_project".to_string(),
-            ));
-        }
-        if self.gh_command.trim().is_empty() {
-            return Err(LunaError::InvalidConfig(
-                "tracker.gh_command must be non-empty".to_string(),
-            ));
-        }
-        Ok(())
-    }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct LinearTrackerConfig {
     #[serde(default = "default_linear_endpoint")]
+    #[garde(custom(not_blank))]
     pub endpoint: String,
+    #[garde(inner(custom(not_blank)))]
     pub api_key: Option<String>,
+    #[garde(inner(custom(not_blank)))]
     pub project_slug: Option<String>,
+    #[garde(inner(custom(not_blank)))]
     pub assignee: Option<String>,
     #[serde(default = "default_linear_active_states")]
+    #[garde(length(min = 1), inner(custom(not_blank)))]
     pub active_states: Vec<String>,
     #[serde(default = "default_linear_terminal_states")]
+    #[garde(length(min = 1), inner(custom(not_blank)))]
     pub terminal_states: Vec<String>,
     #[serde(skip)]
+    #[garde(skip)]
     active_lookup: HashSet<String>,
     #[serde(skip)]
+    #[garde(skip)]
     terminal_lookup: HashSet<String>,
 }
 
@@ -143,25 +141,29 @@ impl LinearTrackerConfig {
     pub fn is_terminal_state(&self, value: &str) -> bool {
         self.terminal_lookup.contains(&value.to_lowercase())
     }
-
-    pub fn validate(&self) -> Result<()> {
-        Ok(())
-    }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct AsahiTrackerConfig {
     #[serde(default)]
+    #[garde(custom(asahi_endpoint_or_db(&self.db)))]
     pub endpoint: String,
+    #[garde(inner(custom(not_blank)))]
     pub db: Option<String>,
+    #[garde(range(min = 1))]
     pub port: Option<u16>,
     #[serde(default = "default_asahi_active_states")]
+    #[garde(length(min = 1), inner(custom(not_blank)))]
     pub active_states: Vec<String>,
     #[serde(default = "default_asahi_terminal_states")]
+    #[garde(length(min = 1), inner(custom(not_blank)))]
     pub terminal_states: Vec<String>,
     #[serde(skip)]
+    #[garde(skip)]
     active_lookup: HashSet<String>,
     #[serde(skip)]
+    #[garde(skip)]
     terminal_lookup: HashSet<String>,
 }
 
@@ -173,24 +175,15 @@ impl AsahiTrackerConfig {
     pub fn is_terminal_state(&self, value: &str) -> bool {
         self.terminal_lookup.contains(&value.to_lowercase())
     }
-
-    pub fn validate(&self) -> Result<()> {
-        if self.db.is_none() && self.endpoint.trim().is_empty() {
-            return Err(LunaError::InvalidConfig(
-                "tracker.endpoint is required for asahi".to_string(),
-            ));
-        }
-        Ok(())
-    }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
 #[serde(tag = "kind")]
 pub enum RunnerConfig {
     #[serde(rename = "codex")]
-    Codex(CodexRunner),
+    Codex(#[garde(dive)] CodexRunner),
     #[serde(rename = "acp")]
-    Acp(AcpRunner),
+    Acp(#[garde(dive)] AcpRunner),
 }
 
 impl Default for RunnerConfig {
@@ -227,41 +220,28 @@ impl RunnerConfig {
             Self::Acp(c) => c.stall_timeout_ms,
         }
     }
-
-    pub fn validate(&self) -> Result<()> {
-        match self {
-            Self::Codex(c) => {
-                if c.command.trim().is_empty() {
-                    return Err(LunaError::InvalidConfig(
-                        "runner.command must be non-empty".to_string(),
-                    ));
-                }
-                Ok(())
-            }
-            Self::Acp(c) => {
-                if c.command.trim().is_empty() {
-                    return Err(LunaError::InvalidConfig(
-                        "runner.command must be non-empty".to_string(),
-                    ));
-                }
-                Ok(())
-            }
-        }
-    }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct CodexRunner {
     #[serde(default = "default_codex_command")]
+    #[garde(custom(not_blank))]
     pub command: String,
+    #[garde(skip)]
     pub approval_policy: Option<JsonValue>,
+    #[garde(inner(custom(not_blank)))]
     pub thread_sandbox: Option<String>,
+    #[garde(skip)]
     pub turn_sandbox_policy: Option<JsonValue>,
     #[serde(default = "default_turn_timeout_ms")]
+    #[garde(range(min = 1))]
     pub turn_timeout_ms: u64,
     #[serde(default = "default_read_timeout_ms")]
+    #[garde(range(min = 1))]
     pub read_timeout_ms: u64,
     #[serde(default = "default_stall_timeout_ms")]
+    #[garde(range(min = 0))]
     pub stall_timeout_ms: i64,
 }
 
@@ -279,27 +259,37 @@ impl Default for CodexRunner {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct AcpRunner {
     #[serde(default = "default_acp_command")]
+    #[garde(custom(not_blank))]
     pub command: String,
     #[serde(default = "default_turn_timeout_ms")]
+    #[garde(range(min = 1))]
     pub turn_timeout_ms: u64,
     #[serde(default = "default_read_timeout_ms")]
+    #[garde(range(min = 1))]
     pub read_timeout_ms: u64,
     #[serde(default = "default_stall_timeout_ms")]
+    #[garde(range(min = 0))]
     pub stall_timeout_ms: i64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct SchedulerConfig {
     #[serde(default = "default_max_concurrent")]
+    #[garde(range(min = 1))]
     pub max_concurrent: usize,
     #[serde(default = "default_max_turns")]
+    #[garde(range(min = 1))]
     pub max_turns: u32,
     #[serde(default = "default_max_retry_backoff_ms")]
+    #[garde(range(min = 1))]
     pub retry_backoff_ms: u64,
     #[serde(default)]
+    #[garde(custom(valid_state_limits))]
     pub max_concurrent_by_state: HashMap<String, usize>,
 }
 
@@ -314,20 +304,11 @@ impl Default for SchedulerConfig {
     }
 }
 
-impl SchedulerConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.max_turns == 0 {
-            return Err(LunaError::InvalidConfig(
-                "scheduler.max_turns must be greater than 0".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct PollingConfig {
     #[serde(default = "default_poll_interval_ms")]
+    #[garde(range(min = 1))]
     pub interval_ms: u64,
 }
 
@@ -339,9 +320,11 @@ impl Default for PollingConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceConfig {
     #[serde(default = "default_workspace_root")]
+    #[garde(skip)]
     pub root: PathBuf,
 }
 
@@ -353,13 +336,19 @@ impl Default for WorkspaceConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct HooksConfig {
+    #[garde(inner(custom(not_blank)))]
     pub after_create: Option<String>,
+    #[garde(inner(custom(not_blank)))]
     pub before_run: Option<String>,
+    #[garde(inner(custom(not_blank)))]
     pub after_run: Option<String>,
+    #[garde(inner(custom(not_blank)))]
     pub before_remove: Option<String>,
     #[serde(default = "default_hook_timeout_ms")]
+    #[garde(range(min = 1))]
     pub timeout_ms: u64,
 }
 
@@ -375,43 +364,39 @@ impl Default for HooksConfig {
     }
 }
 
-impl HooksConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.timeout_ms == 0 {
-            return Err(LunaError::InvalidConfig(
-                "hooks.timeout_ms must be greater than 0".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
     #[serde(skip)]
+    #[garde(skip)]
     pub workflow_path: PathBuf,
     #[serde(skip)]
+    #[garde(skip)]
     pub workflow_dir: PathBuf,
+    #[garde(dive)]
     pub tracker: TrackerConfig,
     #[serde(default)]
+    #[garde(dive)]
     pub runner: RunnerConfig,
     #[serde(default)]
+    #[garde(dive)]
     pub scheduler: SchedulerConfig,
     #[serde(default)]
+    #[garde(dive)]
     pub polling: PollingConfig,
     #[serde(default)]
+    #[garde(dive)]
     pub workspace: WorkspaceConfig,
     #[serde(default)]
+    #[garde(dive)]
     pub hooks: HooksConfig,
 }
 
 impl ServiceConfig {
     pub fn validate(&self) -> Result<()> {
-        self.tracker.validate()?;
-        self.runner.validate()?;
-        self.scheduler.validate()?;
-        self.hooks.validate()?;
-        Ok(())
+        Validate::validate(self)
+            .map(|_| ())
+            .map_err(|err| LunaError::InvalidConfig(err.to_string()))
     }
 }
 
@@ -435,11 +420,13 @@ pub fn resolve_service_config(
         );
         tracker.insert(
             YamlValue::String("active_states".to_string()),
-            serde_yaml::to_value(default_asahi_active_states()).unwrap_or(YamlValue::Sequence(Vec::new())),
+            serde_yaml::to_value(default_asahi_active_states())
+                .unwrap_or(YamlValue::Sequence(Vec::new())),
         );
         tracker.insert(
             YamlValue::String("terminal_states".to_string()),
-            serde_yaml::to_value(default_asahi_terminal_states()).unwrap_or(YamlValue::Sequence(Vec::new())),
+            serde_yaml::to_value(default_asahi_terminal_states())
+                .unwrap_or(YamlValue::Sequence(Vec::new())),
         );
         config_map.insert(
             YamlValue::String("tracker".to_string()),
@@ -447,9 +434,8 @@ pub fn resolve_service_config(
         );
     }
 
-    let mut config: ServiceConfig =
-        serde_yaml::from_value(YamlValue::Mapping(config_map))
-            .map_err(|err| LunaError::InvalidConfig(format!("config parse error: {err}")))?;
+    let mut config: ServiceConfig = serde_yaml::from_value(YamlValue::Mapping(config_map))
+        .map_err(|err| LunaError::InvalidConfig(format!("config parse error: {err}")))?;
 
     config.workflow_path = absolutize_path(workflow_path)?;
     config.workflow_dir = config
@@ -511,20 +497,6 @@ pub fn resolve_service_config(
         .map(|(k, v)| (k.to_lowercase(), v))
         .collect();
 
-    // Resolve codex permission profiles
-    if let RunnerConfig::Codex(codex) = &mut config.runner {
-        if let Some(profile) = codex.approval_policy.as_ref().and_then(|v| v.as_str()) {
-            if let Ok(defaults) = resolve_permission_profile_defaults(profile) {
-                codex.approval_policy = codex.approval_policy.clone().or(defaults.approval_policy);
-                codex.thread_sandbox = codex.thread_sandbox.clone().or(defaults.thread_sandbox);
-                codex.turn_sandbox_policy = codex
-                    .turn_sandbox_policy
-                    .clone()
-                    .or(defaults.turn_sandbox_policy);
-            }
-        }
-    }
-
     config.validate()?;
     Ok(config)
 }
@@ -563,34 +535,36 @@ fn resolve_workspace_root(value: Option<String>, workflow_dir: &Path) -> Result<
     Ok(normalize_path(&absolute))
 }
 
-#[derive(Default)]
-struct PermissionProfileDefaults {
-    approval_policy: Option<JsonValue>,
-    thread_sandbox: Option<String>,
-    turn_sandbox_policy: Option<JsonValue>,
+fn not_blank(value: &str, _: &()) -> garde::Result {
+    if value.trim().is_empty() {
+        return Err(garde::Error::new("must be non-empty"));
+    }
+    Ok(())
 }
 
-fn resolve_permission_profile_defaults(profile: &str) -> Result<PermissionProfileDefaults> {
-    match profile.trim().to_lowercase().replace('-', "_").as_str() {
-        "high_trust" => Ok(PermissionProfileDefaults {
-            approval_policy: Some(JsonValue::String("never".to_string())),
-            thread_sandbox: Some("danger-full-access".to_string()),
-            turn_sandbox_policy: Some(json!({ "type": "dangerFullAccess" })),
-        }),
-        "workspace_write" => Ok(PermissionProfileDefaults {
-            approval_policy: Some(JsonValue::String("never".to_string())),
-            thread_sandbox: Some("workspace-write".to_string()),
-            turn_sandbox_policy: Some(json!({ "type": "workspaceWrite" })),
-        }),
-        "read_only" => Ok(PermissionProfileDefaults {
-            approval_policy: Some(JsonValue::String("never".to_string())),
-            thread_sandbox: Some("read-only".to_string()),
-            turn_sandbox_policy: Some(json!({ "type": "readOnly" })),
-        }),
-        _ => Err(LunaError::InvalidConfig(format!(
-            "unsupported permission_profile: {profile}"
-        ))),
+fn asahi_endpoint_or_db<'a>(
+    db: &'a Option<String>,
+) -> impl FnOnce(&str, &()) -> garde::Result + 'a {
+    move |endpoint, _| {
+        if db.is_none() && endpoint.trim().is_empty() {
+            return Err(garde::Error::new("endpoint is required when db is unset"));
+        }
+        Ok(())
     }
+}
+
+fn valid_state_limits(value: &HashMap<String, usize>, _: &()) -> garde::Result {
+    for (state, limit) in value {
+        if state.trim().is_empty() {
+            return Err(garde::Error::new("state names must be non-empty"));
+        }
+        if *limit == 0 {
+            return Err(garde::Error::new(format!(
+                "{state} limit must be greater than 0"
+            )));
+        }
+    }
+    Ok(())
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -670,6 +644,7 @@ fn default_asahi_terminal_states() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::path::Path;
 
     #[test]
@@ -755,7 +730,7 @@ tracker:
     }
 
     #[test]
-    fn codex_permission_profile_high_trust() {
+    fn codex_explicit_high_trust_policy() {
         let yaml = serde_yaml::from_str(
             r#"
 runner:
@@ -791,6 +766,54 @@ tracker:
             }
             other => panic!("expected codex, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn rejects_legacy_agent_and_codex_sections() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+agent:
+  max_concurrent_agents: 4
+codex:
+  command: codex app-server
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn rejects_permission_profile_on_runner() {
+        let yaml = serde_yaml::from_str(
+            r#"
+runner:
+  kind: codex
+  command: codex app-server
+  permission_profile: high_trust
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+
+        assert!(err.to_string().contains("permission_profile"));
     }
 
     #[test]
