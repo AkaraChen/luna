@@ -15,6 +15,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { cn } from "@/lib/utils";
 
 import { EditablePriority, EditableStatus } from "./editable-fields";
@@ -138,13 +139,12 @@ export function IssueComposer({
             placeholder="Issue title"
             value={title}
           />
-          <textarea
-            className="mt-2 block min-h-16 w-full resize-none bg-transparent text-foreground outline-none placeholder:text-[#a9abb1]"
-            onChange={(event) => setDescription(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Add description..."
-            value={description}
-          />
+          <div className="mt-2">
+            <RichTextEditor
+              content={description}
+              onChange={(html) => setDescription(html)}
+            />
+          </div>
         </div>
 
         <div className="mt-auto flex items-center justify-between px-4 pb-4">
