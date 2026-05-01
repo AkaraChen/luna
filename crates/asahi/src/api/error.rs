@@ -26,6 +26,8 @@ impl From<ServiceError> for ApiError {
             ServiceError::InvalidInput(message) => Self::BadRequest(message),
             ServiceError::IssueNotFound(locator) => Self::NotFound(locator),
             ServiceError::ProjectNotFound(locator) => Self::NotFound(locator),
+            ServiceError::WikiNodeNotFound(locator) => Self::NotFound(locator),
+            ServiceError::WikiVersionNotFound(version) => Self::NotFound(version),
             ServiceError::NotificationNotFound(id) => Self::NotFound(id),
             ServiceError::Database(_) => Self::Internal(error.to_string()),
         }

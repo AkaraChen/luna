@@ -5,3 +5,6 @@ pub mod issue_label;
 pub mod issue_relation;
 pub mod notification;
 pub mod project;
+pub mod wiki_audit;
+pub mod wiki_node;
+pub mod wiki_page_version;

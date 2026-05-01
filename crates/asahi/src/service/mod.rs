@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait,
-    IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, DbErr,
+    EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    TransactionTrait,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -11,9 +12,14 @@ use uuid::Uuid;
 use crate::{
     domain::{
         Activity, BlockerRef, Comment, Issue, Notification, NotificationIssueRef, Project,
-        ProjectRef, default_team_key, issue_matches_locator, project_matches_locator,
+        ProjectRef, WikiAudit, WikiNode, WikiNodeKind, WikiPageVersion, WikiVersionRef,
+        default_team_key, issue_matches_locator, project_matches_locator,
+        wiki_node_matches_locator,
     },
-    entity::{activity, comment, issue, issue_label, issue_relation, notification, project},
+    entity::{
+        activity, comment, issue, issue_label, issue_relation, notification, project, wiki_audit,
+        wiki_node, wiki_page_version,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -276,6 +282,478 @@ impl IssueService {
         transaction.commit().await?;
 
         Ok(project)
+    }
+
+    pub async fn list_wiki_nodes(
+        &self,
+        project_locator: &str,
+        filter: WikiNodeFilter,
+    ) -> ServiceResult<Vec<WikiNode>> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let parent_id = match filter.parent_id.as_deref().and_then(non_empty_str) {
+            Some(parent_id) => Some(
+                self.resolve_wiki_parent(&project.id, Some(parent_id))
+                    .await?
+                    .ok_or_else(|| ServiceError::WikiNodeNotFound(parent_id.to_string()))?,
+            ),
+            None => None,
+        };
+
+        let mut query =
+            wiki_node::Entity::find().filter(wiki_node::Column::ProjectId.eq(project.id));
+        query = match parent_id {
+            Some(parent_id) => query.filter(wiki_node::Column::ParentId.eq(parent_id)),
+            None => query.filter(wiki_node::Column::ParentId.is_null()),
+        };
+        if !filter.include_deleted {
+            query = query.filter(wiki_node::Column::DeletedAt.is_null());
+        }
+
+        let models = query
+            .order_by_asc(wiki_node::Column::Kind)
+            .order_by_asc(wiki_node::Column::Title)
+            .all(&self.db)
+            .await?;
+
+        self.hydrate_wiki_nodes(models).await
+    }
+
+    pub async fn find_wiki_node(
+        &self,
+        project_locator: &str,
+        node_locator: &str,
+    ) -> ServiceResult<Option<WikiNode>> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let Some(model) = self
+            .find_wiki_node_model(&project.id, node_locator, false)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.hydrate_wiki_node(model).await?))
+    }
+
+    pub async fn create_wiki_node(
+        &self,
+        project_locator: &str,
+        input: CreateWikiNodeInput,
+    ) -> ServiceResult<WikiNode> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let kind = parse_wiki_kind(&input.kind)?;
+        let title = require_non_empty("title", input.title)?;
+        let slug = normalize_slug(&title)?;
+        let parent_id = self
+            .resolve_wiki_parent(&project.id, input.parent_id.as_deref())
+            .await?;
+        self.ensure_wiki_sibling_available(&project.id, parent_id.as_deref(), &slug, None)
+            .await?;
+
+        let actor_kind = normalize_actor_kind(input.actor_kind)?;
+        let actor_id = optional_non_empty(input.actor_id);
+        let summary = optional_non_empty(input.summary);
+        let now = Utc::now();
+        let node_id = Uuid::new_v4().to_string();
+        let content = match kind {
+            WikiNodeKind::Folder => None,
+            WikiNodeKind::Page => Some(input.content.unwrap_or_default()),
+        };
+
+        let transaction = self.db.begin().await?;
+        let model = wiki_node::ActiveModel {
+            id: Set(node_id.clone()),
+            project_id: Set(project.id.clone()),
+            parent_id: Set(parent_id),
+            kind: Set(kind.as_str().to_string()),
+            title: Set(title.clone()),
+            slug: Set(slug),
+            content: Set(content.clone()),
+            current_version_id: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+            deleted_at: Set(None),
+        }
+        .insert(&transaction)
+        .await?;
+
+        let version_id = if kind == WikiNodeKind::Page {
+            let version = wiki_page_version::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                page_id: Set(node_id.clone()),
+                version: Set(1),
+                title: Set(title.clone()),
+                content: Set(content.unwrap_or_default()),
+                actor_kind: Set(actor_kind.clone()),
+                actor_id: Set(actor_id.clone()),
+                summary: Set(summary.clone()),
+                created_at: Set(now),
+            }
+            .insert(&transaction)
+            .await?;
+            let mut active = model.into_active_model();
+            active.current_version_id = Set(Some(version.id.clone()));
+            active.update(&transaction).await?;
+            Some(version.id)
+        } else {
+            None
+        };
+
+        self.create_wiki_audit_in_transaction(
+            &transaction,
+            &project.id,
+            &node_id,
+            version_id.as_deref(),
+            match kind {
+                WikiNodeKind::Folder => "folder_created",
+                WikiNodeKind::Page => "page_created",
+            },
+            &actor_kind,
+            actor_id.as_deref(),
+            summary.as_deref(),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+
+        let model = wiki_node::Entity::find_by_id(node_id.clone())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(node_id.clone()))?;
+        self.hydrate_wiki_node(model).await
+    }
+
+    pub async fn update_wiki_node(
+        &self,
+        project_locator: &str,
+        node_locator: &str,
+        input: UpdateWikiNodeInput,
+    ) -> ServiceResult<WikiNode> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let model = self
+            .find_wiki_node_model(&project.id, node_locator, false)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(node_locator.to_string()))?;
+        let kind = parse_wiki_kind(&model.kind)?;
+        let next_parent_id = match input.parent_id {
+            Some(Some(parent_id)) => {
+                self.resolve_wiki_parent(&project.id, Some(parent_id.as_str()))
+                    .await?
+            }
+            Some(None) => None,
+            None => model.parent_id.clone(),
+        };
+
+        if next_parent_id.as_deref() == Some(model.id.as_str()) {
+            return Err(ServiceError::InvalidInput(
+                "wiki node cannot be moved under itself".to_string(),
+            ));
+        }
+        if let Some(parent_id) = next_parent_id.as_deref() {
+            let descendant_ids = self
+                .collect_wiki_descendant_ids(&project.id, &model.id)
+                .await?;
+            if descendant_ids.iter().any(|id| id == parent_id) {
+                return Err(ServiceError::InvalidInput(
+                    "wiki node cannot be moved under its descendant".to_string(),
+                ));
+            }
+        }
+
+        let next_title = match input.title {
+            Some(title) => require_non_empty("title", Some(title))?,
+            None => model.title.clone(),
+        };
+        let next_slug = normalize_slug(&next_title)?;
+        self.ensure_wiki_sibling_available(
+            &project.id,
+            next_parent_id.as_deref(),
+            &next_slug,
+            Some(model.id.as_str()),
+        )
+        .await?;
+
+        let next_content = match kind {
+            WikiNodeKind::Folder => {
+                if input.content.is_some() {
+                    return Err(ServiceError::InvalidInput(
+                        "folder content cannot be updated".to_string(),
+                    ));
+                }
+                None
+            }
+            WikiNodeKind::Page => match input.content {
+                Some(Some(content)) => Some(content),
+                Some(None) => Some(String::new()),
+                None => model.content.clone().or_else(|| Some(String::new())),
+            },
+        };
+
+        let actor_kind = normalize_actor_kind(input.actor_kind)?;
+        let actor_id = optional_non_empty(input.actor_id);
+        let summary = optional_non_empty(input.summary);
+        let now = Utc::now();
+        let page_document_changed = kind == WikiNodeKind::Page
+            && (next_title != model.title || next_content != model.content);
+        let version_number = if page_document_changed {
+            Some(self.next_wiki_version_number(&model.id).await?)
+        } else {
+            None
+        };
+
+        let transaction = self.db.begin().await?;
+        let mut active = model.clone().into_active_model();
+        active.parent_id = Set(next_parent_id);
+        active.title = Set(next_title.clone());
+        active.slug = Set(next_slug);
+        active.content = Set(next_content.clone());
+        active.updated_at = Set(now);
+
+        let version_id = if let Some(version_number) = version_number {
+            let version = wiki_page_version::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                page_id: Set(model.id.clone()),
+                version: Set(version_number),
+                title: Set(next_title.clone()),
+                content: Set(next_content.clone().unwrap_or_default()),
+                actor_kind: Set(actor_kind.clone()),
+                actor_id: Set(actor_id.clone()),
+                summary: Set(summary.clone()),
+                created_at: Set(now),
+            }
+            .insert(&transaction)
+            .await?;
+            active.current_version_id = Set(Some(version.id.clone()));
+            Some(version.id)
+        } else {
+            None
+        };
+
+        active.update(&transaction).await?;
+        self.create_wiki_audit_in_transaction(
+            &transaction,
+            &project.id,
+            &model.id,
+            version_id.as_deref(),
+            match kind {
+                WikiNodeKind::Folder => "folder_updated",
+                WikiNodeKind::Page => "page_updated",
+            },
+            &actor_kind,
+            actor_id.as_deref(),
+            summary.as_deref(),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+
+        let model = wiki_node::Entity::find_by_id(model.id.clone())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(model.id.clone()))?;
+        self.hydrate_wiki_node(model).await
+    }
+
+    pub async fn delete_wiki_node(
+        &self,
+        project_locator: &str,
+        node_locator: &str,
+        actor_kind: Option<String>,
+        actor_id: Option<String>,
+    ) -> ServiceResult<WikiNode> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let model = self
+            .find_wiki_node_model(&project.id, node_locator, false)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(node_locator.to_string()))?;
+        let kind = parse_wiki_kind(&model.kind)?;
+        let actor_kind = normalize_actor_kind(actor_kind)?;
+        let actor_id = optional_non_empty(actor_id);
+        let now = Utc::now();
+        let ids = self
+            .collect_wiki_descendant_ids(&project.id, &model.id)
+            .await?;
+
+        let transaction = self.db.begin().await?;
+        wiki_node::Entity::update_many()
+            .col_expr(
+                wiki_node::Column::DeletedAt,
+                sea_orm::sea_query::Expr::value(Some(now)),
+            )
+            .col_expr(
+                wiki_node::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .filter(wiki_node::Column::Id.is_in(ids.clone()))
+            .exec(&transaction)
+            .await?;
+        self.create_wiki_audit_in_transaction(
+            &transaction,
+            &project.id,
+            &model.id,
+            model.current_version_id.as_deref(),
+            match kind {
+                WikiNodeKind::Folder => "folder_deleted",
+                WikiNodeKind::Page => "page_deleted",
+            },
+            &actor_kind,
+            actor_id.as_deref(),
+            Some(&format!("Deleted {} wiki node(s)", ids.len())),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+
+        let model = wiki_node::Entity::find_by_id(model.id.clone())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(model.id.clone()))?;
+        self.hydrate_wiki_node(model).await
+    }
+
+    pub async fn list_wiki_versions(
+        &self,
+        project_locator: &str,
+        page_locator: &str,
+    ) -> ServiceResult<Vec<WikiPageVersion>> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let page = self
+            .resolve_wiki_page(&project.id, page_locator, true)
+            .await?;
+        let versions = wiki_page_version::Entity::find()
+            .filter(wiki_page_version::Column::PageId.eq(page.id))
+            .order_by_desc(wiki_page_version::Column::Version)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(model_to_wiki_page_version)
+            .collect();
+        Ok(versions)
+    }
+
+    pub async fn get_wiki_version(
+        &self,
+        project_locator: &str,
+        page_locator: &str,
+        version: i64,
+    ) -> ServiceResult<WikiPageVersion> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let page = self
+            .resolve_wiki_page(&project.id, page_locator, true)
+            .await?;
+        wiki_page_version::Entity::find()
+            .filter(wiki_page_version::Column::PageId.eq(page.id))
+            .filter(wiki_page_version::Column::Version.eq(version))
+            .one(&self.db)
+            .await?
+            .map(model_to_wiki_page_version)
+            .ok_or_else(|| ServiceError::WikiVersionNotFound(version.to_string()))
+    }
+
+    pub async fn rollback_wiki_page(
+        &self,
+        project_locator: &str,
+        page_locator: &str,
+        input: RollbackWikiPageInput,
+    ) -> ServiceResult<WikiNode> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let page = self
+            .resolve_wiki_page(&project.id, page_locator, false)
+            .await?;
+        let target = wiki_page_version::Entity::find()
+            .filter(wiki_page_version::Column::PageId.eq(page.id.clone()))
+            .filter(wiki_page_version::Column::Version.eq(input.version))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::WikiVersionNotFound(input.version.to_string()))?;
+        let next_slug = normalize_slug(&target.title)?;
+        self.ensure_wiki_sibling_available(
+            &project.id,
+            page.parent_id.as_deref(),
+            &next_slug,
+            Some(page.id.as_str()),
+        )
+        .await?;
+
+        let actor_kind = normalize_actor_kind(input.actor_kind)?;
+        let actor_id = optional_non_empty(input.actor_id);
+        let summary = optional_non_empty(input.summary)
+            .or_else(|| Some(format!("Rolled back to version {}", target.version)));
+        let now = Utc::now();
+        let next_version = self.next_wiki_version_number(&page.id).await?;
+
+        let transaction = self.db.begin().await?;
+        let version = wiki_page_version::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            page_id: Set(page.id.clone()),
+            version: Set(next_version),
+            title: Set(target.title.clone()),
+            content: Set(target.content.clone()),
+            actor_kind: Set(actor_kind.clone()),
+            actor_id: Set(actor_id.clone()),
+            summary: Set(summary.clone()),
+            created_at: Set(now),
+        }
+        .insert(&transaction)
+        .await?;
+
+        let mut active = page.into_active_model();
+        active.title = Set(target.title);
+        active.slug = Set(next_slug);
+        active.content = Set(Some(target.content));
+        active.current_version_id = Set(Some(version.id.clone()));
+        active.updated_at = Set(now);
+        active.update(&transaction).await?;
+
+        self.create_wiki_audit_in_transaction(
+            &transaction,
+            &project.id,
+            &version.page_id,
+            Some(&version.id),
+            "page_rolled_back",
+            &actor_kind,
+            actor_id.as_deref(),
+            summary.as_deref(),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+
+        let model = wiki_node::Entity::find_by_id(version.page_id.clone())
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(version.page_id.clone()))?;
+        self.hydrate_wiki_node(model).await
+    }
+
+    pub async fn list_wiki_audits(
+        &self,
+        project_locator: &str,
+        filter: WikiAuditFilter,
+    ) -> ServiceResult<Vec<WikiAudit>> {
+        let project = self.resolve_project_locator(project_locator).await?;
+        let mut query =
+            wiki_audit::Entity::find().filter(wiki_audit::Column::ProjectId.eq(project.id.clone()));
+
+        if let Some(node_id) = filter.node_id.as_deref().and_then(non_empty_str) {
+            let node = self
+                .find_wiki_node_model(&project.id, node_id, true)
+                .await?
+                .ok_or_else(|| ServiceError::WikiNodeNotFound(node_id.to_string()))?;
+            query = query.filter(wiki_audit::Column::NodeId.eq(node.id));
+        }
+        if let Some(actor_kind) = filter.actor_kind.as_deref().and_then(non_empty_str) {
+            query = query.filter(wiki_audit::Column::ActorKind.eq(actor_kind.to_ascii_lowercase()));
+        }
+        if let Some(limit) = filter.limit {
+            query = query.limit(limit.clamp(1, 100));
+        }
+
+        Ok(query
+            .order_by_desc(wiki_audit::Column::CreatedAt)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(model_to_wiki_audit)
+            .collect())
     }
 
     pub async fn list_issues(&self, filter: IssueFilter) -> ServiceResult<Vec<Issue>> {
@@ -653,6 +1131,197 @@ impl IssueService {
         self.hydrate_notification(model).await
     }
 
+    async fn resolve_wiki_parent(
+        &self,
+        project_id: &str,
+        parent_id: Option<&str>,
+    ) -> ServiceResult<Option<String>> {
+        let Some(parent_id) = parent_id.and_then(non_empty_str) else {
+            return Ok(None);
+        };
+        let parent = self
+            .find_wiki_node_model(project_id, parent_id, false)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(parent_id.to_string()))?;
+        let kind = parse_wiki_kind(&parent.kind)?;
+        if kind != WikiNodeKind::Folder {
+            return Err(ServiceError::InvalidInput(
+                "wiki parent must be a folder".to_string(),
+            ));
+        }
+        Ok(Some(parent.id))
+    }
+
+    async fn resolve_wiki_page(
+        &self,
+        project_id: &str,
+        page_locator: &str,
+        include_deleted: bool,
+    ) -> ServiceResult<wiki_node::Model> {
+        let page = self
+            .find_wiki_node_model(project_id, page_locator, include_deleted)
+            .await?
+            .ok_or_else(|| ServiceError::WikiNodeNotFound(page_locator.to_string()))?;
+        let kind = parse_wiki_kind(&page.kind)?;
+        if kind != WikiNodeKind::Page {
+            return Err(ServiceError::InvalidInput(
+                "wiki node is not a page".to_string(),
+            ));
+        }
+        Ok(page)
+    }
+
+    async fn find_wiki_node_model(
+        &self,
+        project_id: &str,
+        locator: &str,
+        include_deleted: bool,
+    ) -> ServiceResult<Option<wiki_node::Model>> {
+        let locator = locator.trim();
+        if locator.is_empty() {
+            return Ok(None);
+        }
+
+        let mut query = wiki_node::Entity::find()
+            .filter(wiki_node::Column::ProjectId.eq(project_id.to_string()));
+        if !include_deleted {
+            query = query.filter(wiki_node::Column::DeletedAt.is_null());
+        }
+
+        let models = query.all(&self.db).await?;
+        if let Some(model) = models.iter().find(|model| model.id == locator) {
+            return Ok(Some(model.clone()));
+        }
+
+        let mut slug_matches = models
+            .into_iter()
+            .filter(|model| {
+                let candidate = model_to_wiki_node(model.clone(), None);
+                wiki_node_matches_locator(&candidate, locator)
+            })
+            .collect::<Vec<_>>();
+        if slug_matches.len() > 1 {
+            return Err(ServiceError::InvalidInput(format!(
+                "ambiguous wiki node locator: {locator}"
+            )));
+        }
+        Ok(slug_matches.pop())
+    }
+
+    async fn ensure_wiki_sibling_available(
+        &self,
+        project_id: &str,
+        parent_id: Option<&str>,
+        slug: &str,
+        excluding_id: Option<&str>,
+    ) -> ServiceResult<()> {
+        let mut query = wiki_node::Entity::find()
+            .filter(wiki_node::Column::ProjectId.eq(project_id.to_string()))
+            .filter(wiki_node::Column::Slug.eq(slug.to_string()))
+            .filter(wiki_node::Column::DeletedAt.is_null());
+        query = match parent_id {
+            Some(parent_id) => query.filter(wiki_node::Column::ParentId.eq(parent_id.to_string())),
+            None => query.filter(wiki_node::Column::ParentId.is_null()),
+        };
+        if let Some(excluding_id) = excluding_id {
+            query = query.filter(wiki_node::Column::Id.ne(excluding_id.to_string()));
+        }
+        if query.one(&self.db).await?.is_some() {
+            return Err(ServiceError::InvalidInput(format!(
+                "wiki node already exists in this folder: {slug}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn next_wiki_version_number(&self, page_id: &str) -> ServiceResult<i64> {
+        let latest = wiki_page_version::Entity::find()
+            .filter(wiki_page_version::Column::PageId.eq(page_id.to_string()))
+            .order_by_desc(wiki_page_version::Column::Version)
+            .one(&self.db)
+            .await?;
+        Ok(latest.map(|version| version.version + 1).unwrap_or(1))
+    }
+
+    async fn collect_wiki_descendant_ids(
+        &self,
+        project_id: &str,
+        root_id: &str,
+    ) -> ServiceResult<Vec<String>> {
+        let mut ids = vec![root_id.to_string()];
+        let mut frontier = vec![root_id.to_string()];
+
+        while !frontier.is_empty() {
+            let children = wiki_node::Entity::find()
+                .filter(wiki_node::Column::ProjectId.eq(project_id.to_string()))
+                .filter(wiki_node::Column::ParentId.is_in(frontier.clone()))
+                .filter(wiki_node::Column::DeletedAt.is_null())
+                .all(&self.db)
+                .await?;
+            frontier = children
+                .iter()
+                .map(|child| child.id.clone())
+                .collect::<Vec<_>>();
+            ids.extend(frontier.iter().cloned());
+        }
+
+        Ok(ids)
+    }
+
+    async fn hydrate_wiki_nodes(
+        &self,
+        models: Vec<wiki_node::Model>,
+    ) -> ServiceResult<Vec<WikiNode>> {
+        let mut nodes = Vec::with_capacity(models.len());
+        for model in models {
+            nodes.push(self.hydrate_wiki_node(model).await?);
+        }
+        Ok(nodes)
+    }
+
+    async fn hydrate_wiki_node(&self, model: wiki_node::Model) -> ServiceResult<WikiNode> {
+        let current_version = match model.current_version_id.as_deref() {
+            Some(version_id) => wiki_page_version::Entity::find_by_id(version_id.to_string())
+                .one(&self.db)
+                .await?
+                .map(|version| WikiVersionRef {
+                    id: version.id,
+                    version: version.version,
+                    created_at: Some(version.created_at),
+                }),
+            None => None,
+        };
+
+        Ok(model_to_wiki_node(model, current_version))
+    }
+
+    async fn create_wiki_audit_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        project_id: &str,
+        node_id: &str,
+        version_id: Option<&str>,
+        action: &str,
+        actor_kind: &str,
+        actor_id: Option<&str>,
+        summary: Option<&str>,
+        created_at: DateTime<Utc>,
+    ) -> ServiceResult<wiki_audit::Model> {
+        Ok(wiki_audit::ActiveModel {
+            id: Set(Uuid::new_v4().to_string()),
+            project_id: Set(project_id.to_string()),
+            node_id: Set(node_id.to_string()),
+            version_id: Set(version_id.map(ToString::to_string)),
+            action: Set(action.to_string()),
+            actor_kind: Set(actor_kind.to_string()),
+            actor_id: Set(actor_id.map(ToString::to_string)),
+            summary: Set(summary.map(ToString::to_string)),
+            created_at: Set(created_at),
+        }
+        .insert(transaction)
+        .await?)
+    }
+
     async fn next_issue_number(&self, team_key: &str) -> ServiceResult<i64> {
         let latest = issue::Entity::find()
             .filter(issue::Column::TeamKey.eq(team_key.to_string()))
@@ -1002,6 +1671,19 @@ pub struct ProjectFilter {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct WikiNodeFilter {
+    pub parent_id: Option<String>,
+    pub include_deleted: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct WikiAuditFilter {
+    pub node_id: Option<String>,
+    pub actor_kind: Option<String>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct NotificationFilter {
     pub include_archived: bool,
     pub unread_only: bool,
@@ -1024,6 +1706,35 @@ pub struct UpdateProjectInput {
     pub name: Option<String>,
     pub description: Option<Option<String>>,
     pub priority: Option<Option<i64>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CreateWikiNodeInput {
+    pub parent_id: Option<String>,
+    pub kind: String,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub actor_kind: Option<String>,
+    pub actor_id: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UpdateWikiNodeInput {
+    pub parent_id: Option<Option<String>>,
+    pub title: Option<String>,
+    pub content: Option<Option<String>>,
+    pub actor_kind: Option<String>,
+    pub actor_id: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RollbackWikiPageInput {
+    pub version: i64,
+    pub actor_kind: Option<String>,
+    pub actor_id: Option<String>,
+    pub summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1058,6 +1769,10 @@ pub enum ServiceError {
     IssueNotFound(String),
     #[error("project_not_found: {0}")]
     ProjectNotFound(String),
+    #[error("wiki_node_not_found: {0}")]
+    WikiNodeNotFound(String),
+    #[error("wiki_version_not_found: {0}")]
+    WikiVersionNotFound(String),
     #[error("notification_not_found: {0}")]
     NotificationNotFound(String),
     #[error("database error: {0}")]
@@ -1125,6 +1840,54 @@ fn model_to_project_ref(model: project::Model) -> ProjectRef {
     }
 }
 
+fn model_to_wiki_node(
+    model: wiki_node::Model,
+    current_version: Option<WikiVersionRef>,
+) -> WikiNode {
+    let kind = WikiNodeKind::parse(&model.kind).unwrap_or(WikiNodeKind::Page);
+    WikiNode {
+        id: model.id,
+        project_id: model.project_id,
+        parent_id: model.parent_id,
+        kind,
+        title: model.title,
+        slug: model.slug,
+        content: model.content,
+        current_version,
+        created_at: Some(model.created_at),
+        updated_at: Some(model.updated_at),
+        deleted_at: model.deleted_at,
+    }
+}
+
+fn model_to_wiki_page_version(model: wiki_page_version::Model) -> WikiPageVersion {
+    WikiPageVersion {
+        id: model.id,
+        page_id: model.page_id,
+        version: model.version,
+        title: model.title,
+        content: model.content,
+        actor_kind: model.actor_kind,
+        actor_id: model.actor_id,
+        summary: model.summary,
+        created_at: Some(model.created_at),
+    }
+}
+
+fn model_to_wiki_audit(model: wiki_audit::Model) -> WikiAudit {
+    WikiAudit {
+        id: model.id,
+        project_id: model.project_id,
+        node_id: model.node_id,
+        version_id: model.version_id,
+        action: model.action,
+        actor_kind: model.actor_kind,
+        actor_id: model.actor_id,
+        summary: model.summary,
+        created_at: Some(model.created_at),
+    }
+}
+
 fn notification_issue_ref(model: issue::Model) -> NotificationIssueRef {
     NotificationIssueRef {
         id: model.id,
@@ -1173,6 +1936,33 @@ fn require_non_empty(name: &str, value: Option<String>) -> ServiceResult<String>
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ServiceError::InvalidInput(format!("{name} is required")))
+}
+
+fn parse_wiki_kind(value: &str) -> ServiceResult<WikiNodeKind> {
+    WikiNodeKind::parse(value)
+        .ok_or_else(|| ServiceError::InvalidInput("wiki kind must be folder or page".to_string()))
+}
+
+fn normalize_actor_kind(value: Option<String>) -> ServiceResult<String> {
+    let actor_kind = non_empty_or(value, "system").to_ascii_lowercase();
+    if matches!(actor_kind.as_str(), "human" | "agent" | "system") {
+        Ok(actor_kind)
+    } else {
+        Err(ServiceError::InvalidInput(
+            "actor_kind must be human, agent, or system".to_string(),
+        ))
+    }
+}
+
+fn optional_non_empty(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
 }
 
 fn non_empty_or(value: Option<String>, fallback: &str) -> String {
