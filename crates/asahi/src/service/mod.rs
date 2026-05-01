@@ -283,23 +283,31 @@ impl IssueService {
         filter: WikiNodeFilter,
     ) -> ServiceResult<Vec<WikiNode>> {
         let project = self.resolve_project_locator(project_locator).await?;
-        let parent_id = match filter.parent_id.as_deref().and_then(non_empty_str) {
-            Some(parent_id) => Some(
-                self.resolve_wiki_parent(&project.id, Some(parent_id))
-                    .await?
-                    .ok_or_else(|| ServiceError::WikiNodeNotFound(parent_id.to_string()))?,
-            ),
-            None => None,
-        };
 
         let mut query =
-            wiki_node::Entity::find().filter(wiki_node::Column::ProjectId.eq(project.id));
-        query = match parent_id {
-            Some(parent_id) => query.filter(wiki_node::Column::ParentId.eq(parent_id)),
-            None => query.filter(wiki_node::Column::ParentId.is_null()),
-        };
-        if !filter.include_deleted {
-            query = query.filter(wiki_node::Column::DeletedAt.is_null());
+            wiki_node::Entity::find().filter(wiki_node::Column::ProjectId.eq(project.id.clone()));
+
+        if filter.recursive {
+            // Return all wiki nodes for the project regardless of depth
+            if !filter.include_deleted {
+                query = query.filter(wiki_node::Column::DeletedAt.is_null());
+            }
+        } else {
+            let parent_id = match filter.parent_id.as_deref().and_then(non_empty_str) {
+                Some(parent_id) => Some(
+                    self.resolve_wiki_parent(&project.id, Some(parent_id))
+                        .await?
+                        .ok_or_else(|| ServiceError::WikiNodeNotFound(parent_id.to_string()))?,
+                ),
+                None => None,
+            };
+            query = match parent_id {
+                Some(parent_id) => query.filter(wiki_node::Column::ParentId.eq(parent_id)),
+                None => query.filter(wiki_node::Column::ParentId.is_null()),
+            };
+            if !filter.include_deleted {
+                query = query.filter(wiki_node::Column::DeletedAt.is_null());
+            }
         }
 
         let models = query
@@ -1667,6 +1675,7 @@ pub struct ProjectFilter {
 pub struct WikiNodeFilter {
     pub parent_id: Option<String>,
     pub include_deleted: bool,
+    pub recursive: bool,
 }
 
 #[derive(Clone, Debug, Default)]

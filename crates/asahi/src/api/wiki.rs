@@ -14,6 +14,7 @@ use crate::{
 pub struct ListWikiNodesQuery {
     parent_id: Option<String>,
     include_deleted: Option<bool>,
+    recursive: Option<bool>,
 }
 
 #[derive(Debug, FromForm)]
@@ -88,6 +89,7 @@ async fn list_wiki_nodes(
                 WikiNodeFilter {
                     parent_id: query.parent_id,
                     include_deleted: query.include_deleted.unwrap_or(false),
+                    recursive: query.recursive.unwrap_or(false),
                 },
             )
             .await?,

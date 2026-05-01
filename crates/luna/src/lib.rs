@@ -8,4 +8,5 @@ pub mod paths;
 pub mod prompt;
 pub mod tracker;
 pub mod workflow;
+pub mod wiki;
 pub mod workspace;

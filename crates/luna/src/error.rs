@@ -38,4 +38,6 @@ pub enum LunaError {
     Json(#[from] serde_json::Error),
     #[error("yaml error: {0}")]
     Yaml(#[from] serde_yaml::Error),
+    #[error("bashkit error: {0}")]
+    Bashkit(#[from] bashkit::Error),
 }

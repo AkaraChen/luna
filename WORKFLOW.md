@@ -41,6 +41,13 @@ Project context:
 - Database: `./asahi.db`
 - Port: `49305`
 - Start asahi manually with: `ROCKET_PORT=49305 asahi` (or let luna embed it automatically)
+- Browse the project wiki with `luna wiki <command>` — it runs inside a virtual bash sandbox with the full wiki mounted as a filesystem, so most standard Unix commands work (ls, tree, cat, grep, find, wc, head, tail, sort, uniq, sed, awk, jq, etc.), including pipes and redirections. Examples:
+  - `luna wiki ls` or `luna wiki ls -la`
+  - `luna wiki tree`
+  - `luna wiki cat <page>.md`
+  - `luna wiki grep -r "TODO" .`
+  - `luna wiki cat design.md | grep "API"`
+  - `luna wiki find . -name "*.md" | wc -l`
 
 Issue: {{ issue.identifier }} - {{ issue.title }}
 URL: {{ issue.url or "" }}
