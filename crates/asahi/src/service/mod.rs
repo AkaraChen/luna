@@ -101,13 +101,6 @@ impl IssueService {
             .find_issue_by_id(&id)
             .await?
             .ok_or_else(|| ServiceError::IssueNotFound(id))?;
-        self.create_activity_internal(
-            &issue,
-            "issue_created",
-            format!("{} created", issue.identifier),
-            Some(issue.title.clone()),
-        )
-        .await?;
         self.upsert_notification(
             &issue,
             "issue_created",
