@@ -55,7 +55,7 @@ function Dashboard() {
         />
       </Suspense>
 
-      <SidebarInset className="border border-border/70 bg-background">
+      <SidebarInset className="overflow-hidden border border-border/70 bg-background">
         <header className="flex h-14 items-center justify-between border-b border-border bg-background/95 px-4">
           <div className="flex min-w-0 items-center gap-3">
             {view === "issues" && selectedId ? (
