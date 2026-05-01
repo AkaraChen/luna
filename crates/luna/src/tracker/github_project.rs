@@ -2,7 +2,7 @@ use std::{collections::HashSet, process::Output};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::{
@@ -517,6 +517,8 @@ fn normalize_project_item(
     project_url: &str,
     config: &GitHubProjectTrackerConfig,
 ) -> Option<Issue> {
+    let source_data = serde_json::to_value(&item).ok();
+
     let fallback_state = match item
         .content
         .as_ref()
@@ -599,6 +601,8 @@ fn normalize_project_item(
         blocked_by: Vec::new(),
         created_at,
         updated_at,
+        project: None,
+        source_data,
     })
 }
 
@@ -668,6 +672,8 @@ mod tests {
             blocked_by: Vec::new(),
             created_at: None,
             updated_at: None,
+            project: None,
+            source_data: None,
         }
     }
 
@@ -788,7 +794,7 @@ struct PageInfo {
     end_cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectItemNode {
     id: String,
@@ -801,7 +807,7 @@ struct ProjectItemNode {
     content: Option<ProjectItemContent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "__typename")]
 enum ProjectFieldValue {
     ProjectV2ItemFieldSingleSelectValue { name: Option<String> },
@@ -871,7 +877,7 @@ fn parse_priority_string(value: &str) -> Option<i64> {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "__typename")]
 enum ProjectItemContent {
     Issue(ProjectIssueContent),
@@ -881,7 +887,7 @@ enum ProjectItemContent {
     Unknown,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectIssueContent {
     number: i64,
@@ -896,23 +902,23 @@ struct ProjectIssueContent {
     labels: ProjectIssueLabels,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectIssueRepository {
     name_with_owner: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ProjectIssueLabels {
     nodes: Vec<ProjectIssueLabelNode>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ProjectIssueLabelNode {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectDraftIssueContent {
     title: String,

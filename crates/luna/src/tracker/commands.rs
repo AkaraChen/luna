@@ -106,6 +106,8 @@ mod tests {
             blocked_by: Vec::new(),
             created_at: None,
             updated_at: None,
+            project: None,
+            source_data: None,
         };
 
         let text = format_issue(&issue);

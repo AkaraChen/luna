@@ -467,6 +467,8 @@ fn normalize_linear_issue(node: &serde_json::Value) -> Option<Issue> {
         blocked_by,
         created_at,
         updated_at,
+        project: None,
+        source_data: Some(node.clone()),
     })
 }
 
@@ -681,6 +683,8 @@ mod tests {
             blocked_by: Vec::new(),
             created_at: None,
             updated_at: None,
+            project: None,
+            source_data: None,
         }
     }
 

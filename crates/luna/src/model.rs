@@ -12,6 +12,15 @@ pub struct BlockerRef {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProjectRef {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub state: String,
+    pub priority: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Issue {
     pub id: String,
     pub identifier: String,
@@ -25,6 +34,10 @@ pub struct Issue {
     pub blocked_by: Vec<BlockerRef>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<ProjectRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_data: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug)]
