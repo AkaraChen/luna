@@ -143,6 +143,12 @@ async fn run_agent_attempt_inner(
     events: mpsc::UnboundedSender<WorkerEvent>,
     mut stop_rx: watch::Receiver<Option<StopReason>>,
 ) -> Result<WorkerOutcome> {
+    tracing::info!(
+        issue_id = %issue.id,
+        identifier = %issue.identifier,
+        attempt = attempt.unwrap_or(0),
+        "agent attempt starting"
+    );
     let workspace_manager = WorkspaceManager::new(
         workflow.config.workspace.root.clone(),
         workflow.config.hooks.clone(),

@@ -11,7 +11,7 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, Instant, interval, interval_at},
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     agent::{StopReason, UsageUpdate, WorkerEvent, WorkerExit, WorkerOutcome, run_agent_attempt},
@@ -82,6 +82,14 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
     }
 
     let initial = store.current().clone();
+
+    info!(
+        tracker = ?std::mem::discriminant(&initial.config.tracker),
+        runner = ?std::mem::discriminant(&initial.config.runner),
+        interval_ms = initial.config.polling.interval_ms,
+        max_concurrent = initial.config.scheduler.max_concurrent,
+        "luna orchestrator started"
+    );
 
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
     let mut state = OrchestratorState::new(&initial.config);
@@ -165,16 +173,30 @@ async fn on_tick(
         }
     };
 
+    info!(candidate_count = candidates.len(), running = state.running.len(), claimed = state.claimed.len(), "poll tick");
+
     let mut sorted = candidates;
     sorted.sort_by(sort_issues_for_dispatch);
 
+    let mut dispatched = 0;
     for issue in sorted {
         if available_global_slots(state, &workflow.config) == 0 {
+            info!("no available global slots, skipping remaining issues");
             break;
         }
         if should_dispatch(&issue, state, &workflow.config) {
+            info!(issue_id = %issue.id, identifier = %issue.identifier, state = %issue.state, "dispatching agent");
             dispatch_issue(issue, None, workflow.clone(), state, events_tx);
+            dispatched += 1;
+        } else {
+            debug!(issue_id = %issue.id, identifier = %issue.identifier, state = %issue.state, "issue skipped");
         }
+    }
+
+    if dispatched > 0 {
+        info!(dispatched, "tick complete");
+    } else {
+        info!("tick complete, no issues dispatched");
     }
 
     Ok(())
@@ -260,6 +282,14 @@ async fn handle_worker_exit(
 
     let cleanup_workspace = entry.pending_cleanup;
     let identifier = entry.identifier.clone();
+
+    info!(
+        issue_id = %exit.issue_id,
+        identifier = %identifier,
+        outcome = ?exit.outcome,
+        runtime_seconds = %exit.runtime_seconds,
+        "agent exited"
+    );
 
     if cleanup_workspace {
         let workspace_manager = WorkspaceManager::new(
@@ -403,6 +433,8 @@ fn dispatch_issue(
 ) {
     let issue_id = issue.id.clone();
     let identifier = issue.identifier.clone();
+    let attempt_num = attempt.unwrap_or(0);
+    info!(issue_id = %issue_id, identifier = %identifier, attempt = attempt_num, "agent spawned");
     let (stop_tx, stop_rx) = watch::channel(None);
     let worker = tokio::spawn(run_agent_attempt(
         issue.clone(),
