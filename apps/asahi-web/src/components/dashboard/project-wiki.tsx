@@ -28,7 +28,7 @@ import {
   type WikiNodeListResponse,
 } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { cn } from "@/lib/utils";
 
 type InlineComposerState = {
@@ -493,11 +493,9 @@ function WikiNodeViewer({
           </div>
         ) : editing ? (
           <div>
-            <Textarea
-              className="min-h-48 resize-none rounded-lg bg-transparent px-0 py-0 leading-6 shadow-none focus-visible:ring-0"
-              onChange={(e) => setContentDraft(e.target.value)}
-              placeholder="Add content..."
-              value={contentDraft}
+            <RichTextEditor
+              content={contentDraft}
+              onChange={(html) => setContentDraft(html)}
             />
             <div className="mt-3 flex items-center gap-2">
               <Button

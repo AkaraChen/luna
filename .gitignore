@@ -26,3 +26,4 @@ lerna-debug.log*
 *.sw?
 .env.luna
 /.luna/workspaces
+.reference/
