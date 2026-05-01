@@ -15,6 +15,7 @@ use luna::{
         CommentCommandOptions, MoveCommandOptions, ShowCommandOptions, TrackerTargetOptions,
         run_comment_command, run_move_command, run_show_command,
     },
+    wiki::command::{WikiCommandOptions, run_wiki_command},
     workflow::discover_workflow_path,
 };
 
@@ -97,6 +98,24 @@ enum Commands {
         #[arg(value_name = "STATE", help = "Target tracker state name.")]
         state: String,
     },
+    #[command(about = "Browse the current issue's project wiki via a virtual shell")]
+    Wiki {
+        #[arg(
+            long,
+            help = "Path to WORKFLOW.md. Defaults to the nearest WORKFLOW.md or workflow.md in the current directory tree."
+        )]
+        workflow: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Explicit issue locator. If omitted, Luna resolves the current issue from LUNA_ISSUE_* env vars or the current workspace."
+        )]
+        issue: Option<String>,
+        #[arg(
+            value_name = "SHELL_COMMAND",
+            help = "Shell command to run against the wiki filesystem (e.g. ls, tree, cat, find)"
+        )]
+        args: Vec<String>,
+    },
 }
 
 #[tokio::main]
@@ -169,6 +188,19 @@ async fn main() -> Result<()> {
             load_dotenv_file(&target.workflow_path)?;
             let identifier = run_move_command(MoveCommandOptions { target, state }).await?;
             println!("moved {identifier}");
+            Ok(())
+        }
+        Some(Commands::Wiki { workflow, issue, args }) => {
+            let target = resolve_tracker_target(workflow, issue)?;
+            load_dotenv_file(&target.workflow_path)?;
+            let result = run_wiki_command(WikiCommandOptions { target, args }).await?;
+            print!("{}", result.stdout);
+            if !result.stderr.is_empty() {
+                eprint!("{}", result.stderr);
+            }
+            if result.exit_code != 0 {
+                std::process::exit(result.exit_code);
+            }
             Ok(())
         }
         None => {

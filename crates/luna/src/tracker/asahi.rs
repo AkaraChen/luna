@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
+use asahi::domain::WikiNode;
+
 use crate::{
     config::AsahiTrackerConfig,
     error::{LunaError, Result},
@@ -88,6 +90,30 @@ impl AsahiTracker {
 
         let issue: Issue = response.json().await?;
         Ok(Some(issue))
+    }
+
+    pub async fn fetch_project_wiki(&self, project_locator: &str) -> Result<Vec<WikiNode>> {
+        let base = self.base_url()?;
+        let url = base
+            .join(&format!("api/projects/{}/wiki", project_locator))
+            .map_err(|e| LunaError::InvalidConfig(format!("invalid asahi url: {e}")))?;
+
+        let response = self
+            .client
+            .get(url)
+            .query(&[("recursive", "true")])
+            .send()
+            .await?;
+        let status = response.status();
+        let body: WikiNodeListResponse = response.json().await?;
+
+        if !status.is_success() {
+            return Err(LunaError::Tracker(format!(
+                "asahi fetch_project_wiki failed: status={status}"
+            )));
+        }
+
+        Ok(body.nodes)
     }
 }
 
@@ -178,6 +204,11 @@ impl Tracker for AsahiTracker {
 #[derive(Debug, Deserialize)]
 struct IssueListResponse {
     issues: Vec<Issue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiNodeListResponse {
+    nodes: Vec<WikiNode>,
 }
 
 #[derive(Debug, Serialize)]

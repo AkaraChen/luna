@@ -407,7 +407,7 @@ Execution rules:
         tracker_front_matter = tracker_front_matter,
         project_context = if context.tracker_kind == "asahi" {
             format!(
-                "- Tracker: Asahi (local)\n- Project title: `{project_title}`\n- Database: `{db}`\n- Port: `{port}`\n- Start asahi manually with: `ROCKET_PORT={port} asahi` (or let luna embed it automatically)",
+                "- Tracker: Asahi (local)\n- Project title: `{project_title}`\n- Database: `{db}`\n- Port: `{port}`\n- Start asahi manually with: `ROCKET_PORT={port} asahi` (or let luna embed it automatically)\n- Browse the project wiki with `luna wiki <command>` — it runs inside a virtual bash sandbox with the full wiki mounted as a filesystem, so most standard Unix commands work (ls, tree, cat, grep, find, wc, head, tail, sort, uniq, sed, awk, jq, etc.), including pipes and redirections. Examples:\n  - `luna wiki ls` or `luna wiki ls -la`\n  - `luna wiki tree`\n  - `luna wiki cat <page>.md`\n  - `luna wiki grep -r \"TODO\" .`\n  - `luna wiki cat design.md | grep \"API\"`\n  - `luna wiki find . -name \"*.md\" | wc -l`",
                 project_title = context.project_title,
                 db = context.asahi_db.as_deref().unwrap_or("./asahi.db"),
                 port = context.asahi_port.unwrap_or(8080),

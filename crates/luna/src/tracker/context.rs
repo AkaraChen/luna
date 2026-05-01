@@ -30,7 +30,7 @@ pub async fn resolve_tracker_issue(
     Ok((tracker, issue))
 }
 
-async fn resolve_issue(tracker: &dyn Tracker, options: &TrackerTargetOptions) -> Result<Issue> {
+pub async fn resolve_issue(tracker: &dyn Tracker, options: &TrackerTargetOptions) -> Result<Issue> {
     let locators = collect_issue_locators(options).await?;
     if locators.is_empty() {
         return Err(LunaError::Tracker(
