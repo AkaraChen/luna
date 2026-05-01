@@ -70,9 +70,7 @@ export function RichTextEditor({
   return (
     <div className={cn("bg-background", className)}>
       <Tiptap instance={editor}>
-        <div className="px-3 py-2">
-          <Tiptap.Content />
-        </div>
+        <Tiptap.Content />
         <EditorBubbleMenu />
       </Tiptap>
     </div>
