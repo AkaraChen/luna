@@ -3,11 +3,6 @@ tracker:
   kind: asahi
   db: ./asahi.db
   port: 49305
-  active_states:
-    - Todo
-    - In Progress
-  terminal_states:
-    - Done
 
 polling:
   interval_ms: 30000
