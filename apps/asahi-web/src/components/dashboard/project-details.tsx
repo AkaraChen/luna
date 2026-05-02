@@ -62,7 +62,7 @@ export function ProjectDetails({
 
   if (!project) {
     return (
-      <div className="flex min-h-full items-center justify-center px-6 text-center">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
         <div>
           <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
           <div className="text-sm font-medium">Project not found</div>
@@ -116,9 +116,9 @@ function ProjectPage({
   const selectedIssue = data.issues.find((i) => i.id === selectedIssueId);
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-auto">
-      {/* Sticky header with segment control */}
-      <div className="sticky top-0 z-10 border-b border-[#eceae5] bg-background/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* Segment control */}
+      <div className="z-10 shrink-0 border-b border-[#eceae5] bg-background/95 px-5 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="flex min-h-8 items-center justify-between gap-3">
           <div className="inline-flex rounded-full border border-border bg-muted/60 p-0.5">
             {PROJECT_SECTIONS.map((option) => (
@@ -158,8 +158,8 @@ function ProjectPage({
 
       {/* Overview */}
       {section === "overview" && (
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_18.5rem]">
-          <div className="min-w-0">
+        <div className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem] lg:overflow-hidden">
+          <div className="min-h-0 min-w-0 lg:overflow-auto">
             <div className="border-b border-[#eceae5] px-5 pb-6 pt-5">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2 text-xs text-[#77746c]">
@@ -220,7 +220,7 @@ function ProjectPage({
             </div>
           </div>
 
-          <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
+          <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-t-0">
             <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1">
               <PropertyRow label="Status">
                 <EditableStatus
@@ -270,8 +270,8 @@ function ProjectPage({
 
       {/* Issues: list + detail preview */}
       {section === "issues" && (
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]">
-          <div className="min-h-0 overflow-auto border-r border-[#eceae5]">
+        <div className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] lg:overflow-hidden">
+          <div className="min-h-0 border-r border-[#eceae5] lg:overflow-auto">
             <IssueList
               issues={data.issues}
               onSelect={(id) => {
@@ -280,7 +280,7 @@ function ProjectPage({
               selectedId={selectedIssueId}
             />
           </div>
-          <div className="min-h-0 overflow-auto">
+          <div className="min-h-0 lg:overflow-hidden">
             {selectedIssue ? <IssueDetails issue={selectedIssue} /> : <EmptyDetails />}
           </div>
         </div>

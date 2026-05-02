@@ -66,15 +66,15 @@ export function NotificationsView() {
   }
 
   return (
-    <section className="grid flex-1 overflow-auto xl:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]">
-      <div className="min-w-0 border-r border-border">
-        <div className="flex h-12 items-center justify-between px-4">
+    <section className="grid min-h-0 flex-1 overflow-auto xl:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] xl:overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-col border-r border-border">
+        <div className="flex h-12 shrink-0 items-center justify-between px-4">
           <div className="text-xs text-muted-foreground">
             {data.unread_count ? `${data.unread_count} unread` : "All caught up"}
           </div>
         </div>
 
-        <div>
+        <div className="xl:min-h-0 xl:flex-1 xl:overflow-auto">
           {data.notifications.map((notification) => (
             <NotificationRow
               archiveDisabled={archiveMutation.isPending}
@@ -90,7 +90,7 @@ export function NotificationsView() {
         </div>
       </div>
 
-      <aside className="min-w-0 bg-card">
+      <aside className="min-w-0 bg-card xl:min-h-0 xl:overflow-hidden">
         {selectedIssueId ? (
           <Suspense fallback={<IssueDetailSkeleton />}>
             <NotificationIssueDetails issueId={selectedIssueId} />
