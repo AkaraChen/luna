@@ -20,6 +20,7 @@ import {
   IconFileText,
   IconFolder,
   IconFolderOpen,
+  IconFolderPlus,
   IconPlus,
   IconTrash,
 } from "@tabler/icons-react";
@@ -101,7 +102,7 @@ export function ProjectWiki({ project }: { project: Project }) {
   });
 
   const activeNode = selectedNode
-    ? loadedNodes.find((node) => node.id === selectedNode.id) ?? selectedNode
+    ? (loadedNodes.find((node) => node.id === selectedNode.id) ?? selectedNode)
     : null;
   const activeChildren =
     activeNode?.kind === "folder" ? childrenByParentId.get(activeNode.id) : undefined;
@@ -212,7 +213,7 @@ export function ProjectWiki({ project }: { project: Project }) {
   };
 
   const resolveParentId = (): string | null => {
-    return activeNode?.kind === "folder" ? activeNode.id : activeNode?.parent_id ?? null;
+    return activeNode?.kind === "folder" ? activeNode.id : (activeNode?.parent_id ?? null);
   };
 
   const openInlineComposer = (kind: WikiNodeKind) => {
@@ -244,14 +245,14 @@ export function ProjectWiki({ project }: { project: Project }) {
     setInlineComposer(null);
   };
 
-  const handleCreatePageInFolder = (folderId: string) => {
+  const handleCreateNodeInFolder = (folderId: string, kind: WikiNodeKind) => {
     createMutation.reset();
     setExpandedFolderIds((current) => {
       const next = new Set(current);
       next.add(folderId);
       return next;
     });
-    setInlineComposer({ parentId: folderId, kind: "page" });
+    setInlineComposer({ parentId: folderId, kind });
   };
 
   const openNodeContextMenu = (event: ReactMouseEvent, node: WikiNode) => {
@@ -284,7 +285,8 @@ export function ProjectWiki({ project }: { project: Project }) {
   const renamingPendingId = renameMutation.isPending
     ? (renameMutation.variables?.node.id ?? null)
     : null;
-  const operationError = renameMutation.error ?? deleteMutation.error ?? null;
+  const operationError =
+    createMutation.error ?? renameMutation.error ?? deleteMutation.error ?? null;
 
   return (
     <div className="min-h-[32rem] lg:grid lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)]">
@@ -334,7 +336,7 @@ export function ProjectWiki({ project }: { project: Project }) {
                   node={node}
                   onCancelInline={cancelInline}
                   onCancelRename={() => setRenamingNodeId(null)}
-                  onCreatePage={handleCreatePageInFolder}
+                  onCreateNode={handleCreateNodeInFolder}
                   onNodeClick={handleNodeClick}
                   onOpenContextMenu={openNodeContextMenu}
                   onSubmitInline={submitInline}
@@ -368,11 +370,7 @@ export function ProjectWiki({ project }: { project: Project }) {
         </div>
       </div>
 
-      <WikiNodeViewer
-        node={activeNode}
-        childNodes={activeChildren}
-        projectId={project.id}
-      />
+      <WikiNodeViewer node={activeNode} childNodes={activeChildren} projectId={project.id} />
       {contextMenu ? (
         <WikiTreeContextMenu
           menu={contextMenu}
@@ -424,7 +422,7 @@ function WikiTreeNode({
   node,
   onCancelRename,
   onNodeClick,
-  onCreatePage,
+  onCreateNode,
   onOpenContextMenu,
   selectedId,
   onSubmitInline,
@@ -442,7 +440,7 @@ function WikiTreeNode({
   node: WikiNode;
   onCancelRename?: () => void;
   onNodeClick: (node: WikiNode) => void;
-  onCreatePage?: (folderId: string) => void;
+  onCreateNode?: (folderId: string, kind: WikiNodeKind) => void;
   onOpenContextMenu: (event: ReactMouseEvent, node: WikiNode) => void;
   selectedId: string | null;
   onSubmitInline?: (title: string) => void;
@@ -472,51 +470,69 @@ function WikiTreeNode({
           title={node.title}
         />
       ) : (
-        <button
+        <div
           className={cn(
-            "group grid min-h-9 w-full grid-cols-[1rem_1rem_minmax(0,1fr)_auto] items-center gap-2 pr-2 text-left hover:bg-[#f7f6f2]",
+            "group grid min-h-9 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1 pr-2 hover:bg-[#f7f6f2]",
             isSelected && "bg-[#f2f1ec]",
           )}
-          onClick={() => onNodeClick(node)}
           onContextMenu={(event) => onOpenContextMenu(event, node)}
           style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
-          type="button"
         >
-          {isFolder ? (
-            <IconChevronRight
-              className={cn(
-                "size-3.5 text-[#8f8b82] transition-transform",
-                expanded && "rotate-90",
-              )}
-            />
-          ) : (
-            <span className="size-3.5" />
-          )}
-          {isFolder ? (
-            expanded ? (
-              <IconFolderOpen className="size-4 text-[#6f6b62]" stroke={1.8} />
+          <button
+            className="grid min-h-9 min-w-0 grid-cols-[1rem_1rem_minmax(0,1fr)] items-center gap-2 text-left"
+            onClick={() => onNodeClick(node)}
+            type="button"
+          >
+            {isFolder ? (
+              <IconChevronRight
+                className={cn(
+                  "size-3.5 text-[#8f8b82] transition-transform",
+                  expanded && "rotate-90",
+                )}
+              />
             ) : (
-              <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
-            )
-          ) : (
-            <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
-          )}
-          <span className="min-w-0 truncate text-sm text-[#33312d]">{node.title}</span>
+              <span className="size-3.5" />
+            )}
+            {isFolder ? (
+              expanded ? (
+                <IconFolderOpen className="size-4 text-[#6f6b62]" stroke={1.8} />
+              ) : (
+                <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+              )
+            ) : (
+              <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
+            )}
+            <span className="min-w-0 truncate text-sm text-[#33312d]">{node.title}</span>
+          </button>
           {isFolder ? (
-            <span
-              className="flex size-5 cursor-pointer items-center justify-center rounded text-[#8f8b82] opacity-0 transition-opacity hover:bg-[#e8e6e0] hover:text-[#33312d] group-hover:opacity-100"
+            <button
+              aria-label={`Create subfolder in ${node.title}`}
+              className="flex size-6 items-center justify-center rounded text-[#8f8b82] opacity-0 transition-opacity hover:bg-[#e8e6e0] hover:text-[#33312d] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9c4bb]"
               onClick={(event) => {
                 event.stopPropagation();
-                onCreatePage?.(node.id);
+                onCreateNode?.(node.id, "folder");
               }}
-              role="button"
-              aria-label="Create page in folder"
+              title="Create subfolder"
+              type="button"
+            >
+              <IconFolderPlus className="size-3.5" />
+            </button>
+          ) : null}
+          {isFolder ? (
+            <button
+              aria-label={`Create page in ${node.title}`}
+              className="flex size-6 items-center justify-center rounded text-[#8f8b82] opacity-0 transition-opacity hover:bg-[#e8e6e0] hover:text-[#33312d] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9c4bb]"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCreateNode?.(node.id, "page");
+              }}
               title="Create page in folder"
+              type="button"
             >
               <IconPlus className="size-3.5" />
-            </span>
+            </button>
           ) : null}
-        </button>
+        </div>
       )}
 
       {isFolder && expanded ? (
@@ -541,7 +557,7 @@ function WikiTreeNode({
                 node={child}
                 onCancelInline={onCancelInline}
                 onCancelRename={onCancelRename}
-                onCreatePage={onCreatePage}
+                onCreateNode={onCreateNode}
                 onNodeClick={onNodeClick}
                 onOpenContextMenu={onOpenContextMenu}
                 onSubmitInline={onSubmitInline}
@@ -753,10 +769,7 @@ function WikiNodeViewer({
           </div>
         ) : editing ? (
           <div>
-            <RichTextEditor
-              content={contentDraft}
-              onChange={(html) => setContentDraft(html)}
-            />
+            <RichTextEditor content={contentDraft} onChange={(html) => setContentDraft(html)} />
             <div className="mt-3 flex items-center gap-2">
               <Button
                 disabled={updateMutation.isPending || !titleDraft.trim()}
