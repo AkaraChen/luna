@@ -289,9 +289,9 @@ export function ProjectWiki({ project }: { project: Project }) {
     createMutation.error ?? renameMutation.error ?? deleteMutation.error ?? null;
 
   return (
-    <div className="min-h-[32rem] lg:grid lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)]">
-      <div className="min-h-0 border-b border-[#eceae5] lg:border-b-0 lg:border-r">
-        <div className="flex h-12 items-center justify-between px-4">
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto lg:grid lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)] lg:overflow-hidden">
+      <div className="min-h-0 border-b border-[#eceae5] lg:flex lg:flex-col lg:border-b-0 lg:border-r">
+        <div className="flex h-12 shrink-0 items-center justify-between px-4">
           <div className="text-sm font-medium">Wiki</div>
           <div className="flex items-center gap-1">
             <Button
@@ -317,7 +317,7 @@ export function ProjectWiki({ project }: { project: Project }) {
           </div>
         </div>
 
-        <div className="max-h-[28rem] overflow-auto pb-2 lg:max-h-none">
+        <div className="max-h-[28rem] overflow-auto pb-2 lg:min-h-0 lg:flex-1 lg:max-h-none">
           {rootQuery.isLoading ? (
             <div className="px-4 py-3 text-xs text-[#8f8b82]">Loading wiki...</div>
           ) : rootQuery.isError ? (
@@ -702,7 +702,7 @@ function WikiNodeViewer({
   const isFolder = node.kind === "folder";
 
   return (
-    <article className="min-w-0">
+    <article className="min-w-0 lg:min-h-0 lg:overflow-auto">
       <div className="px-5 py-4">
         <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-[#77746c]">
           {isFolder ? (
