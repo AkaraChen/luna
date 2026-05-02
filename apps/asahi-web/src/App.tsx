@@ -17,6 +17,7 @@ import {
 import { IssueDetails } from "@/components/dashboard/issue-details";
 import { IssueList } from "@/components/dashboard/issue-list";
 import { NotificationsView } from "@/components/dashboard/notifications-view";
+import { DashboardPageLayout } from "@/components/dashboard/page-layout";
 import { ProjectDetails } from "@/components/dashboard/project-details";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,32 @@ function Dashboard() {
   const [search, setSearch] = useState("");
   const selectedId = issueIdFromLocation(location);
   const selectedProjectLocator = projectLocatorFromLocation(location);
+  const showIssueSearch = view === "issues" && !selectedId;
+  const showCreateIssue = (view === "issues" && !selectedId) || view === "notifications";
+  const headerRight =
+    showIssueSearch || showCreateIssue ? (
+      <>
+        {showIssueSearch ? (
+          <div className="relative">
+            <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="hidden h-8 w-[min(42vw,280px)] pl-8 sm:block"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search issues"
+              value={search}
+            />
+          </div>
+        ) : null}
+        {showCreateIssue ? (
+          <CreateIssueTrigger>
+            <Button size="sm">
+              <IconPlus className="size-4" />
+              New issue
+            </Button>
+          </CreateIssueTrigger>
+        ) : null}
+      </>
+    ) : null;
 
   return (
     <SidebarProvider>
@@ -55,10 +82,11 @@ function Dashboard() {
         />
       </Suspense>
 
-      <SidebarInset className="overflow-hidden border border-border/70 bg-background">
-        <header className="flex h-14 items-center justify-between border-b border-border bg-background/95 px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            {view === "issues" && selectedId ? (
+      <SidebarInset className="h-svh min-h-0 overflow-hidden border border-border/70 bg-background md:h-[calc(100svh-1rem)]">
+        <DashboardPageLayout
+          right={headerRight}
+          title={
+            view === "issues" && selectedId ? (
               <button
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground"
                 onClick={() => navigate("/issues")}
@@ -71,61 +99,39 @@ function Dashboard() {
               <span className="text-sm font-semibold">
                 {view === "notifications" ? "Inbox" : view === "project" ? "Project" : "Issues"}
               </span>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            {view === "issues" && !selectedId ? (
-              <div className="relative">
-                <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="hidden h-8 w-[min(42vw,280px)] pl-8 sm:block"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search issues"
-                  value={search}
+            )
+          }
+        >
+          {view === "notifications" ? (
+            <Suspense fallback={<NotificationsViewSkeleton />}>
+              <NotificationsView />
+            </Suspense>
+          ) : view === "project" ? (
+            selectedProjectLocator ? (
+              <Suspense fallback={<ProjectDetailsSkeleton />}>
+                <ProjectDetails
+                  locator={selectedProjectLocator}
+                  onSelectIssue={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
                 />
-              </div>
-            ) : null}
-            {(view === "issues" && !selectedId) || view === "notifications" ? (
-              <CreateIssueTrigger>
-                <Button size="sm">
-                  <IconPlus className="size-4" />
-                  New issue
-                </Button>
-              </CreateIssueTrigger>
-            ) : null}
-          </div>
-        </header>
-
-        {view === "notifications" ? (
-          <Suspense fallback={<NotificationsViewSkeleton />}>
-            <NotificationsView />
-          </Suspense>
-        ) : view === "project" ? (
-          selectedProjectLocator ? (
-            <Suspense fallback={<ProjectDetailsSkeleton />}>
-              <ProjectDetails
-                locator={selectedProjectLocator}
-                onSelectIssue={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
-              />
+              </Suspense>
+            ) : (
+              <NoProjectSelected />
+            )
+          ) : selectedId ? (
+            <Suspense fallback={<IssueDetailSkeleton />}>
+              <IssueDetailPage selectedId={selectedId} />
             </Suspense>
           ) : (
-            <NoProjectSelected />
-          )
-        ) : selectedId ? (
-          <Suspense fallback={<IssueDetailSkeleton />}>
-            <IssueDetailPage selectedId={selectedId} />
-          </Suspense>
-        ) : (
-          <Suspense fallback={<IssuesViewSkeleton />}>
-            <IssuesView
-              onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
-              search={search}
-              statusFilter={statusFilter}
-              setStatusFilter={setStatusFilter}
-            />
-          </Suspense>
-        )}
+            <Suspense fallback={<IssuesViewSkeleton />}>
+              <IssuesView
+                onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
+                search={search}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+              />
+            </Suspense>
+          )}
+        </DashboardPageLayout>
       </SidebarInset>
     </SidebarProvider>
   );
@@ -143,7 +149,7 @@ function projectLocatorFromLocation(location: string) {
 
 function NoProjectSelected() {
   return (
-    <div className="flex min-h-[calc(100svh-3.5rem)] items-center justify-center px-6 text-center">
+    <div className="flex min-h-full items-center justify-center px-6 text-center">
       <div>
         <div className="mx-auto mb-3 flex size-9 items-center justify-center rounded-full bg-muted">
           <IconFolder className="size-4 text-muted-foreground" stroke={1.8} />
@@ -223,7 +229,7 @@ function IssueDetailPage({ selectedId }: { selectedId: string }) {
 
   if (!issue) {
     return (
-      <div className="flex min-h-[calc(100svh-3.5rem)] items-center justify-center">
+      <div className="flex min-h-full items-center justify-center">
         <p className="text-sm text-muted-foreground">Issue not found.</p>
       </div>
     );

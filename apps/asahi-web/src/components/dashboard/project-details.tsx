@@ -61,7 +61,7 @@ export function ProjectDetails({
 
   if (!project) {
     return (
-      <div className="flex min-h-[calc(100svh-3.5rem)] items-center justify-center px-6 text-center">
+      <div className="flex min-h-full items-center justify-center px-6 text-center">
         <div>
           <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
           <div className="text-sm font-medium">Project not found</div>
@@ -188,12 +188,14 @@ function ProjectPage({
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete {project.name}?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        This action cannot be undone. Issues in this project will be moved out of the
-                        project.
+                        This action cannot be undone. Issues in this project will be moved out of
+                        the project.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
+                      <AlertDialogCancel onClick={() => setDeleteOpen(false)}>
+                        Cancel
+                      </AlertDialogCancel>
                       <AlertDialogAction
                         disabled={deleteMutation.isPending}
                         onClick={() => deleteMutation.mutate()}
