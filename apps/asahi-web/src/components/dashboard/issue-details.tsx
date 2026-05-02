@@ -62,8 +62,12 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (input: { title?: string; description?: string | null; priority?: number | null; blocked_by?: string[] }) =>
-      updateIssue(issue.id, input),
+    mutationFn: (input: {
+      title?: string;
+      description?: string | null;
+      priority?: number | null;
+      blocked_by?: string[];
+    }) => updateIssue(issue.id, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["issues"] });
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
@@ -96,7 +100,11 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "d" && (event.metaKey || event.ctrlKey)) {
         const target = event.target as HTMLElement;
-        if (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable) {
+        if (
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "INPUT" ||
+          target.isContentEditable
+        ) {
           return;
         }
         event.preventDefault();
@@ -115,9 +123,9 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   );
 
   return (
-    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
-      <div className="min-w-0 flex flex-col">
-        <div className="px-5 pb-4 pt-5">
+    <section className="grid h-full min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem] lg:overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <div className="shrink-0 px-5 pb-4 pt-5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <span className="text-xs font-medium text-[#77746c]">{issue.identifier}</span>
@@ -206,7 +214,10 @@ export function IssueDetails({ issue }: { issue: Issue }) {
           ) : (
             <div className="group/description relative mt-3">
               {issue.description ? (
-                <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: issue.description }} />
+                <div
+                  className="prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: issue.description }}
+                />
               ) : (
                 <p className="text-sm italic text-[#a8a59d]">No description</p>
               )}
@@ -231,6 +242,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
         </div>
 
         <IssueCommentForm
+          className="shrink-0"
           isSubmitting={commentMutation.isPending}
           onChange={setComment}
           onSubmit={(body) => commentMutation.mutate(body)}
@@ -238,7 +250,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
         />
       </div>
 
-      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
+      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-t-0">
         <div className="grid gap-1">
           <PropertyRow label="Status">
             <EditableStatus
@@ -289,17 +301,9 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   );
 }
 
-type TimelineItem =
-  | { type: "activity"; data: Activity }
-  | { type: "comment"; data: Comment };
+type TimelineItem = { type: "activity"; data: Activity } | { type: "comment"; data: Comment };
 
-function Timeline({
-  activities,
-  comments,
-}: {
-  activities: Activity[];
-  comments: Comment[];
-}) {
+function Timeline({ activities, comments }: { activities: Activity[]; comments: Comment[] }) {
   const items: TimelineItem[] = [
     ...activities
       .filter((a) => a.kind !== "comment_created")
@@ -308,9 +312,7 @@ function Timeline({
   ];
 
   items.sort(
-    (a, b) =>
-      new Date(a.data.created_at).getTime() -
-      new Date(b.data.created_at).getTime(),
+    (a, b) => new Date(a.data.created_at).getTime() - new Date(b.data.created_at).getTime(),
   );
 
   if (items.length === 0) {
@@ -322,10 +324,11 @@ function Timeline({
       {items.map((item) =>
         item.type === "comment" ? (
           <div className="rounded-md bg-[#f7f6f2] p-3" key={`comment-${item.data.id}`}>
-            <div className="mb-1 text-xs text-[#85827a]">
-              {formatDate(item.data.created_at)}
-            </div>
-            <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: item.data.body }} />
+            <div className="mb-1 text-xs text-[#85827a]">{formatDate(item.data.created_at)}</div>
+            <div
+              className="prose prose-sm max-w-none"
+              dangerouslySetInnerHTML={{ __html: item.data.body }}
+            />
           </div>
         ) : (
           <div className="flex items-center gap-2 py-1" key={`activity-${item.data.id}`}>
@@ -455,10 +458,7 @@ function IssueActivity({ issueId }: { issueId: string }) {
     <div className="px-5 py-4">
       <div className="mb-3 text-sm font-medium">Activity</div>
       <div className="space-y-3">
-        <Timeline
-          activities={activitiesData.activities}
-          comments={commentsData.comments}
-        />
+        <Timeline activities={activitiesData.activities} comments={commentsData.comments} />
       </div>
     </div>
   );

@@ -49,7 +49,7 @@ export function SidebarSkeleton() {
 
 export function IssuesViewSkeleton() {
   return (
-    <section className="flex-1 overflow-auto">
+    <section className="min-h-0 flex-1 overflow-auto">
       <div className="flex h-12 items-center justify-between px-4">
         <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -68,8 +68,8 @@ export function IssuesViewSkeleton() {
 
 export function IssueDetailSkeleton() {
   return (
-    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
-      <div className="flex flex-col space-y-4 p-5">
+    <section className="grid h-full min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem] lg:overflow-hidden">
+      <div className="flex min-h-0 flex-col space-y-4 p-5">
         <div className="h-4 w-32 animate-pulse rounded bg-[#eceae5]" />
         <div className="h-8 w-3/4 animate-pulse rounded bg-[#eceae5]" />
         <div className="h-20 w-full animate-pulse rounded bg-[#eceae5]" />
@@ -80,7 +80,7 @@ export function IssueDetailSkeleton() {
           ))}
         </div>
       </div>
-      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
+      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-t-0">
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3">
             <div className="h-4 w-12 animate-pulse rounded bg-[#eceae5]" />
@@ -94,8 +94,8 @@ export function IssueDetailSkeleton() {
 
 export function ProjectDetailsSkeleton() {
   return (
-    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem]">
-      <div className="min-w-0">
+    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem] lg:overflow-hidden">
+      <div className="min-h-0 min-w-0 lg:overflow-auto">
         <div className="border-b border-[#eceae5] px-5 pb-6 pt-5">
           <div className="mb-4 flex items-center gap-2">
             <div className="h-4 w-4 animate-pulse rounded bg-[#eceae5]" />
@@ -122,7 +122,7 @@ export function ProjectDetailsSkeleton() {
           ))}
         </div>
       </div>
-      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:sticky lg:top-0 lg:min-h-full lg:border-l lg:border-t-0">
+      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-t-0">
         <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1">
           {Array.from({ length: 5 }).map((_, i) => (
             <div
@@ -141,18 +141,18 @@ export function ProjectDetailsSkeleton() {
 
 export function NotificationsViewSkeleton() {
   return (
-    <section className="grid flex-1 overflow-auto xl:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]">
-      <div className="min-w-0 border-r border-border">
-        <div className="flex h-12 items-center justify-between px-4">
+    <section className="grid min-h-0 flex-1 overflow-auto xl:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] xl:overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-col border-r border-border">
+        <div className="flex h-12 shrink-0 items-center justify-between px-4">
           <div className="h-4 w-20 animate-pulse rounded bg-muted" />
         </div>
-        <div className="space-y-3 p-4">
+        <div className="space-y-3 p-4 xl:min-h-0 xl:flex-1 xl:overflow-auto">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-14 animate-pulse rounded-md bg-muted" />
           ))}
         </div>
       </div>
-      <aside className="min-w-0 bg-card">
+      <aside className="min-w-0 bg-card xl:min-h-0 xl:overflow-hidden">
         <div className="flex h-full items-center justify-center">
           <div className="h-8 w-32 animate-pulse rounded bg-muted" />
         </div>

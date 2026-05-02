@@ -149,7 +149,7 @@ function projectLocatorFromLocation(location: string) {
 
 function NoProjectSelected() {
   return (
-    <div className="flex min-h-full items-center justify-center px-6 text-center">
+    <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
       <div>
         <div className="mx-auto mb-3 flex size-9 items-center justify-center rounded-full bg-muted">
           <IconFolder className="size-4 text-muted-foreground" stroke={1.8} />
@@ -195,7 +195,7 @@ function IssuesView({
   }, [data.issues, search]);
 
   return (
-    <section className="flex-1 overflow-auto">
+    <section className="min-h-0 flex-1 overflow-auto">
       <div className="flex h-12 items-center justify-between px-4">
         <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
           {statusFilters.map((status) => (
@@ -229,14 +229,14 @@ function IssueDetailPage({ selectedId }: { selectedId: string }) {
 
   if (!issue) {
     return (
-      <div className="flex min-h-full items-center justify-center">
+      <div className="flex min-h-0 flex-1 items-center justify-center">
         <p className="text-sm text-muted-foreground">Issue not found.</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-0 flex-1">
+    <div className="flex min-h-0 flex-1 overflow-hidden">
       <IssueDetails issue={issue} />
     </div>
   );

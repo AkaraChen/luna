@@ -29,7 +29,7 @@ export function DashboardPageLayout({
       </header>
 
       <div
-        className={cn("flex min-h-0 flex-1 flex-col overflow-auto", bodyClassName)}
+        className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", bodyClassName)}
         data-slot="dashboard-page-layout-body"
       >
         {children}
