@@ -69,6 +69,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     onSuccess: () => {
       navigate("/issues");
       queryClient.removeQueries({ queryKey: ["comments", issue.id] });
+      queryClient.removeQueries({ queryKey: ["activities", issue.id] });
     },
     onSettled: () => refreshAsahiQueries(queryClient),
   });

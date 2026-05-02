@@ -12,11 +12,13 @@ const ASAHI_QUERY_ROOTS: QueryKey[] = [
 ];
 
 export function refreshAsahiQueries(queryClient: QueryClient) {
-  for (const queryKey of ASAHI_QUERY_ROOTS) {
-    void queryClient.invalidateQueries({ queryKey, refetchType: "all" });
-  }
+  return Promise.all(
+    ASAHI_QUERY_ROOTS.map((queryKey) =>
+      queryClient.invalidateQueries({ queryKey, refetchType: "all" }),
+    ),
+  ).then(() => undefined);
 }
 
 export function refreshNotifications(queryClient: QueryClient) {
-  void queryClient.invalidateQueries({ queryKey: ["notifications"], refetchType: "all" });
+  return queryClient.invalidateQueries({ queryKey: ["notifications"], refetchType: "all" });
 }
