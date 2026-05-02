@@ -16,6 +16,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { refreshAsahiQueries } from "@/lib/query-refresh";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { cn } from "@/lib/utils";
 
@@ -73,8 +74,6 @@ export function IssueComposer({
         blocked_by: blockedByIds.length ? blockedByIds : undefined,
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["issues"] });
-      void queryClient.invalidateQueries({ queryKey: ["projects"] });
       if (createMore) {
         setTitle("");
         setDescription("");
@@ -83,6 +82,7 @@ export function IssueComposer({
         onClose();
       }
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const submit = (event?: FormEvent) => {

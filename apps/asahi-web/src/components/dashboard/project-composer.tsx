@@ -4,6 +4,7 @@ import { IconX } from "@tabler/icons-react";
 
 import { createProject, type Project } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
+import { refreshAsahiQueries } from "@/lib/query-refresh";
 
 export function ProjectComposer({
   onClose,
@@ -23,10 +24,10 @@ export function ProjectComposer({
         description: description || undefined,
       }),
     onSuccess: (project) => {
-      void queryClient.invalidateQueries({ queryKey: ["projects"] });
       onCreated(project);
       onClose();
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const submit = (event?: FormEvent) => {
