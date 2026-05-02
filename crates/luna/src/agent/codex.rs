@@ -12,7 +12,7 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use crate::{
-    agent::{SessionUpdate, StopReason, TurnExit, UsageUpdate, WorkerEvent},
+    agent::{CommandExecutionEvent, SessionUpdate, StopReason, TurnExit, UsageUpdate, WorkerEvent},
     config::CodexRunner,
     error::{LunaError, Result},
     paths::absolutize_path,
@@ -426,6 +426,27 @@ impl CodexSession {
             }
             "item/completed" => {
                 self.log_completed_item(&params);
+                if let Some(item) = params.get("item") {
+                    if item.get("type").and_then(Value::as_str) == Some("commandExecution")
+                        && item.get("status").and_then(Value::as_str) == Some("completed")
+                    {
+                        let exit_code = item.get("exitCode").and_then(Value::as_i64);
+                        if matches!(exit_code, None | Some(0)) {
+                            if let Some(command) = item.get("command").and_then(Value::as_str) {
+                                let _ = self.events.send(WorkerEvent::CommandExecuted(
+                                    CommandExecutionEvent {
+                                        issue_id: self.issue_id.clone(),
+                                        issue_identifier: self.issue_identifier.clone(),
+                                        command: command.to_string(),
+                                        cwd: item.get("cwd").and_then(Value::as_str).map(str::to_string),
+                                        duration_ms: item.get("durationMs").and_then(Value::as_i64),
+                                        exit_code,
+                                    }
+                                ));
+                            }
+                        }
+                    }
+                }
             }
             "turn/completed" => {
                 self.turn_id =

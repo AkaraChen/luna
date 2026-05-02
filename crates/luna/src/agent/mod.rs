@@ -71,10 +71,21 @@ pub struct WorkerExit {
 }
 
 #[derive(Clone, Debug)]
+pub struct CommandExecutionEvent {
+    pub issue_id: String,
+    pub issue_identifier: String,
+    pub command: String,
+    pub cwd: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub exit_code: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
 pub enum WorkerEvent {
     Session(SessionUpdate),
     Exited(WorkerExit),
     RetryDue(String),
+    CommandExecuted(CommandExecutionEvent),
 }
 
 pub enum TurnExit {

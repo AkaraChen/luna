@@ -6,6 +6,7 @@ pub mod model;
 pub mod orchestrator;
 pub mod paths;
 pub mod prompt;
+pub mod shell_command;
 pub mod tracker;
 pub mod workflow;
 pub mod wiki;

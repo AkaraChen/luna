@@ -259,6 +259,9 @@ async fn handle_worker_event(
         WorkerEvent::RetryDue(issue_id) => {
             handle_retry_due(issue_id, store.current().clone(), state, events_tx).await
         }
+        WorkerEvent::CommandExecuted(cmd) => {
+            handle_command_executed(cmd, store, state).await;
+        }
     }
 }
 
@@ -398,6 +401,58 @@ async fn handle_worker_exit(
         WorkerOutcome::CanceledByReconciliation => {
             state.claimed.remove(&exit.issue_id);
         }
+    }
+}
+
+async fn handle_command_executed(
+    cmd: crate::agent::CommandExecutionEvent,
+    store: &WorkflowStore,
+    state: &mut OrchestratorState,
+) {
+    let Some(entry) = state.running.get(&cmd.issue_id) else {
+        return;
+    };
+
+    let config = &store.current().config;
+    if !crate::shell_command::matches_shell_activity_pattern(
+        &cmd.command,
+        &config.shell_activity_patterns,
+    ) {
+        return;
+    }
+
+    let tracker = match build_tracker(&config.tracker) {
+        Ok(t) => t,
+        Err(err) => {
+            warn!(error = %err, "failed to build tracker for command activity");
+            return;
+        }
+    };
+
+    let body = format!("🤖 Agent executed: `{}`", cmd.command);
+
+    if let Err(err) = tracker.create_comment(&entry.issue, &body).await {
+        warn!(
+            issue_id = %cmd.issue_id,
+            error = %err,
+            "failed to create comment for command activity"
+        );
+    }
+
+    if let Err(err) = tracker
+        .create_activity(
+            &entry.issue,
+            "command_executed",
+            &format!("Agent executed: {}", cmd.command),
+            Some(&body),
+        )
+        .await
+    {
+        warn!(
+            issue_id = %cmd.issue_id,
+            error = %err,
+            "failed to create activity for command activity"
+        );
     }
 }
 

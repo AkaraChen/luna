@@ -381,6 +381,9 @@ pub struct ServiceConfig {
     #[serde(default)]
     #[garde(dive)]
     pub hooks: HooksConfig,
+    #[serde(default = "default_shell_activity_patterns")]
+    #[garde(skip)]
+    pub shell_activity_patterns: Vec<String>,
 }
 
 impl ServiceConfig {
@@ -576,6 +579,9 @@ fn default_acp_command() -> String {
 }
 fn default_gh_command() -> String {
     DEFAULT_GH_COMMAND.to_string()
+}
+fn default_shell_activity_patterns() -> Vec<String> {
+    vec!["git commit".to_string(), "gh pr create".to_string()]
 }
 fn default_github_status_field() -> String {
     "Status".to_string()
