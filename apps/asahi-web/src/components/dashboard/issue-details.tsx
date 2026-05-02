@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ActivitySkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { IssueCommentForm } from "@/components/dashboard/issue-comment-form";
+import { refreshAsahiQueries } from "@/lib/query-refresh";
 import { cn } from "@/lib/utils";
 
 import { statusColumns } from "./constants";
@@ -54,42 +55,30 @@ export function IssueDetails({ issue }: { issue: Issue }) {
 
   const moveMutation = useMutation({
     mutationFn: (state: string) => updateIssueState(issue.id, state),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["issues"] });
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      void queryClient.invalidateQueries({ queryKey: ["activities", issue.id] });
-    },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const updateMutation = useMutation({
     mutationFn: (input: { title?: string; description?: string | null; priority?: number | null; blocked_by?: string[] }) =>
       updateIssue(issue.id, input),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["issues"] });
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      void queryClient.invalidateQueries({ queryKey: ["activities", issue.id] });
-    },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteIssue(issue.id),
     onSuccess: () => {
       navigate("/issues");
-      void queryClient.invalidateQueries({ queryKey: ["issues"] });
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
       queryClient.removeQueries({ queryKey: ["comments", issue.id] });
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const commentMutation = useMutation({
     mutationFn: (body: string) => createComment(issue.id, body),
     onSuccess: () => {
       setComment("");
-      void queryClient.invalidateQueries({ queryKey: ["comments", issue.id] });
-      void queryClient.invalidateQueries({ queryKey: ["activities", issue.id] });
-      void queryClient.invalidateQueries({ queryKey: ["issues"] });
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   useEffect(() => {

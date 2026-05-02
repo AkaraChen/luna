@@ -29,6 +29,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { refreshAsahiQueries } from "@/lib/query-refresh";
 import { cn } from "@/lib/utils";
 
 import { CreateIssueTrigger } from "./create-issue-trigger";
@@ -97,23 +98,18 @@ function ProjectPage({
     mutationFn: () => deleteProject(project.id),
     onSuccess: () => {
       navigate("/issues");
-      void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      void queryClient.invalidateQueries({ queryKey: ["issues"] });
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const stateMutation = useMutation({
     mutationFn: (state: string) => updateProjectState(project.id, state),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["projects"] });
-    },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const priorityMutation = useMutation({
     mutationFn: (priority: number | null) => updateProject(project.id, { priority }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["projects"] });
-    },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const issueCountLabel = formatCount(data.issues.length, "issue");

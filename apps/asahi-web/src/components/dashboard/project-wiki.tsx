@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
+import { refreshAsahiQueries } from "@/lib/query-refresh";
 import { cn } from "@/lib/utils";
 
 type InlineComposerState = {
@@ -131,8 +132,8 @@ export function ProjectWiki({ project }: { project: Project }) {
         return next;
       });
       setSelectedNode(node);
-      void queryClient.invalidateQueries({ queryKey: ["wiki", project.id] });
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const renameMutation = useMutation({
@@ -156,8 +157,8 @@ export function ProjectWiki({ project }: { project: Project }) {
       );
       setSelectedNode((current) => (current?.id === updatedNode.id ? updatedNode : current));
       setRenamingNodeId(null);
-      void queryClient.invalidateQueries({ queryKey: ["wiki", project.id] });
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const deleteMutation = useMutation({
@@ -188,8 +189,8 @@ export function ProjectWiki({ project }: { project: Project }) {
         return deletedIds.has(current.id) || current.parent_id === node.id ? null : current;
       });
       setDeleteTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["wiki", project.id] });
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   const toggleFolder = (folderId: string) => {
@@ -675,9 +676,9 @@ function WikiNodeViewer({
   const updateMutation = useMutation({
     mutationFn: (input: UpdateWikiNodeInput) => updateWikiNode(projectId, node!.id, input),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["wiki", projectId] });
       setEditing(false);
     },
+    onSettled: () => refreshAsahiQueries(queryClient),
   });
 
   useEffect(() => {

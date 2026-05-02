@@ -11,6 +11,10 @@ import {
   type AsahiNotification,
 } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
+import {
+  NOTIFICATIONS_REFETCH_INTERVAL_MS,
+  refreshNotifications,
+} from "@/lib/query-refresh";
 import { cn } from "@/lib/utils";
 
 import { IssueDetailSkeleton } from "@/components/dashboard/dashboard-skeleton";
@@ -26,27 +30,23 @@ export function NotificationsView() {
   const { data } = useSuspenseQuery({
     queryKey: ["notifications", "inbox"],
     queryFn: () => fetchNotifications({ limit: 50 }),
+    refetchInterval: NOTIFICATIONS_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: true,
   });
 
   const readMutation = useMutation({
     mutationFn: markNotificationRead,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-    },
+    onSettled: () => refreshNotifications(queryClient),
   });
 
   const unreadMutation = useMutation({
     mutationFn: markNotificationUnread,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-    },
+    onSettled: () => refreshNotifications(queryClient),
   });
 
   const archiveMutation = useMutation({
     mutationFn: archiveNotification,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-    },
+    onSettled: () => refreshNotifications(queryClient),
   });
 
   if (data.notifications.length === 0) {
