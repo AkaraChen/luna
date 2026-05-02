@@ -11,6 +11,7 @@ interface RichTextEditorProps {
   editable?: boolean;
   className?: string;
   placeholder?: string;
+  variant?: "plain" | "bordered";
 }
 
 export function RichTextEditor({
@@ -18,6 +19,7 @@ export function RichTextEditor({
   onChange,
   editable = true,
   className,
+  variant = "plain",
 }: RichTextEditorProps) {
   const editor = useEditor({
     extensions: [StarterKit],
@@ -60,7 +62,7 @@ export function RichTextEditor({
     return (
       <div
         className={cn(
-          editorFrameClassName(editable),
+          editorFrameClassName(editable, variant),
           "animate-pulse",
           className,
         )}
@@ -69,7 +71,7 @@ export function RichTextEditor({
   }
 
   return (
-    <div className={cn(editorFrameClassName(editable), className)}>
+    <div className={cn(editorFrameClassName(editable, variant), className)}>
       <Tiptap instance={editor}>
         <Tiptap.Content />
         <EditorBubbleMenu />
@@ -78,10 +80,14 @@ export function RichTextEditor({
   );
 }
 
-function editorFrameClassName(editable: boolean) {
+function editorFrameClassName(
+  editable: boolean,
+  variant: NonNullable<RichTextEditorProps["variant"]>,
+) {
   return cn(
     "bg-background",
-    editable &&
+    variant === "bordered" &&
+      editable &&
       "w-full rounded-2xl border border-input bg-input/50 px-3 py-3 text-base transition-[color,box-shadow,background-color] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30 md:text-sm",
   );
 }
