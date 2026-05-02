@@ -33,7 +33,7 @@ export function IssueCommentForm({
 
   return (
     <form className={cn("p-4 pt-0", className)} onSubmit={submitComment}>
-      <RichTextEditor content={value} onChange={onChange} />
+      <RichTextEditor content={value} onChange={onChange} variant="bordered" />
       <div className="mt-2 flex justify-end">
         <Button disabled={disabled} size="sm" type="submit">
           <IconSend className="size-4" />
