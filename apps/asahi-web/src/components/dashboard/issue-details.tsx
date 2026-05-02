@@ -29,7 +29,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ActivitySkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { IssueCommentForm } from "@/components/dashboard/issue-comment-form";
-import { refreshAsahiQueries } from "@/lib/query-refresh";
+import {
+  ASAHI_LIVE_REFETCH_INTERVAL_MS,
+  refreshAsahiQueries,
+} from "@/lib/query-refresh";
 import { cn } from "@/lib/utils";
 
 import { statusColumns } from "./constants";
@@ -437,11 +440,13 @@ function IssueActivity({ issueId }: { issueId: string }) {
   const { data: commentsData } = useSuspenseQuery({
     queryKey: ["comments", issueId],
     queryFn: () => fetchComments(issueId),
+    refetchInterval: ASAHI_LIVE_REFETCH_INTERVAL_MS,
   });
 
   const { data: activitiesData } = useSuspenseQuery({
     queryKey: ["activities", issueId],
     queryFn: () => fetchActivities(issueId),
+    refetchInterval: ASAHI_LIVE_REFETCH_INTERVAL_MS,
   });
 
   return (

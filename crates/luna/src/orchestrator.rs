@@ -18,6 +18,7 @@ use crate::{
     config::{ServiceConfig, TrackerConfig},
     error::{LunaError, Result},
     model::{Issue, TokenTotals},
+    shell_command::ShellActivityInspection,
     tracker::build_tracker,
     workflow::{LoadedWorkflow, WorkflowStore, parse_workflow_definition},
     workspace::WorkspaceManager,
@@ -88,8 +89,17 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
         runner = ?std::mem::discriminant(&initial.config.runner),
         interval_ms = initial.config.polling.interval_ms,
         max_concurrent = initial.config.scheduler.max_concurrent,
+        shell_activity_patterns = ?initial.config.shell_activity_patterns,
         "luna orchestrator started"
     );
+    if initial.config.shell_activity_patterns.is_empty() {
+        warn!("shell activity tracking disabled; shell_activity_patterns is empty");
+    } else {
+        info!(
+            shell_activity_patterns = ?initial.config.shell_activity_patterns,
+            "shell activity tracking configured"
+        );
+    }
 
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
 
@@ -148,7 +158,11 @@ async fn on_tick(
 
     let dispatch_enabled = match store.reload_if_changed() {
         Ok(true) => {
-            info!(workflow = %store.path().display(), "reloaded workflow configuration");
+            info!(
+                workflow = %store.path().display(),
+                shell_activity_patterns = ?store.current().config.shell_activity_patterns,
+                "reloaded workflow configuration"
+            );
             true
         }
         Ok(false) => true,
@@ -410,16 +424,64 @@ async fn handle_command_executed(
     state: &mut OrchestratorState,
 ) {
     let Some(entry) = state.running.get(&cmd.issue_id) else {
+        warn!(
+            issue_id = %cmd.issue_id,
+            identifier = %cmd.issue_identifier,
+            command = %cmd.command,
+            "command activity ignored because issue is no longer running"
+        );
         return;
     };
 
     let config = &store.current().config;
-    if !crate::shell_command::matches_shell_activity_pattern(
+    let activity_match = match crate::shell_command::inspect_shell_activity(
         &cmd.command,
         &config.shell_activity_patterns,
     ) {
-        return;
-    }
+        ShellActivityInspection::Matched(activity_match) => activity_match,
+        ShellActivityInspection::NoPatterns => {
+            debug!(
+                issue_id = %cmd.issue_id,
+                identifier = %cmd.issue_identifier,
+                command = %cmd.command,
+                "command activity inspection skipped because no patterns are configured"
+            );
+            return;
+        }
+        ShellActivityInspection::ParseFailed => {
+            warn!(
+                issue_id = %cmd.issue_id,
+                identifier = %cmd.issue_identifier,
+                command = %cmd.command,
+                shell_activity_patterns = ?config.shell_activity_patterns,
+                "command activity inspection failed to parse shell command"
+            );
+            return;
+        }
+        ShellActivityInspection::NoMatch { parsed_commands } => {
+            debug!(
+                issue_id = %cmd.issue_id,
+                identifier = %cmd.issue_identifier,
+                command = %cmd.command,
+                parsed_commands = ?parsed_commands,
+                shell_activity_patterns = ?config.shell_activity_patterns,
+                "command activity did not match configured patterns"
+            );
+            return;
+        }
+    };
+
+    info!(
+        issue_id = %cmd.issue_id,
+        identifier = %cmd.issue_identifier,
+        command = %cmd.command,
+        matched_pattern = %activity_match.pattern,
+        matched_tokens = ?activity_match.command_tokens,
+        cwd = cmd.cwd.as_deref().unwrap_or("unknown"),
+        duration_ms = cmd.duration_ms,
+        exit_code = cmd.exit_code,
+        "command activity matched"
+    );
 
     let tracker = match build_tracker(&config.tracker) {
         Ok(t) => t,
@@ -437,6 +499,13 @@ async fn handle_command_executed(
             error = %err,
             "failed to create comment for command activity"
         );
+    } else {
+        info!(
+            issue_id = %cmd.issue_id,
+            identifier = %cmd.issue_identifier,
+            matched_pattern = %activity_match.pattern,
+            "created tracker comment for command activity"
+        );
     }
 
     if let Err(err) = tracker
@@ -452,6 +521,13 @@ async fn handle_command_executed(
             issue_id = %cmd.issue_id,
             error = %err,
             "failed to create activity for command activity"
+        );
+    } else {
+        info!(
+            issue_id = %cmd.issue_id,
+            identifier = %cmd.issue_identifier,
+            matched_pattern = %activity_match.pattern,
+            "created tracker activity for command activity"
         );
     }
 }

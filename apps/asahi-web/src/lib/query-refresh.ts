@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
-export const NOTIFICATIONS_REFETCH_INTERVAL_MS = 2_000;
+export const ASAHI_LIVE_REFETCH_INTERVAL_MS = 2_000;
+export const NOTIFICATIONS_REFETCH_INTERVAL_MS = ASAHI_LIVE_REFETCH_INTERVAL_MS;
 
 const ASAHI_QUERY_ROOTS: QueryKey[] = [
   ["activities"],

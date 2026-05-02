@@ -9,24 +9,50 @@ use std::io::Cursor;
 /// Patterns are space-separated tokens, e.g. "git commit" matches the command
 /// `git` with first argument `commit`.
 pub fn matches_shell_activity_pattern(command: &str, patterns: &[String]) -> bool {
+    matches!(
+        inspect_shell_activity(command, patterns),
+        ShellActivityInspection::Matched(_)
+    )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShellActivityMatch {
+    pub pattern: String,
+    pub command_tokens: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShellActivityInspection {
+    Matched(ShellActivityMatch),
+    NoMatch { parsed_commands: Vec<Vec<String>> },
+    ParseFailed,
+    NoPatterns,
+}
+
+pub fn inspect_shell_activity(command: &str, patterns: &[String]) -> ShellActivityInspection {
     if patterns.is_empty() {
-        return false;
+        return ShellActivityInspection::NoPatterns;
     }
 
     let commands = match parse_shell_commands(command) {
         Some(cmds) => cmds,
-        None => return false,
+        None => return ShellActivityInspection::ParseFailed,
     };
 
     for parsed in &commands {
         for pattern in patterns {
             if matches_pattern_tokens(parsed, pattern) {
-                return true;
+                return ShellActivityInspection::Matched(ShellActivityMatch {
+                    pattern: pattern.clone(),
+                    command_tokens: parsed.clone(),
+                });
             }
         }
     }
 
-    false
+    ShellActivityInspection::NoMatch {
+        parsed_commands: commands,
+    }
 }
 
 fn parse_shell_commands(input: &str) -> Option<Vec<Vec<String>>> {
@@ -191,6 +217,32 @@ fn extract_from_compound_command(commands: &mut Vec<Vec<String>>, compound: &Com
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inspects_matched_command() {
+        assert_eq!(
+            inspect_shell_activity("gh pr create --fill", &["gh pr create".to_string()]),
+            ShellActivityInspection::Matched(ShellActivityMatch {
+                pattern: "gh pr create".to_string(),
+                command_tokens: vec![
+                    "gh".to_string(),
+                    "pr".to_string(),
+                    "create".to_string(),
+                    "--fill".to_string(),
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn inspects_no_match_with_parsed_commands() {
+        assert_eq!(
+            inspect_shell_activity("git status", &["git commit".to_string()]),
+            ShellActivityInspection::NoMatch {
+                parsed_commands: vec![vec!["git".to_string(), "status".to_string()]],
+            }
+        );
+    }
 
     #[test]
     fn matches_simple_command() {

@@ -433,16 +433,33 @@ impl CodexSession {
                         let exit_code = item.get("exitCode").and_then(Value::as_i64);
                         if matches!(exit_code, None | Some(0)) {
                             if let Some(command) = item.get("command").and_then(Value::as_str) {
-                                let _ = self.events.send(WorkerEvent::CommandExecuted(
-                                    CommandExecutionEvent {
-                                        issue_id: self.issue_id.clone(),
-                                        issue_identifier: self.issue_identifier.clone(),
-                                        command: command.to_string(),
-                                        cwd: item.get("cwd").and_then(Value::as_str).map(str::to_string),
-                                        duration_ms: item.get("durationMs").and_then(Value::as_i64),
-                                        exit_code,
-                                    }
-                                ));
+                                let event = WorkerEvent::CommandExecuted(CommandExecutionEvent {
+                                    issue_id: self.issue_id.clone(),
+                                    issue_identifier: self.issue_identifier.clone(),
+                                    command: command.to_string(),
+                                    cwd: item
+                                        .get("cwd")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_string),
+                                    duration_ms: item.get("durationMs").and_then(Value::as_i64),
+                                    exit_code,
+                                });
+                                if let Err(err) = self.events.send(event) {
+                                    warn!(
+                                        issue_id = %self.issue_id,
+                                        issue_identifier = %self.issue_identifier,
+                                        command = %command,
+                                        error = ?err,
+                                        "failed to queue command activity inspection"
+                                    );
+                                } else {
+                                    debug!(
+                                        issue_id = %self.issue_id,
+                                        issue_identifier = %self.issue_identifier,
+                                        command = %command,
+                                        "queued command activity inspection"
+                                    );
+                                }
                             }
                         }
                     }

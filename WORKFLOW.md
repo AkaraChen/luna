@@ -35,7 +35,6 @@ Project context:
 - Project title: `Luna Project`
 - Database: `./asahi.db`
 - Port: `49305`
-- Start asahi manually with: `ROCKET_PORT=49305 asahi` (or let luna embed it automatically)
 - Browse the project wiki with `luna wiki <command>` — it runs inside a virtual bash sandbox with the full wiki mounted as a filesystem, so most standard Unix commands work (ls, tree, cat, grep, find, wc, head, tail, sort, uniq, sed, awk, jq, etc.), including pipes and redirections. Examples:
   - `luna wiki ls` or `luna wiki ls -la`
   - `luna wiki tree`
@@ -72,7 +71,7 @@ Execution rules:
 - Inspect the current tracker item with `luna show` before editing code.
 - Use `luna comment` to post meaningful progress updates, blockers, and the final handoff summary so the workflow stays tracker-agnostic.
 - Use `luna move "<state>"` when you need to advance the tracker state through the workflow.
-- When the implementation is ready, open or update a PR with `gh pr create`, `gh pr view`, `gh pr edit`, and `gh pr comment`.
+- When the implementation is ready, open or update a PR with `gh pr create`, `gh pr view`, `gh pr edit`.
 - After a PR exists, check review status and CI with `gh pr view`, `gh pr checks`, or `gh run watch`.
 - Once the required review is satisfied and CI is green, merge the PR with `gh pr merge` instead of stopping at a local code change.
 - Use `luna`, `gh pr`, and git commands whenever you need to inspect or update project state.
