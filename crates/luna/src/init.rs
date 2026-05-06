@@ -35,6 +35,7 @@ struct InitContext {
 const DEFAULT_OWNER: &str = "your-github-owner";
 const DEFAULT_PROJECT_NUMBER: u32 = 1;
 const DEFAULT_PROJECT_TITLE: &str = "Luna Project";
+const GITIGNORE_TEMPLATE: &[&str] = &["/target", ".env.luna", ".luna/", "asahi.db"];
 
 pub async fn run_init(options: InitOptions) -> Result<Vec<PathBuf>> {
     fs::create_dir_all(&options.target_dir)?;
@@ -55,7 +56,7 @@ pub async fn run_init(options: InitOptions) -> Result<Vec<PathBuf>> {
         options.force,
     )?;
     write_file(&env_path, ENV_TEMPLATE, options.force)?;
-    ensure_gitignore_entry(&gitignore_path, ".env.luna")?;
+    ensure_gitignore_entries(&gitignore_path, GITIGNORE_TEMPLATE)?;
 
     print_init_summary(&context);
 
@@ -538,14 +539,20 @@ fn write_file(path: &Path, contents: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn ensure_gitignore_entry(path: &Path, entry: &str) -> Result<()> {
+fn ensure_gitignore_entries(path: &Path, entries: &[&str]) -> Result<()> {
     if !path.exists() {
-        fs::write(path, format!("/target\n{entry}\n"))?;
+        fs::write(path, format!("{}\n", entries.join("\n")))?;
         return Ok(());
     }
 
     let current = fs::read_to_string(path)?;
-    if current.lines().any(|line| line.trim() == entry) {
+    let existing: Vec<_> = current.lines().map(str::trim).collect();
+    let missing: Vec<_> = entries
+        .iter()
+        .copied()
+        .filter(|entry| !existing.contains(entry))
+        .collect();
+    if missing.is_empty() {
         return Ok(());
     }
 
@@ -553,8 +560,42 @@ fn ensure_gitignore_entry(path: &Path, entry: &str) -> Result<()> {
     if !next.ends_with('\n') {
         next.push('\n');
     }
-    next.push_str(entry);
+    next.push_str(&missing.join("\n"));
     next.push('\n');
     fs::write(path, next)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GITIGNORE_TEMPLATE, ensure_gitignore_entries};
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn creates_gitignore_from_template() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join(".gitignore");
+
+        ensure_gitignore_entries(&path, GITIGNORE_TEMPLATE).expect("gitignore");
+
+        assert_eq!(
+            fs::read_to_string(path).expect("read gitignore"),
+            "/target\n.env.luna\n.luna/\nasahi.db\n"
+        );
+    }
+
+    #[test]
+    fn appends_missing_gitignore_entries() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join(".gitignore");
+        fs::write(&path, "/target\n.env.luna").expect("write gitignore");
+
+        ensure_gitignore_entries(&path, GITIGNORE_TEMPLATE).expect("gitignore");
+
+        assert_eq!(
+            fs::read_to_string(path).expect("read gitignore"),
+            "/target\n.env.luna\n.luna/\nasahi.db\n"
+        );
+    }
 }
