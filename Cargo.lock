@@ -184,7 +184,7 @@ version = "0.1.0"
 dependencies = [
  "asahi-migration",
  "chrono",
- "garde 0.21.1",
+ "garde",
  "rocket",
  "sea-orm",
  "serde",
@@ -1204,35 +1204,13 @@ dependencies = [
 
 [[package]]
 name = "garde"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4bd1d7843e437a4caf1d6a9112ba1ee9635b09d909af22aa4e6ec01fe971e22"
-dependencies = [
- "compact_str",
- "garde_derive 0.21.1",
- "smallvec",
-]
-
-[[package]]
-name = "garde"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a74b56a4039a46e8c91cc9d84e8a7df4e1f8b24239ca57d1304b3263cb599b9"
 dependencies = [
  "compact_str",
- "garde_derive 0.22.1",
+ "garde_derive",
  "smallvec",
-]
-
-[[package]]
-name = "garde_derive"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0636cbdc03994db48fc89a0ce7765bd68d08bd8a7a68cb9a36bcde96790f413"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -2013,7 +1991,7 @@ dependencies = [
  "clash-brush-parser",
  "dirs",
  "dotenvy",
- "garde 0.22.1",
+ "garde",
  "html2md",
  "minijinja",
  "reqwest",
