@@ -531,9 +531,9 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clash-brush-parser"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90ac29cf17b9cdc627a71676dbd127140885036651fd862dcfb87c1ae2712828"
+checksum = "c171f0f78a80b50b78dfc181f4bfeeefbf38692a1aee34cbdfd0b9d6ac8ed0b0"
 dependencies = [
  "bon",
  "cached",
