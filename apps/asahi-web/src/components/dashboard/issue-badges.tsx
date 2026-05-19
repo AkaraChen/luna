@@ -1,16 +1,38 @@
-import { IconArrowUp, IconCircleCheck, IconCircleDashed, IconCircleDot } from "@tabler/icons-react";
+import { CircleCheck, CircleDashed, CircleDot } from "lucide-react";
 
-function statusIcon(state: string) {
-  return state === "Done"
-    ? IconCircleCheck
-    : state === "In Progress"
-      ? IconCircleDot
-      : IconCircleDashed;
-}
+import { cn } from "@/lib/utils";
 
-export function StatusIcon({ state }: { state: string }) {
-  const Icon = statusIcon(state);
-  return <Icon className="size-4 shrink-0 text-[#6f6d66]" stroke={1.8} />;
+export function StatusIcon({ state, className }: { state: string; className?: string }) {
+  if (state === "Done") {
+    return (
+      <CircleCheck
+        className={cn("size-3.5 shrink-0 text-status-done", className)}
+        strokeWidth={1.8}
+      />
+    );
+  }
+  if (state === "In Progress") {
+    return (
+      <CircleDot
+        className={cn("size-3.5 shrink-0 text-status-progress", className)}
+        strokeWidth={1.8}
+      />
+    );
+  }
+  if (state === "Todo") {
+    return (
+      <CircleDot
+        className={cn("size-3.5 shrink-0 text-muted-foreground", className)}
+        strokeWidth={1.5}
+      />
+    );
+  }
+  return (
+    <CircleDashed
+      className={cn("size-3.5 shrink-0 text-muted-foreground", className)}
+      strokeWidth={1.5}
+    />
+  );
 }
 
 export function Priority({
@@ -20,14 +42,27 @@ export function Priority({
   priority: number | null;
   showEmpty?: boolean;
 }) {
-  if (priority == null) {
-    if (!showEmpty) return null;
-    return <span className="text-xs text-[#99958b]">No priority</span>;
-  }
+  if (priority == null && !showEmpty) return null;
+
+  const bars = priority == null ? 0 : Math.max(0, 4 - priority);
+  const label = priority == null ? "No priority" : `P${priority}`;
 
   return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-[#65625b]">
-      <IconArrowUp className="size-3.5 text-[#7d7a72]" />P{priority}
+    <span
+      aria-label={label}
+      className="inline-flex items-end gap-[2px]"
+      title={label}
+    >
+      {[1, 2, 3].map((i) => (
+        <span
+          className={cn(
+            "w-[3px] rounded-[1px]",
+            i <= bars ? "bg-foreground/80" : "bg-border",
+            i === 1 ? "h-[5px]" : i === 2 ? "h-[8px]" : "h-[11px]",
+          )}
+          key={i}
+        />
+      ))}
     </span>
   );
 }

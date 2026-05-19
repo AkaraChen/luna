@@ -1,4 +1,5 @@
-import { IconChevronDown } from "@tabler/icons-react";
+import { useEffect, useRef } from "react";
+import { ChevronDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -20,38 +21,38 @@ export function EditableStatus({
   state: string;
 }) {
   return (
-    <div className="relative min-w-0">
-      <button
-        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left text-xs font-medium text-[#55524b] hover:bg-[#f7f6f2] disabled:opacity-50"
-        disabled={disabled}
-        onClick={() => setOpen(!open)}
-        type="button"
-      >
-        <StatusIcon state={state} />
-        <span className="truncate">{state}</span>
-        <IconChevronDown className="size-3.5 shrink-0 text-[#8a877e]" />
-      </button>
-
-      {open ? (
-        <div className="absolute right-0 top-full z-20 mt-1 min-w-40 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
-          {options.map((option) => (
-            <button
-              className={cn(
-                "flex h-8 w-full items-center gap-2 px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]",
-                state === option && "bg-[#f2f1ec]",
-              )}
-              disabled={disabled || state === option}
-              key={option}
-              onClick={() => onChange(option)}
-              type="button"
-            >
-              <StatusIcon state={option} />
-              {option}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
+    <Dropdown
+      onOpenChange={setOpen}
+      open={open}
+      trigger={
+        <button
+          className="asahi-press inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[12.5px] text-foreground [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/60 disabled:opacity-50"
+          disabled={disabled}
+          onClick={() => setOpen(!open)}
+          type="button"
+        >
+          <StatusIcon state={state} />
+          <span className="truncate">{state}</span>
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      }
+    >
+      {options.map((option) => (
+        <button
+          className={cn(
+            "flex h-8 w-full items-center gap-2 px-3 text-left text-[12.5px] text-foreground hover:bg-muted/60",
+            state === option && "bg-muted",
+          )}
+          disabled={disabled || state === option}
+          key={option}
+          onClick={() => onChange(option)}
+          type="button"
+        >
+          <StatusIcon state={option} />
+          {option}
+        </button>
+      ))}
+    </Dropdown>
   );
 }
 
@@ -70,36 +71,112 @@ export function EditablePriority({
   priority: number | null;
   setOpen: (open: boolean) => void;
 }) {
+  const triggerLabel = priority == null ? "No priority" : `P${priority}`;
   return (
-    <div className="relative min-w-0">
-      <button
-        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left hover:bg-[#f7f6f2] disabled:opacity-50"
-        disabled={disabled}
-        onClick={() => setOpen(!open)}
-        type="button"
-      >
-        <Priority priority={priority} />
-        <IconChevronDown className="size-3.5 shrink-0 text-[#8a877e]" />
-      </button>
+    <Dropdown
+      onOpenChange={setOpen}
+      open={open}
+      trigger={
+        <button
+          className="asahi-press inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[12.5px] text-foreground [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/60 disabled:opacity-50"
+          disabled={disabled}
+          onClick={() => setOpen(!open)}
+          type="button"
+        >
+          <Priority priority={priority} />
+          <span className="truncate">{triggerLabel}</span>
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      }
+    >
+      {options.map((option) => (
+        <button
+          className={cn(
+            "flex h-8 w-full items-center gap-2 px-3 text-left text-[12.5px] text-foreground hover:bg-muted/60",
+            priority === option && "bg-muted",
+          )}
+          disabled={disabled || priority === option}
+          key={option ?? "none"}
+          onClick={() => onChange(option)}
+          type="button"
+        >
+          <Priority priority={option} />
+          <span>{option == null ? "No priority" : `P${option}`}</span>
+        </button>
+      ))}
+    </Dropdown>
+  );
+}
 
-      {open ? (
-        <div className="absolute right-0 top-full z-20 mt-1 min-w-34 rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
-          {options.map((option) => (
-            <button
-              className={cn(
-                "flex h-8 w-full items-center px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]",
-                priority === option && "bg-[#f2f1ec]",
-              )}
-              disabled={disabled || priority === option}
-              key={option ?? "none"}
-              onClick={() => onChange(option)}
-              type="button"
-            >
-              <Priority priority={option} />
-            </button>
-          ))}
-        </div>
-      ) : null}
+/**
+ * Shared dropdown shell: animated open/close (origin-aware), system ease-out,
+ * click-outside + Escape to dismiss. Hidden via `data-state` so the
+ * transition runs both in and out.
+ */
+export function Dropdown({
+  align = "end",
+  children,
+  contentClassName,
+  onOpenChange,
+  open,
+  side = "bottom",
+  trigger,
+}: {
+  align?: "start" | "end";
+  children: React.ReactNode;
+  contentClassName?: string;
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+  side?: "top" | "bottom";
+  trigger: React.ReactNode;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target as Node)) onOpenChange(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onOpenChange]);
+
+  const sideClass = side === "top" ? "bottom-full mb-1" : "top-full mt-1";
+  const alignClass = align === "start" ? "left-0" : "right-0";
+  const origin =
+    side === "top"
+      ? align === "start"
+        ? "bottom left"
+        : "bottom right"
+      : align === "start"
+        ? "top left"
+        : "top right";
+
+  return (
+    <div className="relative min-w-0" ref={rootRef}>
+      {trigger}
+      <div
+        aria-hidden={!open}
+        className={cn(
+          "asahi-popover absolute z-20 min-w-36 rounded-md border border-border/70 bg-popover py-1 shadow-[0_1px_2px_oklch(0_0_0_/_0.04)]",
+          sideClass,
+          alignClass,
+          open ? "" : "pointer-events-none",
+          contentClassName,
+        )}
+        data-state={open ? "open" : "closed"}
+        style={{ transformOrigin: origin }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
