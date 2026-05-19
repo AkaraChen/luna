@@ -202,13 +202,13 @@ function OverviewPane({
   deleteOpen: boolean;
   issues: Issue[];
   onOpenWiki: () => void;
-  priorityMutation: { isPending: boolean };
+  priorityMutation: { isPending: boolean; mutate: (priority: number | null) => void };
   priorityOpen: boolean;
   project: Project;
   setDeleteOpen: (value: boolean) => void;
   setPriorityOpen: (value: boolean) => void;
   setStatusOpen: (value: boolean) => void;
-  stateMutation: { isPending: boolean };
+  stateMutation: { isPending: boolean; mutate: (state: string) => void };
   statusOpen: boolean;
 }) {
   const issuesByStatus = useMemo(() => {
@@ -285,7 +285,10 @@ function OverviewPane({
             <InlineMeta label="Status">
               <EditableStatus
                 disabled={stateMutation.isPending}
-                onChange={() => setStatusOpen(false)}
+                onChange={(next) => {
+                  stateMutation.mutate(next);
+                  setStatusOpen(false);
+                }}
                 open={statusOpen}
                 options={PROJECT_STATES}
                 setOpen={setStatusOpen}
@@ -295,7 +298,10 @@ function OverviewPane({
             <InlineMeta label="Priority">
               <EditablePriority
                 disabled={priorityMutation.isPending}
-                onChange={() => setPriorityOpen(false)}
+                onChange={(next) => {
+                  priorityMutation.mutate(next);
+                  setPriorityOpen(false);
+                }}
                 open={priorityOpen}
                 options={[...PRIORITY_OPTIONS]}
                 priority={project.priority}

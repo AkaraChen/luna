@@ -27,6 +27,10 @@ export function CreateIssueTrigger({
   };
 
   const requestClose = () => {
+    if (closeTimer.current != null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
     setState("closing");
     closeTimer.current = window.setTimeout(() => {
       setMounted(false);

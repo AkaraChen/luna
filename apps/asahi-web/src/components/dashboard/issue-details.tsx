@@ -33,6 +33,7 @@ import {
   ASAHI_LIVE_REFETCH_INTERVAL_MS,
   refreshAsahiQueries,
 } from "@/lib/query-refresh";
+import { sanitizeRichText } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 
 import { statusColumns } from "./constants";
@@ -215,7 +216,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
                 {issue.description ? (
                   <div
                     className="prose prose-sm max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground"
-                    dangerouslySetInnerHTML={{ __html: issue.description }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeRichText(issue.description) }}
                   />
                 ) : (
                   <p className="text-[13.5px] italic text-muted-foreground">No description</p>
@@ -338,7 +339,7 @@ function Timeline({ activities, comments }: { activities: Activity[]; comments: 
             </div>
             <div
               className="prose prose-sm max-w-2xl pl-7 text-[13.5px] leading-relaxed text-foreground"
-              dangerouslySetInnerHTML={{ __html: item.data.body }}
+              dangerouslySetInnerHTML={{ __html: sanitizeRichText(item.data.body) }}
             />
           </li>
         ) : (

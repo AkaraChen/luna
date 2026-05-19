@@ -50,6 +50,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { refreshAsahiQueries } from "@/lib/query-refresh";
+import { sanitizeRichText } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 
 type InlineComposerState = {
@@ -627,7 +628,7 @@ function WikiTreeContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-36 rounded-md border border-border/60 bg-white py-1 shadow-md"
+      className="fixed z-50 min-w-36 rounded-md border border-border/60 bg-popover py-1 text-popover-foreground shadow-[0_1px_2px_oklch(0_0_0_/_0.04)]"
       role="menu"
       style={{ left, top }}
     >
@@ -802,7 +803,7 @@ function WikiNodeViewer({
         ) : node.content?.trim() && node.content.trim() !== "<p></p>" ? (
           <div
             className="prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{ __html: node.content }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichText(node.content) }}
           />
         ) : (
           <p className="text-sm italic text-muted-foreground">Empty page</p>
