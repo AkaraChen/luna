@@ -1,6 +1,6 @@
 import {
   createContext,
-  useContext,
+  use,
   useEffect,
   useState,
   type ReactNode,
@@ -25,7 +25,7 @@ type SidebarContextValue = {
 const SidebarContext = createContext<SidebarContextValue | null>(null);
 
 function useSidebarContext(): SidebarContextValue {
-  const ctx = useContext(SidebarContext);
+  const ctx = use(SidebarContext);
   if (!ctx) {
     throw new Error("Sidebar context missing — wrap with AppShell");
   }

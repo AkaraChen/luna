@@ -59,7 +59,11 @@ export function CreateIssueTrigger({
 
   return (
     <>
-      <span className="inline-flex items-center" onClick={open}>
+      {/* contents wrapper: forwards the click to its children (a Button or
+          similar real interactive element) without inserting an extra layout
+          box or stealing focus. The wrapper itself doesn't need a role —
+          its children carry that semantics. */}
+      <span className="contents" onClickCapture={open}>
         {children}
       </span>
       {mounted ? (

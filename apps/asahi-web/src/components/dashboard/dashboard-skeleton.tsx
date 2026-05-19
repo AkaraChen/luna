@@ -63,7 +63,7 @@ export function IssuesViewSkeleton() {
 export function IssueDetailSkeleton() {
   return (
     <div className="grid h-full min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_18rem]">
-      <div className="flex min-h-0 flex-col px-6 py-6">
+      <div className="flex min-h-0 flex-col p-6">
         <div className="flex items-center gap-2">
           <Skeleton className="h-3 w-16" />
           <Skeleton className="h-3 w-20" />
@@ -86,7 +86,7 @@ export function IssueDetailSkeleton() {
           ))}
         </div>
       </div>
-      <aside className="hidden flex-col gap-4 border-l border-border/60 px-6 py-6 lg:flex">
+      <aside className="hidden flex-col gap-4 border-l border-border/60 p-6 lg:flex">
         <Skeleton className="h-3 w-12" />
         <Skeleton className="h-5 w-28" />
         <Skeleton className="h-3 w-12" />
@@ -104,7 +104,7 @@ export function ProjectDetailsSkeleton() {
       <div className="flex items-center justify-between px-6 pt-3 pb-2">
         <Skeleton className="h-9 w-64 rounded-full" />
       </div>
-      <div className="grid gap-x-10 gap-y-8 px-6 py-6 lg:grid-cols-2">
+      <div className="grid gap-x-10 gap-y-8 p-6 lg:grid-cols-2">
         <div className="flex flex-col gap-2">
           <Skeleton className="h-3 w-16" />
           <Skeleton className="h-4 w-40" />
@@ -124,7 +124,7 @@ export function ProjectDetailsSkeleton() {
 
 export function NotificationsViewSkeleton() {
   return (
-    <div className="mx-auto max-w-2xl px-6 py-6">
+    <div className="mx-auto max-w-2xl p-6">
       <div className="flex items-center justify-between pb-3">
         <Skeleton className="h-9 w-44 rounded-full" />
         <Skeleton className="h-7 w-24 rounded-md" />
