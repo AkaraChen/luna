@@ -222,15 +222,15 @@ function OverviewPane({
   const done = issues.filter((i) => i.state === "Done").length;
   const recent = useMemo(
     () =>
-      [...issues]
-        .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
+      issues
+        .toSorted((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
         .slice(0, 5),
     [issues],
   );
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto max-w-6xl px-6 py-6">
+      <div className="mx-auto max-w-6xl p-6">
         <header className="asahi-rise">
           <div className="flex items-center justify-between gap-4">
             <span className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
@@ -415,7 +415,7 @@ function IssuesPanel({
                 key={i.id}
                 style={{ animationDelay: `${idx * 22}ms` }}
               >
-                <div className="flex items-baseline gap-3 px-2 py-2">
+                <div className="flex items-baseline gap-3 p-2">
                   <StatusIcon state={i.state} />
                   <span className="min-w-0 flex-1 truncate text-[13.5px] text-foreground">
                     {i.title}
@@ -445,8 +445,7 @@ function WikiPanel({ onOpenWiki, project }: { onOpenWiki: () => void; project: P
 
   const pages = data.nodes.filter((n) => n.kind === "page");
   const recent = pages
-    .slice()
-    .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
+    .toSorted((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
     .slice(0, 5);
 
   return (
@@ -478,7 +477,7 @@ function WikiPanel({ onOpenWiki, project }: { onOpenWiki: () => void; project: P
               style={{ animationDelay: `${i * 22}ms` }}
             >
               <button
-                className="asahi-press flex w-full items-baseline gap-3 px-2 py-2 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
+                className="asahi-press flex w-full items-baseline gap-3 p-2 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
                 onClick={onOpenWiki}
                 type="button"
               >
@@ -530,12 +529,14 @@ function statusBarColor(state: string) {
   return "oklch(0.7 0 0)";
 }
 
+const SHORT_DATE = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+
 function formatDate(value: string | null) {
   if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(value));
+  return SHORT_DATE.format(new Date(value));
 }
 
 function formatShortDate(value: string | null) {

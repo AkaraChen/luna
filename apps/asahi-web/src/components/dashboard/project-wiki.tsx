@@ -321,7 +321,7 @@ export function ProjectWiki({ project }: { project: Project }) {
 
         <div className="max-h-[28rem] overflow-auto pb-2 lg:min-h-0 lg:flex-1 lg:max-h-none">
           {rootQuery.isLoading ? (
-            <div className="px-4 py-3 text-xs text-muted-foreground">Loading wiki...</div>
+            <div className="px-4 py-3 text-xs text-muted-foreground">Loading wiki…</div>
           ) : rootQuery.isError ? (
             <div className="px-4 py-3 text-xs text-destructive">Could not load wiki.</div>
           ) : (
@@ -543,7 +543,7 @@ function WikiTreeNode({
             className="py-2 pr-3 text-xs text-muted-foreground"
             style={{ paddingLeft: `${2.375 + depth * 0.875}rem` }}
           >
-            Loading...
+            Loading…
           </div>
         ) : (
           <>
@@ -604,15 +604,19 @@ function WikiTreeContextMenu({
   onRename: (node: WikiNode) => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     const handleClick = (event: globalThis.MouseEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) {
-        onClose();
+        onCloseRef.current();
       }
     };
     const handleKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKey);
@@ -620,7 +624,7 @@ function WikiTreeContextMenu({
       document.removeEventListener("mousedown", handleClick);
       document.removeEventListener("keydown", handleKey);
     };
-  }, [onClose]);
+  }, []);
 
   const left = typeof window === "undefined" ? menu.x : Math.min(menu.x, window.innerWidth - 152);
   const top = typeof window === "undefined" ? menu.y : Math.min(menu.y, window.innerHeight - 76);
@@ -713,7 +717,7 @@ function WikiNodeViewer({
             <FileText className="size-3.5 shrink-0" strokeWidth={1.8} />
           )}
           <span className="truncate">{node.slug}</span>
-          <span className="h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60" />
+          <span className="size-1 shrink-0 rounded-full bg-muted-foreground/60" />
           <span className="shrink-0">{formatDate(node.updated_at)}</span>
         </div>
 
@@ -962,7 +966,7 @@ function wikiNodesQueryKey(projectId: string, parentId: string | null) {
 }
 
 function sortWikiNodes(nodes: WikiNode[]) {
-  return [...nodes].sort((a, b) => {
+  return nodes.toSorted((a, b) => {
     if (a.kind !== b.kind) {
       return a.kind === "folder" ? -1 : 1;
     }
@@ -990,10 +994,12 @@ function collectLoadedWikiNodeIds(
   return ids;
 }
 
+const SHORT_DATE = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+
 function formatDate(value: string | null) {
   if (!value) return "No update";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(value));
+  return SHORT_DATE.format(new Date(value));
 }

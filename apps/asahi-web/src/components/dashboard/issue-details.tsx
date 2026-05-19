@@ -107,9 +107,10 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const blockerIds = issue.blocked_by
-    .map((blocker) => blocker.id)
-    .filter((id): id is string => Boolean(id));
+  const blockerIds = issue.blocked_by.reduce<string[]>((acc, blocker) => {
+    if (blocker.id) acc.push(blocker.id);
+    return acc;
+  }, []);
   const availableBlockers = allIssuesQuery.data.issues.filter(
     (candidate) => candidate.id !== issue.id,
   );
@@ -307,12 +308,11 @@ export function IssueDetails({ issue }: { issue: Issue }) {
 type TimelineItem = { type: "activity"; data: Activity } | { type: "comment"; data: Comment };
 
 function Timeline({ activities, comments }: { activities: Activity[]; comments: Comment[] }) {
-  const items: TimelineItem[] = [
-    ...activities
-      .filter((a) => a.kind !== "comment_created")
-      .map((a): TimelineItem => ({ type: "activity", data: a })),
-    ...comments.map((c): TimelineItem => ({ type: "comment", data: c })),
-  ];
+  const items: TimelineItem[] = activities.reduce<TimelineItem[]>((acc, a) => {
+    if (a.kind !== "comment_created") acc.push({ type: "activity", data: a });
+    return acc;
+  }, []);
+  for (const c of comments) items.push({ type: "comment", data: c });
 
   items.sort(
     (a, b) => new Date(a.data.created_at).getTime() - new Date(b.data.created_at).getTime(),
@@ -490,12 +490,14 @@ function IssueActivity({ issueId }: { issueId: string }) {
   return <Timeline activities={activitiesData.activities} comments={commentsData.comments} />;
 }
 
+const DATETIME_SHORT = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatDate(value: string | null) {
   if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
+  return DATETIME_SHORT.format(new Date(value));
 }

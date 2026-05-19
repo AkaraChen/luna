@@ -41,7 +41,7 @@ export function IssueList({
         >
           <button
             className={cn(
-              "group flex w-full items-baseline gap-3 px-2 py-2.5 text-left",
+              "group flex w-full items-baseline gap-3 p-2.5 text-left",
               "[transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40",
               selectedId === issue.id && "bg-muted",
             )}
@@ -90,12 +90,14 @@ export function IssueList({
   );
 }
 
+const SHORT_DATE = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+
 function formatDate(value: string | null) {
   if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(value));
+  return SHORT_DATE.format(new Date(value));
 }
 
 export function EmptyDetails() {

@@ -246,8 +246,9 @@ function NotificationRow({
             if (unread) onRead();
           }
         }}
-        role={issue ? "button" : undefined}
-        tabIndex={issue ? 0 : undefined}
+        aria-disabled={!issue}
+        role="button"
+        tabIndex={issue ? 0 : -1}
       >
         <span className="self-start pt-[0.4rem]">
           {unread ? (
@@ -360,11 +361,13 @@ function pickVerbTone(type: string, unread: boolean): string {
   return "text-foreground";
 }
 
+const DATETIME_SHORT = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
+  return DATETIME_SHORT.format(new Date(value));
 }
