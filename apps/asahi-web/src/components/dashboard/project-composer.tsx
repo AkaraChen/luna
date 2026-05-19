@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { IconX } from "@tabler/icons-react";
+import { X } from "lucide-react";
 
 import { createProject, type Project } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
@@ -64,21 +64,21 @@ export function ProjectComposer({
             onClick={onClose}
             type="button"
           >
-            <IconX className="size-4" />
+            <X className="size-4" />
           </button>
         </div>
 
         <div className="flex-1 px-5 pb-3 pt-6">
           <input
             autoFocus
-            className="block h-8 w-full bg-transparent font-semibold text-foreground outline-none placeholder:text-[#9da0a6]"
+            className="block h-8 w-full bg-transparent font-medium text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(event) => setName(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Project name"
             value={name}
           />
           <textarea
-            className="mt-2 block min-h-20 w-full resize-none bg-transparent text-foreground outline-none placeholder:text-[#a9abb1]"
+            className="mt-2 block min-h-20 w-full resize-none bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(event) => setDescription(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Add description..."

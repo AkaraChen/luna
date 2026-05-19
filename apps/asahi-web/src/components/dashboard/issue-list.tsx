@@ -1,4 +1,4 @@
-import { IconCircleDashed, IconLink } from "@tabler/icons-react";
+import { CircleDashed, Link2 } from "lucide-react";
 
 import { type Issue } from "@/api/asahi";
 import { cn } from "@/lib/utils";
@@ -18,51 +18,80 @@ export function IssueList({
     return (
       <div className="flex h-[420px] items-center justify-center px-6 text-center">
         <div>
-          <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
-          <div className="text-sm font-medium">No issues</div>
-          <div className="mt-1 text-sm text-[#77746c]">Try a different status or search.</div>
+          <CircleDashed
+            className="mx-auto mb-3 size-8 text-muted-foreground"
+            strokeWidth={1.5}
+          />
+          <div className="text-[13.5px] font-medium text-foreground">No issues</div>
+          <div className="mt-1 text-[12.5px] text-muted-foreground">
+            Try a different status or search.
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div>
-      {issues.map((issue) => (
-        <button
-          className={cn(
-            "grid min-h-13 w-full grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f6f2]",
-            selectedId === issue.id && "bg-[#f2f1ec]",
-          )}
+    <ul className="divide-y divide-border/60">
+      {issues.map((issue, i) => (
+        <li
+          className="asahi-rise"
           key={issue.id}
-          onClick={() => onSelect(issue.id)}
-          type="button"
+          style={{ animationDelay: `${Math.min(i * 22, 220)}ms` }}
         >
-          <StatusIcon state={issue.state} />
-          <span className="min-w-0">
-            <span className="block truncate text-sm text-[#262522]">{issue.title}</span>
-            <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-[#8f8b82]">
-              <span className="shrink-0">{issue.identifier}</span>
-              <span className="shrink-0">{formatDate(issue.updated_at)}</span>
-              {issue.blocked_by.length ? (
-                <span className="inline-flex min-w-0 items-center gap-1">
-                  <IconLink className="size-3 shrink-0" />
-                  <span className="truncate">
-                    {issue.blocked_by.map((blocker) => blocker.identifier ?? blocker.id).join(", ")}
-                  </span>
+          <button
+            className={cn(
+              "group flex w-full items-baseline gap-3 px-2 py-2.5 text-left",
+              "[transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40",
+              selectedId === issue.id && "bg-muted",
+            )}
+            onClick={() => onSelect(issue.id)}
+            type="button"
+          >
+            <StatusIcon className="translate-y-0.5" state={issue.state} />
+            <div className="flex min-w-0 flex-1 items-baseline gap-3">
+              <span className="truncate text-[13.5px] text-foreground">{issue.title}</span>
+              {issue.labels.length ? (
+                <span className="hidden shrink-0 items-center gap-1.5 md:inline-flex">
+                  {issue.labels.slice(0, 2).map((label) => (
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+                      key={label}
+                    >
+                      <span
+                        aria-hidden
+                        className="size-1.5 rounded-full bg-muted-foreground/70"
+                      />
+                      {label}
+                    </span>
+                  ))}
                 </span>
               ) : null}
-            </span>
-          </span>
-          <Priority priority={issue.priority} showEmpty={false} />
-        </button>
+              <span className="hidden shrink-0 font-mono text-[11.5px] uppercase tracking-wide text-muted-foreground sm:inline">
+                {issue.identifier}
+              </span>
+              {issue.blocked_by.length ? (
+                <span className="hidden shrink-0 items-center gap-1 text-[11.5px] text-muted-foreground lg:inline-flex">
+                  <Link2 className="size-3" />
+                  {issue.blocked_by.map((b) => b.identifier ?? b.id).join(", ")}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-baseline gap-3">
+              <Priority priority={issue.priority} showEmpty={false} />
+              <span className="text-[11.5px] tabular-nums text-muted-foreground">
+                {formatDate(issue.updated_at)}
+              </span>
+            </div>
+          </button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
 function formatDate(value: string | null) {
-  if (!value) return "No update";
+  if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
@@ -73,8 +102,11 @@ export function EmptyDetails() {
   return (
     <div className="flex h-full items-center justify-center p-8 text-center">
       <div>
-        <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
-        <div className="text-sm font-medium">No issue selected</div>
+        <CircleDashed
+          className="mx-auto mb-3 size-8 text-muted-foreground"
+          strokeWidth={1.5}
+        />
+        <div className="text-[13.5px] font-medium text-foreground">No issue selected</div>
       </div>
     </div>
   );

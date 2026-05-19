@@ -14,16 +14,16 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import {
-  IconChevronRight,
-  IconCircleDashed,
-  IconEdit,
-  IconFileText,
-  IconFolder,
-  IconFolderOpen,
-  IconFolderPlus,
-  IconPlus,
-  IconTrash,
-} from "@tabler/icons-react";
+  ChevronRight,
+  CircleDashed,
+  Edit3,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 import {
   createWikiNode,
@@ -291,7 +291,7 @@ export function ProjectWiki({ project }: { project: Project }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto lg:grid lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)] lg:overflow-hidden">
-      <div className="min-h-0 border-b border-[#eceae5] lg:flex lg:flex-col lg:border-b-0 lg:border-r">
+      <div className="min-h-0 border-b border-border/60 lg:flex lg:flex-col lg:border-b-0 lg:border-r">
         <div className="flex h-12 shrink-0 items-center justify-between px-4">
           <div className="text-sm font-medium">Wiki</div>
           <div className="flex items-center gap-1">
@@ -303,7 +303,7 @@ export function ProjectWiki({ project }: { project: Project }) {
               type="button"
               variant="ghost"
             >
-              <IconFolder className="size-3.5" />
+              <Folder className="size-3.5" />
             </Button>
             <Button
               aria-label="Create page"
@@ -313,14 +313,14 @@ export function ProjectWiki({ project }: { project: Project }) {
               type="button"
               variant="ghost"
             >
-              <IconPlus className="size-3.5" />
+              <Plus className="size-3.5" />
             </Button>
           </div>
         </div>
 
         <div className="max-h-[28rem] overflow-auto pb-2 lg:min-h-0 lg:flex-1 lg:max-h-none">
           {rootQuery.isLoading ? (
-            <div className="px-4 py-3 text-xs text-[#8f8b82]">Loading wiki...</div>
+            <div className="px-4 py-3 text-xs text-muted-foreground">Loading wiki...</div>
           ) : rootQuery.isError ? (
             <div className="px-4 py-3 text-xs text-destructive">Could not load wiki.</div>
           ) : (
@@ -358,7 +358,7 @@ export function ProjectWiki({ project }: { project: Project }) {
               {rootNodes.length === 0 && !inlineComposer ? (
                 <div className="flex h-56 items-center justify-center px-4 text-center">
                   <div>
-                    <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
+                    <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
                     <div className="text-sm font-medium">No wiki pages</div>
                   </div>
                 </div>
@@ -473,8 +473,8 @@ function WikiTreeNode({
       ) : (
         <div
           className={cn(
-            "group grid min-h-9 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1 pr-2 hover:bg-[#f7f6f2]",
-            isSelected && "bg-[#f2f1ec]",
+            "group grid min-h-9 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1 pr-2 hover:bg-muted/40",
+            isSelected && "bg-muted",
           )}
           onContextMenu={(event) => onOpenContextMenu(event, node)}
           style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
@@ -485,9 +485,9 @@ function WikiTreeNode({
             type="button"
           >
             {isFolder ? (
-              <IconChevronRight
+              <ChevronRight
                 className={cn(
-                  "size-3.5 text-[#8f8b82] transition-transform",
+                  "size-3.5 text-muted-foreground transition-transform",
                   expanded && "rotate-90",
                 )}
               />
@@ -496,19 +496,19 @@ function WikiTreeNode({
             )}
             {isFolder ? (
               expanded ? (
-                <IconFolderOpen className="size-4 text-[#6f6b62]" stroke={1.8} />
+                <FolderOpen className="size-4 text-muted-foreground" strokeWidth={1.8} />
               ) : (
-                <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+                <Folder className="size-4 text-muted-foreground" strokeWidth={1.8} />
               )
             ) : (
-              <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
+              <FileText className="size-4 text-muted-foreground" strokeWidth={1.8} />
             )}
-            <span className="min-w-0 truncate text-sm text-[#33312d]">{node.title}</span>
+            <span className="min-w-0 truncate text-sm text-foreground">{node.title}</span>
           </button>
           {isFolder ? (
             <button
               aria-label={`Create subfolder in ${node.title}`}
-              className="flex size-6 items-center justify-center rounded text-[#8f8b82] opacity-0 transition-opacity hover:bg-[#e8e6e0] hover:text-[#33312d] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9c4bb]"
+              className="flex size-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted/60 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border"
               onClick={(event) => {
                 event.stopPropagation();
                 onCreateNode?.(node.id, "folder");
@@ -516,13 +516,13 @@ function WikiTreeNode({
               title="Create subfolder"
               type="button"
             >
-              <IconFolderPlus className="size-3.5" />
+              <FolderPlus className="size-3.5" />
             </button>
           ) : null}
           {isFolder ? (
             <button
               aria-label={`Create page in ${node.title}`}
-              className="flex size-6 items-center justify-center rounded text-[#8f8b82] opacity-0 transition-opacity hover:bg-[#e8e6e0] hover:text-[#33312d] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9c4bb]"
+              className="flex size-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted/60 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border"
               onClick={(event) => {
                 event.stopPropagation();
                 onCreateNode?.(node.id, "page");
@@ -530,7 +530,7 @@ function WikiTreeNode({
               title="Create page in folder"
               type="button"
             >
-              <IconPlus className="size-3.5" />
+              <Plus className="size-3.5" />
             </button>
           ) : null}
         </div>
@@ -539,7 +539,7 @@ function WikiTreeNode({
       {isFolder && expanded ? (
         loadingChildren ? (
           <div
-            className="py-2 pr-3 text-xs text-[#8f8b82]"
+            className="py-2 pr-3 text-xs text-muted-foreground"
             style={{ paddingLeft: `${2.375 + depth * 0.875}rem` }}
           >
             Loading...
@@ -578,7 +578,7 @@ function WikiTreeNode({
             ) : null}
             {children.length === 0 && inlineComposer?.parentId !== node.id ? (
               <div
-                className="py-2 pr-3 text-xs text-[#a8a59d]"
+                className="py-2 pr-3 text-xs text-muted-foreground"
                 style={{ paddingLeft: `${2.375 + depth * 0.875}rem` }}
               >
                 Empty
@@ -627,12 +627,12 @@ function WikiTreeContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-36 rounded-md border border-[#eceae5] bg-white py-1 shadow-md"
+      className="fixed z-50 min-w-36 rounded-md border border-border/60 bg-white py-1 shadow-md"
       role="menu"
       style={{ left, top }}
     >
       <button
-        className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs text-[#33312d] hover:bg-[#f7f6f2]"
+        className="flex h-8 w-full items-center gap-2 px-3 text-left text-xs text-foreground hover:bg-muted/40"
         onClick={() => {
           onRename(menu.node);
           onClose();
@@ -640,7 +640,7 @@ function WikiTreeContextMenu({
         role="menuitem"
         type="button"
       >
-        <IconEdit className="size-3.5" />
+        <Edit3 className="size-3.5" />
         Rename
       </button>
       <button
@@ -652,7 +652,7 @@ function WikiTreeContextMenu({
         role="menuitem"
         type="button"
       >
-        <IconTrash className="size-3.5" />
+        <Trash2 className="size-3.5" />
         Delete
       </button>
     </div>
@@ -693,7 +693,7 @@ function WikiNodeViewer({
     return (
       <div className="flex min-h-[22rem] items-center justify-center px-6 text-center">
         <div>
-          <IconCircleDashed className="mx-auto mb-3 size-8 text-[#b4b0a7]" stroke={1.5} />
+          <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
           <div className="text-sm font-medium">No wiki item selected</div>
         </div>
       </div>
@@ -705,21 +705,21 @@ function WikiNodeViewer({
   return (
     <article className="min-w-0 lg:min-h-0 lg:overflow-auto">
       <div className="px-5 py-4">
-        <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-[#77746c]">
+        <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
           {isFolder ? (
-            <IconFolderOpen className="size-3.5 shrink-0" stroke={1.8} />
+            <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.8} />
           ) : (
-            <IconFileText className="size-3.5 shrink-0" stroke={1.8} />
+            <FileText className="size-3.5 shrink-0" strokeWidth={1.8} />
           )}
           <span className="truncate">{node.slug}</span>
-          <span className="h-1 w-1 shrink-0 rounded-full bg-[#c9c4bb]" />
+          <span className="h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60" />
           <span className="shrink-0">{formatDate(node.updated_at)}</span>
         </div>
 
         {editing ? (
           <input
             autoFocus
-            className="block w-full bg-transparent text-lg font-semibold leading-snug text-[#22211f] outline-none placeholder:text-[#a8a59d]"
+            className="block w-full bg-transparent text-[15px] font-medium leading-snug text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(e) => setTitleDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -731,17 +731,17 @@ function WikiNodeViewer({
           />
         ) : (
           <div className="flex items-center justify-between gap-3">
-            <h3 className="truncate text-lg font-semibold leading-snug text-[#22211f]">
+            <h3 className="truncate text-[15px] font-medium leading-snug text-foreground">
               {node.title}
             </h3>
             {!isFolder && (
               <div className="flex shrink-0 items-center gap-2">
-                <span className="text-xs text-[#8f8b82]">
+                <span className="text-xs text-muted-foreground">
                   {node.current_version ? `Version ${node.current_version.version}` : "No versions"}
                 </span>
                 <Button
                   aria-label="Edit page"
-                  className="text-[#8a877e] hover:text-[#33312d]"
+                  className="text-muted-foreground hover:text-foreground"
                   onClick={() => {
                     setEditing(true);
                     setTitleDraft(node.title);
@@ -751,7 +751,7 @@ function WikiNodeViewer({
                   type="button"
                   variant="ghost"
                 >
-                  <IconEdit className="size-3.5" />
+                  <Edit3 className="size-3.5" />
                 </Button>
               </div>
             )}
@@ -761,7 +761,7 @@ function WikiNodeViewer({
 
       <div className="px-5 pb-5 pt-0">
         {isFolder ? (
-          <div className="text-sm text-[#69665f]">
+          <div className="text-sm text-muted-foreground">
             {childNodes
               ? childNodes.length === 1
                 ? "1 item"
@@ -805,7 +805,7 @@ function WikiNodeViewer({
             dangerouslySetInnerHTML={{ __html: node.content }}
           />
         ) : (
-          <p className="text-sm italic text-[#a8a59d]">Empty page</p>
+          <p className="text-sm italic text-muted-foreground">Empty page</p>
         )}
       </div>
     </article>
@@ -863,24 +863,24 @@ function RenameRow({
       style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
     >
       {kind === "folder" ? (
-        <IconChevronRight
-          className={cn("size-3.5 text-[#8f8b82] transition-transform", expanded && "rotate-90")}
+        <ChevronRight
+          className={cn("size-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")}
         />
       ) : (
         <span className="size-3.5" />
       )}
       {kind === "folder" ? (
         expanded ? (
-          <IconFolderOpen className="size-4 text-[#6f6b62]" stroke={1.8} />
+          <FolderOpen className="size-4 text-muted-foreground" strokeWidth={1.8} />
         ) : (
-          <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+          <Folder className="size-4 text-muted-foreground" strokeWidth={1.8} />
         )
       ) : (
-        <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
+        <FileText className="size-4 text-muted-foreground" strokeWidth={1.8} />
       )}
       <input
         ref={inputRef}
-        className="min-w-0 bg-transparent text-sm text-[#33312d] outline-none placeholder:text-[#a8a59d] disabled:opacity-60"
+        className="min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
         disabled={pending}
         onBlur={submit}
         onChange={(event) => setDraft(event.target.value)}
@@ -938,13 +938,13 @@ function InlineRow({
     >
       <span className="size-3.5" />
       {kind === "folder" ? (
-        <IconFolder className="size-4 text-[#7a756b]" stroke={1.8} />
+        <Folder className="size-4 text-muted-foreground" strokeWidth={1.8} />
       ) : (
-        <IconFileText className="size-4 text-[#6d7180]" stroke={1.8} />
+        <FileText className="size-4 text-muted-foreground" strokeWidth={1.8} />
       )}
       <input
         ref={inputRef}
-        className="min-w-0 bg-transparent text-sm text-[#33312d] outline-none placeholder:text-[#a8a59d]"
+        className="min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
         onBlur={handleBlur}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={handleKeyDown}
