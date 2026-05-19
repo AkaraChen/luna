@@ -8,8 +8,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 0,
-      refetchOnMount: "always",
+      // Treat data as fresh for 5s so tab switches within that window don't
+      // refetch at all. After that, refetch in the background using cached
+      // data as the rendered source (no Suspense fall-through, no skeleton
+      // flash). Live mutations still call refreshAsahiQueries() to force a
+      // fresh fetch synchronously.
+      staleTime: 5_000,
+      refetchOnMount: true,
       refetchOnReconnect: "always",
       refetchOnWindowFocus: "always",
       throwOnError: true,
