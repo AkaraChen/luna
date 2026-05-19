@@ -132,14 +132,21 @@ export function Dropdown({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // Latest-ref so swapping onOpenChange between renders doesn't churn the
+  // document listeners.
+  const onOpenChangeRef = useRef(onOpenChange);
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  });
+
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
       if (!rootRef.current) return;
-      if (!rootRef.current.contains(event.target as Node)) onOpenChange(false);
+      if (!rootRef.current.contains(event.target as Node)) onOpenChangeRef.current(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onOpenChange(false);
+      if (event.key === "Escape") onOpenChangeRef.current(false);
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKey);
@@ -147,7 +154,7 @@ export function Dropdown({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, onOpenChange]);
+  }, [open]);
 
   const sideClass = side === "top" ? "bottom-full mb-1" : "top-full mt-1";
   const alignClass = align === "start" ? "left-0" : "right-0";

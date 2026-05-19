@@ -62,17 +62,25 @@ export function SettingsDialog({
   const state: "open" | "closing" | undefined =
     animState === "closing" ? "closing" : entered ? "open" : undefined;
 
+  // Latest-ref pattern: keep onClose accessible to the effect without
+  // tearing down the document listener every render. Equivalent to React's
+  // experimental useEffectEvent without the experimental import.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!mounted) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [mounted, onClose]);
+  }, [mounted]);
 
   if (!mounted) return null;
 

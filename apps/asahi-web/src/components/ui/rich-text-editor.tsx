@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Tiptap, useEditor, useTiptap } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
@@ -40,16 +40,22 @@ export function RichTextEditor({
     },
   });
 
+  // Latest-ref so onChange swaps don't re-subscribe the tiptap "update" event.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
+
   useEffect(() => {
     if (!editor) return;
     const handler = () => {
-      onChange?.(editor.getHTML());
+      onChangeRef.current?.(editor.getHTML());
     };
     editor.on("update", handler);
     return () => {
       editor.off("update", handler);
     };
-  }, [editor, onChange]);
+  }, [editor]);
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -49,17 +49,22 @@ export function IssueComposer({
     dataState === "closing" ? "closing" : entered ? "open" : undefined;
 
   // Escape to dismiss. Routed through onClose so the parent can play the
-  // exit transition before unmount.
+  // exit transition before unmount. Latest-ref so the document listener
+  // doesn't re-subscribe on every render.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, []);
 
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
