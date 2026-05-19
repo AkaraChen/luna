@@ -74,6 +74,6 @@ function isBlankRichText(html: string) {
   return !html
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
-    .replace(/ /g, " ")
+    .replace(/\u00A0/g, " ")
     .trim();
 }
