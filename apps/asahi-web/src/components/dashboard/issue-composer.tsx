@@ -75,7 +75,7 @@ export function IssueComposer({
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
   const isOpen = (key: MenuKey) => openMenu === key;
   const setOpen = (key: MenuKey) => (next: boolean) => {
-    setOpenMenu(next ? key : openMenu === key ? null : openMenu);
+    setOpenMenu((current) => (next ? key : current === key ? null : current));
   };
   const projectOpen = isOpen("project");
   const statusOpen = isOpen("status");

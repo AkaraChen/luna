@@ -249,9 +249,13 @@ function NotificationRow({
         role={issue ? "button" : undefined}
         tabIndex={issue ? 0 : undefined}
       >
-        <span aria-hidden className="self-start pt-[0.4rem]">
+        <span className="self-start pt-[0.4rem]">
           {unread ? (
-            <span aria-label="Unread" className="block size-1.5 rounded-full bg-foreground" />
+            <span
+              aria-label="Unread"
+              className="block size-1.5 rounded-full bg-foreground"
+              role="img"
+            />
           ) : null}
         </span>
 
