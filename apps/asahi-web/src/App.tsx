@@ -1,15 +1,15 @@
 import { Suspense, useMemo, useState } from "react";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { IconChevronLeft, IconFolder, IconPlus, IconSearch } from "@tabler/icons-react";
+import { keepPreviousData, useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { ChevronLeft, Folder, Plus, Search } from "lucide-react";
 import { useLocation } from "wouter";
 
 import { fetchIssues } from "@/api/asahi";
-import { AsahiSidebar, type View } from "@/components/dashboard/asahi-sidebar";
+import { AppShell } from "@/components/dashboard/asahi-sidebar";
 import { CreateIssueTrigger } from "@/components/dashboard/create-issue-trigger";
 import { statusFilters, type StatusFilter } from "@/components/dashboard/constants";
 import {
   IssueDetailSkeleton,
-  IssuesViewSkeleton,
+  IssueListSkeleton,
   NotificationsViewSkeleton,
   ProjectDetailsSkeleton,
   SidebarSkeleton,
@@ -21,7 +21,6 @@ import { DashboardPageLayout } from "@/components/dashboard/page-layout";
 import { ProjectDetails } from "@/components/dashboard/project-details";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
 export function App() {
@@ -31,35 +30,41 @@ export function App() {
 function Dashboard() {
   const [location, navigate] = useLocation();
   const projectRoute = location.startsWith("/projects");
-  const view: View = projectRoute
-    ? "project"
+  const view = projectRoute
+    ? ("project" as const)
     : location.startsWith("/inbox")
-      ? "notifications"
-      : "issues";
+      ? ("notifications" as const)
+      : ("issues" as const);
+
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
   const selectedId = issueIdFromLocation(location);
   const selectedProjectLocator = projectLocatorFromLocation(location);
   const showIssueSearch = view === "issues" && !selectedId;
   const showCreateIssue = (view === "issues" && !selectedId) || view === "notifications";
+
   const headerRight =
     showIssueSearch || showCreateIssue ? (
       <>
         {showIssueSearch ? (
-          <div className="relative">
-            <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <div className="relative hidden sm:block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
-              className="hidden h-8 w-[min(42vw,280px)] pl-8 sm:block"
+              className="h-8 w-[min(42vw,260px)] rounded-md border-border/80 bg-background pl-8 text-[13px]"
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search issues"
+              placeholder="Search"
               value={search}
             />
           </div>
         ) : null}
         {showCreateIssue ? (
           <CreateIssueTrigger>
-            <Button size="sm">
-              <IconPlus className="size-4" />
+            <Button
+              className="asahi-press h-8 rounded-md border-border/80 bg-background px-3 text-[13px] font-normal text-foreground"
+              size="sm"
+              variant="outline"
+            >
+              <Plus className="size-3.5" data-icon="inline-start" />
               New issue
             </Button>
           </CreateIssueTrigger>
@@ -68,35 +73,22 @@ function Dashboard() {
     ) : null;
 
   return (
-    <SidebarProvider>
-      <Suspense fallback={<SidebarSkeleton />}>
-        <AsahiSidebar
-          activeProjectLocator={selectedProjectLocator}
-          onProjectSelect={(projectLocator) => {
-            navigate(`/projects/${encodeURIComponent(projectLocator)}`);
-          }}
-          view={view}
-          onViewChange={(nextView) => {
-            navigate(nextView === "notifications" ? "/inbox" : "/issues");
-          }}
-        />
-      </Suspense>
-
-      <SidebarInset className="h-svh min-h-0 overflow-hidden border border-border/70 bg-background md:h-[calc(100svh-1rem)]">
+    <Suspense fallback={<SidebarSkeleton />}>
+      <AppShell>
         <DashboardPageLayout
           right={headerRight}
           title={
             view === "issues" && selectedId ? (
               <button
-                className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground"
+                className="inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground"
                 onClick={() => navigate("/issues")}
                 type="button"
               >
-                <IconChevronLeft className="size-4" />
+                <ChevronLeft className="size-3.5" />
                 Issues
               </button>
             ) : (
-              <span className="text-sm font-semibold">
+              <span className="text-[13.5px] font-medium text-foreground">
                 {view === "notifications" ? "Inbox" : view === "project" ? "Project" : "Issues"}
               </span>
             )
@@ -122,18 +114,16 @@ function Dashboard() {
               <IssueDetailPage selectedId={selectedId} />
             </Suspense>
           ) : (
-            <Suspense fallback={<IssuesViewSkeleton />}>
-              <IssuesView
-                onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
-                search={search}
-                statusFilter={statusFilter}
-                setStatusFilter={setStatusFilter}
-              />
-            </Suspense>
+            <IssuesView
+              onSelect={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
+              search={search}
+              setStatusFilter={setStatusFilter}
+              statusFilter={statusFilter}
+            />
           )}
         </DashboardPageLayout>
-      </SidebarInset>
-    </SidebarProvider>
+      </AppShell>
+    </Suspense>
   );
 }
 
@@ -152,9 +142,9 @@ function NoProjectSelected() {
     <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
       <div>
         <div className="mx-auto mb-3 flex size-9 items-center justify-center rounded-full bg-muted">
-          <IconFolder className="size-4 text-muted-foreground" stroke={1.8} />
+          <Folder className="size-4 text-muted-foreground" strokeWidth={1.8} />
         </div>
-        <div className="text-sm font-medium">Select a project</div>
+        <div className="text-[13.5px] font-medium">Select a project</div>
       </div>
     </div>
   );
@@ -172,15 +162,23 @@ function IssuesView({
   statusFilter: StatusFilter;
 }) {
   const states = statusFilter === "all" ? undefined : [statusFilter];
-  const { data } = useSuspenseQuery({
+
+  // Non-suspending: we want the toolbar (status pills, counts) to remain
+  // mounted while the filter changes; the list region shows its own skeleton
+  // only on the very first load. Subsequent filter changes keep the previous
+  // data rendered via keepPreviousData, so the skeleton doesn't flash.
+  const { data, isPending } = useQuery({
     queryKey: ["issues", states?.join(",") ?? "all"],
     queryFn: () => fetchIssues({ states }),
+    placeholderData: keepPreviousData,
   });
+
+  const issues = data?.issues ?? [];
 
   const visibleIssues = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return data.issues;
-    return data.issues.filter((issue) => {
+    if (!query) return issues;
+    return issues.filter((issue) => {
       const haystack = [
         issue.identifier,
         issue.title,
@@ -192,17 +190,24 @@ function IssuesView({
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [data.issues, search]);
+  }, [issues, search]);
+
+  const totals = useMemo(() => {
+    const open = issues.filter((i) => i.state !== "Done").length;
+    return { open, shown: visibleIssues.length };
+  }, [issues, visibleIssues]);
 
   return (
     <section className="min-h-0 flex-1 overflow-auto">
-      <div className="flex h-12 items-center justify-between px-4">
-        <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-baseline justify-between gap-x-6 gap-y-2 px-6 pt-3 pb-2">
+        <div className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/40 p-1">
           {statusFilters.map((status) => (
             <button
               className={cn(
-                "h-7 rounded-full px-3 text-xs font-medium text-muted-foreground",
-                statusFilter === status && "bg-background text-foreground shadow-sm",
+                "asahi-press h-7 rounded-full px-3 text-[12.5px] [transition:color_180ms_var(--ease-out-strong),background-color_180ms_var(--ease-out-strong),transform_140ms_var(--ease-out-strong)] hover:text-foreground",
+                statusFilter === status
+                  ? "asahi-pill-lift bg-background text-foreground"
+                  : "text-muted-foreground",
               )}
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -212,9 +217,22 @@ function IssuesView({
             </button>
           ))}
         </div>
+        {data ? (
+          <p className="text-[12px] text-muted-foreground">
+            <span className="text-foreground tabular-nums">{totals.open}</span> open
+            <span className="mx-2 text-border">·</span>
+            <span className="tabular-nums">{totals.shown}</span> shown
+          </p>
+        ) : null}
       </div>
 
-      <IssueList issues={visibleIssues} onSelect={onSelect} selectedId={null} />
+      <div className="mx-auto max-w-5xl px-6 pb-12">
+        {isPending && !data ? (
+          <IssueListSkeleton />
+        ) : (
+          <IssueList issues={visibleIssues} onSelect={onSelect} selectedId={null} />
+        )}
+      </div>
     </section>
   );
 }
@@ -230,7 +248,7 @@ function IssueDetailPage({ selectedId }: { selectedId: string }) {
   if (!issue) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
-        <p className="text-sm text-muted-foreground">Issue not found.</p>
+        <p className="text-[13px] text-muted-foreground">Issue not found.</p>
       </div>
     );
   }

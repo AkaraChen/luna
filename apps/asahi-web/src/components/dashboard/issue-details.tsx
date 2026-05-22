@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { IconChevronDown, IconEdit, IconLink, IconTrash, IconX } from "@tabler/icons-react";
+import { ChevronDown, Edit3, Link2, Trash2, X } from "lucide-react";
 import { useLocation } from "wouter";
 
 import {
@@ -33,6 +33,7 @@ import {
   ASAHI_LIVE_REFETCH_INTERVAL_MS,
   refreshAsahiQueries,
 } from "@/lib/query-refresh";
+import { sanitizeRichText } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 
 import { statusColumns } from "./constants";
@@ -83,9 +84,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
 
   const commentMutation = useMutation({
     mutationFn: (body: string) => createComment(issue.id, body),
-    onSuccess: () => {
-      setComment("");
-    },
+    onSuccess: () => setComment(""),
     onSettled: () => refreshAsahiQueries(queryClient),
   });
 
@@ -108,44 +107,53 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const blockerIds = issue.blocked_by
-    .map((blocker) => blocker.id)
-    .filter((id): id is string => Boolean(id));
+  const blockerIds = issue.blocked_by.reduce<string[]>((acc, blocker) => {
+    if (blocker.id) acc.push(blocker.id);
+    return acc;
+  }, []);
   const availableBlockers = allIssuesQuery.data.issues.filter(
     (candidate) => candidate.id !== issue.id,
   );
 
   return (
-    <section className="grid h-full min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem] lg:overflow-hidden">
+    <section className="grid h-full min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      {/* Middle column: content scrolls in its own region; composer always pinned to the column's bottom edge */}
       <div className="flex min-h-0 min-w-0 flex-col">
-        <div className="shrink-0 px-5 pb-4 pt-5">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-xs font-medium text-[#77746c]">{issue.identifier}</span>
-              <span className="h-1 w-1 rounded-full bg-[#c9c4bb]" />
-              <span className="text-xs text-[#8a877e]">{formatDate(issue.updated_at)}</span>
+        <div className="min-h-0 flex-1 overflow-auto px-5 pt-6 pb-6">
+          <header className="asahi-rise flex items-start justify-between gap-4">
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+                <span className="font-mono uppercase tracking-wide">{issue.identifier}</span>
+                <span aria-hidden>·</span>
+                <span>{formatDate(issue.updated_at)}</span>
+              </div>
+              <h1 className="text-[15px] font-medium leading-snug text-foreground">
+                {issue.title}
+              </h1>
             </div>
-            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <AlertDialog onOpenChange={setDeleteOpen} open={deleteOpen}>
               <Button
                 aria-label="Delete issue"
-                className="text-[#8a877e] hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+                className="asahi-press text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/30"
                 disabled={deleteMutation.isPending}
                 onClick={() => setDeleteOpen(true)}
                 size="icon-xs"
                 type="button"
                 variant="ghost"
               >
-                <IconTrash className="size-3.5" />
+                <Trash2 className="size-3.5" />
               </Button>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete {issue.identifier}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This action cannot be undone. This will permanently delete the issue.
+                    This action cannot be undone. The issue will be permanently removed.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
+                  <AlertDialogCancel onClick={() => setDeleteOpen(false)}>
+                    Cancel
+                  </AlertDialogCancel>
                   <AlertDialogAction
                     disabled={deleteMutation.isPending}
                     onClick={() => deleteMutation.mutate()}
@@ -156,86 +164,88 @@ export function IssueDetails({ issue }: { issue: Issue }) {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-          </div>
-          <h2 className="text-lg font-semibold leading-snug text-[#22211f]">{issue.title}</h2>
-          {editingDescription ? (
-            <div className="mt-3">
-              <Textarea
-                autoFocus
-                className="min-h-24 resize-none text-sm"
-                onChange={(event) => setDescriptionDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    setEditingDescription(false);
-                    setDescriptionDraft(issue.description ?? "");
-                  }
-                }}
-                placeholder="Add a description"
-                value={descriptionDraft}
-              />
-              <div className="mt-2 flex items-center gap-2">
-                <Button
-                  disabled={updateMutation.isPending}
-                  onClick={() => {
-                    updateMutation.mutate(
-                      { description: descriptionDraft || null },
-                      {
-                        onSuccess: () => {
-                          setEditingDescription(false);
-                        },
-                      },
-                    );
+          </header>
+
+          <div
+            className="asahi-rise group/description relative mt-4 max-w-2xl"
+            style={{ animationDelay: "40ms" }}
+          >
+            {editingDescription ? (
+              <div>
+                <Textarea
+                  autoFocus
+                  className="min-h-24 resize-none rounded-md border-border/70 bg-muted/40 px-3 py-2 text-[13.5px] leading-relaxed"
+                  onChange={(event) => setDescriptionDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      setEditingDescription(false);
+                      setDescriptionDraft(issue.description ?? "");
+                    }
                   }}
-                  size="sm"
-                  type="button"
-                >
-                  Save
-                </Button>
+                  placeholder="Add a description"
+                  value={descriptionDraft}
+                />
+                <div className="mt-2 flex items-center gap-2">
+                  <Button
+                    disabled={updateMutation.isPending}
+                    onClick={() => {
+                      updateMutation.mutate(
+                        { description: descriptionDraft || null },
+                        { onSuccess: () => setEditingDescription(false) },
+                      );
+                    }}
+                    size="sm"
+                    type="button"
+                  >
+                    Save
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setEditingDescription(false);
+                      setDescriptionDraft(issue.description ?? "");
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {issue.description ? (
+                  <div
+                    className="prose prose-sm max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground"
+                    dangerouslySetInnerHTML={{ __html: sanitizeRichText(issue.description) }}
+                  />
+                ) : (
+                  <p className="text-[13.5px] italic text-muted-foreground">No description</p>
+                )}
                 <Button
-                  onClick={() => {
-                    setEditingDescription(false);
-                    setDescriptionDraft(issue.description ?? "");
-                  }}
-                  size="sm"
+                  aria-label="Edit description"
+                  className="absolute -right-1 -top-1 opacity-0 transition-opacity group-hover/description:opacity-100"
+                  onClick={() => setEditingDescription(true)}
+                  size="icon-xs"
                   type="button"
                   variant="ghost"
                 >
-                  Cancel
+                  <Edit3 className="size-3.5 text-muted-foreground" />
                 </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="group/description relative mt-3">
-              {issue.description ? (
-                <div
-                  className="prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: issue.description }}
-                />
-              ) : (
-                <p className="text-sm italic text-[#a8a59d]">No description</p>
-              )}
-              <Button
-                aria-label="Edit description"
-                className="absolute -right-1 -top-1 opacity-0 transition-opacity group-hover/description:opacity-100"
-                onClick={() => setEditingDescription(true)}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <IconEdit className="size-3.5 text-[#8a877e]" />
-              </Button>
-            </div>
-          )}
-        </div>
+              </>
+            )}
+          </div>
 
-        <div className="min-h-0 flex-1 overflow-auto border-t border-[#eceae5]">
+          <div className="mt-10 flex items-baseline justify-between">
+            <h2 className="asahi-eyebrow">Activity</h2>
+          </div>
+
           <Suspense fallback={<ActivitySkeleton />}>
             <IssueActivity issueId={issue.id} />
           </Suspense>
         </div>
 
         <IssueCommentForm
-          className="shrink-0"
           isSubmitting={commentMutation.isPending}
           onChange={setComment}
           onSubmit={(body) => commentMutation.mutate(body)}
@@ -243,9 +253,10 @@ export function IssueDetails({ issue }: { issue: Issue }) {
         />
       </div>
 
-      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-t-0">
-        <div className="grid gap-1">
-          <PropertyRow label="Status">
+      {/* Right metadata rail: sticky */}
+      <aside className="sticky top-14 hidden h-[calc(100svh-3.5rem)] w-full shrink-0 self-start overflow-y-auto border-l border-border/60 px-5 py-6 lg:block">
+        <dl className="flex flex-col gap-4 text-[13px]">
+          <MetaRow label="Status">
             <EditableStatus
               disabled={moveMutation.isPending}
               onChange={(state) => {
@@ -257,8 +268,8 @@ export function IssueDetails({ issue }: { issue: Issue }) {
               setOpen={setStatusOpen}
               state={issue.state}
             />
-          </PropertyRow>
-          <PropertyRow label="Priority">
+          </MetaRow>
+          <MetaRow label="Priority">
             <EditablePriority
               disabled={updateMutation.isPending}
               onChange={(priority) => {
@@ -270,25 +281,25 @@ export function IssueDetails({ issue }: { issue: Issue }) {
               priority={issue.priority}
               setOpen={setPriorityOpen}
             />
-          </PropertyRow>
-          <PropertyRow label="Blocked by">
+          </MetaRow>
+          <MetaRow label="Blocked by">
             <EditableBlockers
               blockers={issue.blocked_by}
               disabled={updateMutation.isPending}
               issueOptions={availableBlockers}
+              onClear={() => updateMutation.mutate({ blocked_by: [] })}
               onToggle={(issueId) => {
                 const next = blockerIds.includes(issueId)
                   ? blockerIds.filter((id) => id !== issueId)
                   : [...blockerIds, issueId];
                 updateMutation.mutate({ blocked_by: next });
               }}
-              onClear={() => updateMutation.mutate({ blocked_by: [] })}
               open={blockersOpen}
               selectedIds={blockerIds}
               setOpen={setBlockersOpen}
             />
-          </PropertyRow>
-        </div>
+          </MetaRow>
+        </dl>
       </aside>
     </section>
   );
@@ -297,43 +308,69 @@ export function IssueDetails({ issue }: { issue: Issue }) {
 type TimelineItem = { type: "activity"; data: Activity } | { type: "comment"; data: Comment };
 
 function Timeline({ activities, comments }: { activities: Activity[]; comments: Comment[] }) {
-  const items: TimelineItem[] = [
-    ...activities
-      .filter((a) => a.kind !== "comment_created")
-      .map((a): TimelineItem => ({ type: "activity", data: a })),
-    ...comments.map((c): TimelineItem => ({ type: "comment", data: c })),
-  ];
+  const items: TimelineItem[] = activities.reduce<TimelineItem[]>((acc, a) => {
+    if (a.kind !== "comment_created") acc.push({ type: "activity", data: a });
+    return acc;
+  }, []);
+  for (const c of comments) items.push({ type: "comment", data: c });
 
   items.sort(
     (a, b) => new Date(a.data.created_at).getTime() - new Date(b.data.created_at).getTime(),
   );
 
   if (items.length === 0) {
-    return <div className="text-sm text-[#77746c]">No activity yet.</div>;
+    return <div className="mt-3 text-[13px] text-muted-foreground">No activity yet.</div>;
   }
 
   return (
-    <div className="space-y-3">
-      {items.map((item) =>
+    <ol className="mt-3 flex flex-col">
+      {items.map((item, i) =>
         item.type === "comment" ? (
-          <div className="rounded-md bg-[#f7f6f2] p-3" key={`comment-${item.data.id}`}>
-            <div className="mb-1 text-xs text-[#85827a]">{formatDate(item.data.created_at)}</div>
-            <div
-              className="prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: item.data.body }}
-            />
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 py-1" key={`activity-${item.data.id}`}>
-            <span className="size-1.5 shrink-0 rounded-full bg-[#c9c4bb]" />
-            <div className="min-w-0 flex-1 text-sm text-[#55524b]">{item.data.title}</div>
-            <div className="shrink-0 text-xs text-[#a8a59d]">
-              {formatDate(item.data.created_at)}
+          <li
+            className="asahi-rise flex flex-col gap-1.5 py-3"
+            key={`comment-${item.data.id}`}
+            style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
+          >
+            <div className="flex items-center gap-2 text-[12px]">
+              <Avatar initials="You" />
+              <span className="font-medium text-foreground">You</span>
+              <span className="text-muted-foreground">·</span>
+              <time className="text-muted-foreground">{formatDate(item.data.created_at)}</time>
             </div>
-          </div>
+            <div
+              className="prose prose-sm max-w-2xl pl-7 text-[13.5px] leading-relaxed text-foreground"
+              dangerouslySetInnerHTML={{ __html: sanitizeRichText(item.data.body) }}
+            />
+          </li>
+        ) : (
+          <li
+            className="asahi-fade relative my-3 flex items-center justify-center"
+            key={`activity-${item.data.id}`}
+            style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
+          >
+            <span aria-hidden className="absolute inset-x-0 top-1/2 h-px bg-border/60" />
+            <span className="relative bg-background px-3 text-[11.5px] text-muted-foreground">
+              {item.data.title}
+              <span aria-hidden className="mx-1.5 text-border">
+                ·
+              </span>
+              <time>{formatDate(item.data.created_at)}</time>
+            </span>
+          </li>
         ),
       )}
-    </div>
+    </ol>
+  );
+}
+
+function Avatar({ initials }: { initials: string }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex size-5 items-center justify-center rounded-full bg-muted text-[9.5px] font-medium text-foreground"
+    >
+      {initials.slice(0, 2)}
+    </span>
   );
 }
 
@@ -359,30 +396,30 @@ function EditableBlockers({
   return (
     <div className="relative min-w-0">
       <button
-        className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-[#f7f6f2] disabled:opacity-50"
+        className="asahi-press inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/60 disabled:opacity-50"
         disabled={disabled}
         onClick={() => setOpen(!open)}
         type="button"
       >
-        <IconLink className="size-3.5 shrink-0 text-[#7d7a72]" />
-        <span className="truncate text-xs text-[#55524b]">
+        <Link2 className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate text-[12.5px] text-foreground">
           {blockers.length
             ? blockers.map((blocker) => blocker.identifier ?? blocker.id).join(", ")
             : "None"}
         </span>
-        <IconChevronDown className="size-3.5 shrink-0 text-[#8a877e]" />
+        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-full z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
+        <div className="absolute right-0 top-full z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-border/70 bg-popover py-1 shadow-[0_1px_2px_oklch(0_0_0_/_0.04)]">
           {issueOptions.length ? (
             issueOptions.map((candidate) => {
               const selected = selectedIds.includes(candidate.id);
               return (
                 <button
                   className={cn(
-                    "flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[#f7f6f2]",
-                    selected && "bg-[#f2f1ec]",
+                    "flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/60",
+                    selected && "bg-muted",
                   )}
                   disabled={disabled}
                   key={candidate.id}
@@ -391,33 +428,35 @@ function EditableBlockers({
                 >
                   <span
                     className={cn(
-                      "flex size-4 shrink-0 items-center justify-center rounded border border-[#c8c3b8] text-[10px] text-white",
-                      selected ? "bg-[#25231f]" : "bg-white",
+                      "flex size-4 shrink-0 items-center justify-center rounded border border-border",
+                      selected ? "bg-foreground" : "bg-background",
                     )}
                   >
-                    {selected ? <span className="size-1.5 rounded-full bg-white" /> : null}
+                    {selected ? <span className="size-1.5 rounded-full bg-background" /> : null}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium text-[#33312d]">
+                    <span className="block truncate font-mono text-[11.5px] uppercase tracking-wide text-foreground">
                       {candidate.identifier}
                     </span>
-                    <span className="block truncate text-xs text-[#77746c]">{candidate.title}</span>
+                    <span className="block truncate text-[11.5px] text-muted-foreground">
+                      {candidate.title}
+                    </span>
                   </span>
                 </button>
               );
             })
           ) : (
-            <div className="px-3 py-2 text-xs text-[#77746c]">No other issues</div>
+            <div className="px-3 py-2 text-[11.5px] text-muted-foreground">No other issues</div>
           )}
 
           {blockers.length ? (
             <button
-              className="flex h-8 w-full items-center gap-2 border-t border-[#eceae5] px-3 text-left text-xs text-[#55524b] hover:bg-[#f7f6f2]"
+              className="flex h-8 w-full items-center gap-2 border-t border-border/60 px-3 text-left text-[11.5px] text-foreground hover:bg-muted/60"
               disabled={disabled}
               onClick={onClear}
               type="button"
             >
-              <IconX className="size-3.5" />
+              <X className="size-3.5" />
               Clear blockers
             </button>
           ) : null}
@@ -427,11 +466,11 @@ function EditableBlockers({
   );
 }
 
-function PropertyRow({ children, label }: { children: ReactNode; label: string }) {
+function MetaRow({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3">
-      <div className="text-xs text-[#85827a]">{label}</div>
-      <div className="flex min-w-0 justify-end text-right text-[#33312d]">{children}</div>
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3">
+      <dt className="text-[12px] text-muted-foreground">{label}</dt>
+      <dd className="flex min-w-0 justify-end text-right text-foreground">{children}</dd>
     </div>
   );
 }
@@ -442,29 +481,23 @@ function IssueActivity({ issueId }: { issueId: string }) {
     queryFn: () => fetchComments(issueId),
     refetchInterval: ASAHI_LIVE_REFETCH_INTERVAL_MS,
   });
-
   const { data: activitiesData } = useSuspenseQuery({
     queryKey: ["activities", issueId],
     queryFn: () => fetchActivities(issueId),
     refetchInterval: ASAHI_LIVE_REFETCH_INTERVAL_MS,
   });
 
-  return (
-    <div className="px-5 py-4">
-      <div className="mb-3 text-sm font-medium">Activity</div>
-      <div className="space-y-3">
-        <Timeline activities={activitiesData.activities} comments={commentsData.comments} />
-      </div>
-    </div>
-  );
+  return <Timeline activities={activitiesData.activities} comments={commentsData.comments} />;
 }
 
+const DATETIME_SHORT = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatDate(value: string | null) {
-  if (!value) return "Unknown";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
+  if (!value) return "—";
+  return DATETIME_SHORT.format(new Date(value));
 }

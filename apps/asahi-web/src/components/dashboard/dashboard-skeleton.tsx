@@ -1,173 +1,165 @@
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuSkeleton,
-} from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function SidebarSkeleton() {
   return (
-    <Sidebar collapsible="icon" variant="inset">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <div className="flex h-10 items-center px-2">
-              <div className="h-5 w-20 animate-pulse rounded bg-sidebar-accent" />
-            </div>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuSkeleton showIcon />
-              <SidebarMenuSkeleton showIcon />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Projects</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuSkeleton showIcon />
-              <SidebarMenuSkeleton showIcon />
-              <SidebarMenuSkeleton showIcon />
-              <SidebarMenuSkeleton showIcon />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-    </Sidebar>
+    <div className="min-h-svh bg-background">
+      <div className="flex min-h-svh md:pl-64">
+        <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col gap-2 bg-muted/50 px-3 py-4 md:flex">
+          <Skeleton className="h-7 w-20" />
+          <div className="mt-2 flex flex-col gap-1">
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-full" />
+          </div>
+          <Skeleton className="mt-6 h-4 w-16" />
+          <div className="mt-1 flex flex-col gap-1">
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-full" />
+          </div>
+        </aside>
+        <main className="flex min-w-0 flex-1 flex-col bg-background" />
+      </div>
+    </div>
+  );
+}
+
+/** List-only skeleton, no toolbar; for use when the toolbar is already mounted. */
+export function IssueListSkeleton() {
+  return (
+    <ul className="divide-y divide-border/60">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <li className="flex items-baseline gap-3 px-2 py-3" key={i}>
+          <Skeleton className="size-4 rounded-full" />
+          <Skeleton className="h-4 flex-1" />
+          <Skeleton className="h-3 w-14" />
+          <Skeleton className="h-3 w-10" />
+        </li>
+      ))}
+    </ul>
   );
 }
 
 export function IssuesViewSkeleton() {
   return (
-    <section className="min-h-0 flex-1 overflow-auto">
-      <div className="flex h-12 items-center justify-between px-4">
-        <div className="flex items-center gap-1 rounded-full border border-border bg-muted/60 p-0.5">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-7 w-16 animate-pulse rounded-full bg-muted" />
-          ))}
-        </div>
+    <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 pt-3 pb-2">
+        <Skeleton className="h-9 w-72 rounded-full" />
+        <Skeleton className="h-4 w-32" />
       </div>
-      <div className="space-y-3 p-4">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <div className="h-14 animate-pulse rounded-md bg-muted" key={index} />
+      <ul className="mx-auto max-w-5xl divide-y divide-border/60 px-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <li className="flex items-baseline gap-3 px-2 py-3" key={i}>
+            <Skeleton className="size-4 rounded-full" />
+            <Skeleton className="h-4 flex-1" />
+            <Skeleton className="h-3 w-14" />
+            <Skeleton className="h-3 w-10" />
+          </li>
         ))}
-      </div>
-    </section>
+      </ul>
+    </div>
   );
 }
 
 export function IssueDetailSkeleton() {
   return (
-    <section className="grid h-full min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem] lg:overflow-hidden">
-      <div className="flex min-h-0 flex-col space-y-4 p-5">
-        <div className="h-4 w-32 animate-pulse rounded bg-[#eceae5]" />
-        <div className="h-8 w-3/4 animate-pulse rounded bg-[#eceae5]" />
-        <div className="h-20 w-full animate-pulse rounded bg-[#eceae5]" />
-        <div className="min-h-0 flex-1 space-y-3 pt-4">
-          <div className="h-5 w-16 animate-pulse rounded bg-[#eceae5]" />
+    <div className="grid h-full min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="flex min-h-0 flex-col p-6">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="h-3 w-20" />
+        </div>
+        <Skeleton className="mt-3 h-5 w-2/3" />
+        <Skeleton className="mt-4 h-3 w-full max-w-xl" />
+        <Skeleton className="mt-2 h-3 w-5/6 max-w-xl" />
+        <Skeleton className="mt-2 h-3 w-3/4 max-w-xl" />
+        <Skeleton className="mt-8 h-3 w-16" />
+        <div className="mt-3 flex flex-col gap-4">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-16 animate-pulse rounded-md bg-[#f2f1ec]" />
+            <div className="flex flex-col gap-2" key={i}>
+              <div className="flex items-center gap-2">
+                <Skeleton className="size-5 rounded-full" />
+                <Skeleton className="h-3 w-24" />
+              </div>
+              <Skeleton className="ml-7 h-3 w-full max-w-md" />
+              <Skeleton className="ml-7 h-3 w-2/3 max-w-md" />
+            </div>
           ))}
         </div>
       </div>
-      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-t-0">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3">
-            <div className="h-4 w-12 animate-pulse rounded bg-[#eceae5]" />
-            <div className="ml-auto h-7 w-32 animate-pulse rounded bg-[#eceae5]" />
-          </div>
-        ))}
+      <aside className="hidden flex-col gap-4 border-l border-border/60 p-6 lg:flex">
+        <Skeleton className="h-3 w-12" />
+        <Skeleton className="h-5 w-28" />
+        <Skeleton className="h-3 w-12" />
+        <Skeleton className="h-5 w-24" />
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-5 w-32" />
       </aside>
-    </section>
+    </div>
   );
 }
 
 export function ProjectDetailsSkeleton() {
   return (
-    <section className="grid min-h-0 flex-1 overflow-auto lg:grid-cols-[minmax(0,1fr)_18.5rem] lg:overflow-hidden">
-      <div className="min-h-0 min-w-0 lg:overflow-auto">
-        <div className="border-b border-[#eceae5] px-5 pb-6 pt-5">
-          <div className="mb-4 flex items-center gap-2">
-            <div className="h-4 w-4 animate-pulse rounded bg-[#eceae5]" />
-            <div className="h-4 w-24 animate-pulse rounded bg-[#eceae5]" />
-            <div className="h-1 w-1 rounded-full bg-[#eceae5]" />
-            <div className="h-4 w-16 animate-pulse rounded bg-[#eceae5]" />
-          </div>
-          <div className="h-8 w-3/4 animate-pulse rounded bg-[#eceae5]" />
-          <div className="mt-3 h-16 w-full max-w-3xl animate-pulse rounded bg-[#eceae5]" />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center justify-between px-6 pt-3 pb-2">
+        <Skeleton className="h-9 w-64 rounded-full" />
+      </div>
+      <div className="grid gap-x-10 gap-y-8 p-6 lg:grid-cols-2">
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="mt-4 h-3 w-full max-w-lg" />
+          <Skeleton className="mt-2 h-3 w-3/4 max-w-lg" />
         </div>
-        <div className="border-b border-[#eceae5] px-5 py-2">
-          <div className="flex min-h-8 items-center justify-between gap-3">
-            <div className="h-8 w-36 animate-pulse rounded-full bg-[#eceae5]" />
-            <div className="h-6 w-6 animate-pulse rounded-full bg-[#eceae5]" />
-          </div>
-        </div>
-        <div className="flex h-12 items-center justify-between px-5">
-          <div className="h-5 w-24 animate-pulse rounded bg-[#eceae5]" />
-          <div className="h-4 w-20 animate-pulse rounded bg-[#eceae5]" />
-        </div>
-        <div className="space-y-3 px-5">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-14 animate-pulse rounded-md bg-muted" />
-          ))}
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="mt-2 h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
         </div>
       </div>
-      <aside className="border-t border-[#eceae5] bg-background px-5 py-3 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-t-0">
-        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div
-              key={i}
-              className="grid min-h-9 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3"
-            >
-              <div className="h-4 w-12 animate-pulse rounded bg-[#eceae5]" />
-              <div className="ml-auto h-6 w-24 animate-pulse rounded bg-[#eceae5]" />
-            </div>
-          ))}
-        </div>
-      </aside>
-    </section>
+    </div>
   );
 }
 
 export function NotificationsViewSkeleton() {
   return (
-    <section className="grid min-h-0 flex-1 overflow-auto xl:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] xl:overflow-hidden">
-      <div className="flex min-h-0 min-w-0 flex-col border-r border-border">
-        <div className="flex h-12 shrink-0 items-center justify-between px-4">
-          <div className="h-4 w-20 animate-pulse rounded bg-muted" />
-        </div>
-        <div className="space-y-3 p-4 xl:min-h-0 xl:flex-1 xl:overflow-auto">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-14 animate-pulse rounded-md bg-muted" />
-          ))}
-        </div>
+    <div className="mx-auto max-w-2xl p-6">
+      <div className="flex items-center justify-between pb-3">
+        <Skeleton className="h-9 w-44 rounded-full" />
+        <Skeleton className="h-7 w-24 rounded-md" />
       </div>
-      <aside className="min-w-0 bg-card xl:min-h-0 xl:overflow-hidden">
-        <div className="flex h-full items-center justify-center">
-          <div className="h-8 w-32 animate-pulse rounded bg-muted" />
-        </div>
-      </aside>
-    </section>
+      <ul className="divide-y divide-border/60">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <li className="flex items-baseline gap-3 py-3" key={i}>
+            <Skeleton className="size-1.5 rounded-full" />
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Skeleton className="h-3 w-4/5" />
+              <Skeleton className="h-3 w-2/3" />
+            </div>
+            <Skeleton className="h-3 w-10" />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
 export function ActivitySkeleton() {
   return (
-    <div className="space-y-3 px-5 py-4">
-      <div className="mb-3 h-5 w-16 animate-pulse rounded bg-[#eceae5]" />
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="h-16 animate-pulse rounded-md bg-[#f2f1ec]" />
-      ))}
+    <div className="px-5 py-4">
+      <Skeleton className="h-3 w-16" />
+      <div className="mt-3 flex flex-col gap-4">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div className="flex flex-col gap-2" key={i}>
+            <div className="flex items-center gap-2">
+              <Skeleton className="size-5 rounded-full" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+            <Skeleton className="ml-7 h-3 w-full max-w-md" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,13 +1,13 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  IconBox,
-  IconCheck,
-  IconChevronDown,
-  IconLink,
-  IconX,
-} from "@tabler/icons-react";
+  Box,
+  Check,
+  ChevronDown,
+  Link2,
+  X,
+} from "lucide-react";
 
 import { createIssue, fetchIssues, fetchProjects } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
@@ -20,33 +20,76 @@ import { refreshAsahiQueries } from "@/lib/query-refresh";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { cn } from "@/lib/utils";
 
-import { EditablePriority, EditableStatus } from "./editable-fields";
+import { Dropdown, EditablePriority, EditableStatus } from "./editable-fields";
 
 const STATUS_OPTIONS = ["Backlog", "Todo", "In Progress", "Done"];
 const PRIORITY_OPTIONS = [null, 1, 2, 3, 4] as const;
 
 export function IssueComposer({
+  dataState,
   onClose,
   projectId,
 }: {
+  dataState?: "open" | "closing";
   onClose: () => void;
   projectId?: string;
 }) {
+  // Defer the "open" data-state by one frame so the transition fires from
+  // the unset (hidden) state. Without this, the element mounts with
+  // data-state="open" already, skipping the enter transition.
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  // undefined → resting hidden styles from .asahi-modal-* base.
+  // "open" → animated in.
+  // "closing" → animated out.
+  const animState: "open" | "closing" | undefined =
+    dataState === "closing" ? "closing" : entered ? "open" : undefined;
+
+  // Escape to dismiss. Routed through onClose so the parent can play the
+  // exit transition before unmount. Latest-ref so the document listener
+  // doesn't re-subscribe on every render.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? "");
-  const [projectOpen, setProjectOpen] = useState(false);
-
   const [state, setState] = useState("Todo");
-  const [statusOpen, setStatusOpen] = useState(false);
-
   const [priority, setPriority] = useState<number | null>(null);
-  const [priorityOpen, setPriorityOpen] = useState(false);
-
   const [blockedByIds, setBlockedByIds] = useState<string[]>([]);
-  const [blockersOpen, setBlockersOpen] = useState(false);
   const [createMore, setCreateMore] = useState(false);
+
+  // Only one dropdown open at a time across the toolbar.
+  type MenuKey = "project" | "status" | "priority" | "blockers";
+  const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
+  const isOpen = (key: MenuKey) => openMenu === key;
+  const setOpen = (key: MenuKey) => (next: boolean) => {
+    setOpenMenu((current) => (next ? key : current === key ? null : current));
+  };
+  const projectOpen = isOpen("project");
+  const statusOpen = isOpen("status");
+  const priorityOpen = isOpen("priority");
+  const blockersOpen = isOpen("blockers");
+  const setProjectOpen = setOpen("project");
+  const setStatusOpen = setOpen("status");
+  const setPriorityOpen = setOpen("priority");
+  const setBlockersOpen = setOpen("blockers");
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -115,7 +158,10 @@ export function IssueComposer({
     .join(", ");
 
   const composer = (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/24 px-4 pt-[18vh] backdrop-blur-[1px]">
+    <div
+      className="asahi-modal-backdrop fixed inset-0 z-50 flex items-start justify-center bg-black/24 px-4 pt-[18vh] backdrop-blur-[1px]"
+      data-state={animState}
+    >
       <button
         aria-label="Close composer"
         className="absolute inset-0 cursor-default"
@@ -123,7 +169,8 @@ export function IssueComposer({
         type="button"
       />
       <form
-        className="relative flex min-h-[24rem] w-[min(42rem,calc(100vw-2rem))] flex-col rounded-[1.15rem] bg-card text-card-foreground shadow-[0_18px_55px_rgba(15,23,42,0.2),0_1px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/10"
+        className="asahi-modal-panel relative flex min-h-[24rem] w-[min(42rem,calc(100vw-2rem))] flex-col rounded-[1.15rem] bg-card text-card-foreground shadow-[0_18px_55px_rgba(15,23,42,0.2),0_1px_8px_rgba(15,23,42,0.08)] ring-1 ring-black/10"
+        data-state={animState}
         onSubmit={submit}
       >
         <div className="flex items-center justify-between px-4 pt-3.5">
@@ -134,14 +181,14 @@ export function IssueComposer({
             onClick={onClose}
             type="button"
           >
-            <IconX className="size-4" />
+            <X className="size-4" />
           </button>
         </div>
 
         <div className="flex-1 px-5 pb-3 pt-6">
           <input
             autoFocus
-            className="block h-8 w-full bg-transparent font-semibold text-foreground outline-none placeholder:text-[#9da0a6]"
+            className="block h-8 w-full bg-transparent font-medium text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(event) => setTitle(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Issue title"
@@ -164,7 +211,7 @@ export function IssueComposer({
                   disabled={projectsQuery.isLoading}
                   type="button"
                 >
-                  <IconBox className="size-3.5" />
+                  <Box className="size-3.5" />
                   <span>
                     {selectedProjectId
                       ? projectsQuery.data?.projects.find(
@@ -172,7 +219,7 @@ export function IssueComposer({
                         )?.name ?? "No project"
                       : "No project"}
                   </span>
-                  <IconChevronDown className="size-3 text-muted-foreground/70" />
+                  <ChevronDown className="size-3 text-muted-foreground/70" />
                 </button>
               </PopoverTrigger>
               <PopoverContent
@@ -193,7 +240,7 @@ export function IssueComposer({
                   type="button"
                 >
                   <span className="flex size-4 items-center justify-center">
-                    {!selectedProjectId && <IconCheck className="size-3.5" />}
+                    {!selectedProjectId && <Check className="size-3.5" />}
                   </span>
                   No project
                 </button>
@@ -209,7 +256,7 @@ export function IssueComposer({
                   >
                     <span className="flex size-4 items-center justify-center">
                       {selectedProjectId === project.id && (
-                        <IconCheck className="size-3.5" />
+                        <Check className="size-3.5" />
                       )}
                     </span>
                     {project.name}
@@ -242,83 +289,86 @@ export function IssueComposer({
               setOpen={setPriorityOpen}
             />
 
-            <div className="relative min-w-0">
-              <button
-                className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left hover:bg-[#f7f6f2] disabled:opacity-50"
-                disabled={allIssuesQuery.isLoading}
-                onClick={() => setBlockersOpen(!blockersOpen)}
-                type="button"
-              >
-                <IconLink className="size-3.5 shrink-0 text-[#7d7a72]" />
-                <span className="truncate text-xs text-[#55524b]">
-                  {blockedByIds.length
-                    ? selectedBlockerLabels || `${blockedByIds.length} blocked`
-                    : "Blocked by"}
-                </span>
-                <IconChevronDown className="size-3.5 shrink-0 text-[#8a877e]" />
-              </button>
-
-              {blockersOpen ? (
-                <div className="absolute bottom-full left-0 z-20 mb-1 max-h-72 w-72 overflow-auto rounded-md border border-[#eceae5] bg-white py-1 shadow-md">
-                  {availableBlockers.length || blockedByIds.length ? (
-                    (allIssuesQuery.data?.issues ?? []).map((candidate) => {
-                      const selected = blockedByIds.includes(candidate.id);
-                      return (
-                        <button
-                          className={cn(
-                            "flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[#f7f6f2]",
-                            selected && "bg-[#f2f1ec]",
-                          )}
-                          key={candidate.id}
-                          onClick={() => toggleBlocker(candidate.id)}
-                          type="button"
-                        >
-                          <span
-                            className={cn(
-                              "flex size-4 shrink-0 items-center justify-center rounded border border-[#c8c3b8] text-[10px] text-white",
-                              selected ? "bg-[#25231f]" : "bg-white",
-                            )}
-                          >
-                            {selected ? (
-                              <span className="size-1.5 rounded-full bg-white" />
-                            ) : null}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-medium text-[#33312d]">
-                              {candidate.identifier}
-                            </span>
-                            <span className="block truncate text-xs text-[#77746c]">
-                              {candidate.title}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div className="px-3 py-2 text-xs text-[#77746c]">
-                      No issues
-                    </div>
-                  )}
-
-                  {blockedByIds.length ? (
+            <Dropdown
+              align="start"
+              contentClassName="max-h-72 w-72 overflow-auto"
+              onOpenChange={setBlockersOpen}
+              open={blockersOpen}
+              side="top"
+              trigger={
+                <button
+                  className="asahi-press inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/60 disabled:opacity-50"
+                  disabled={allIssuesQuery.isLoading}
+                  onClick={() => setBlockersOpen(!blockersOpen)}
+                  type="button"
+                >
+                  <Link2 className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-[12.5px] text-foreground">
+                    {blockedByIds.length
+                      ? selectedBlockerLabels || `${blockedByIds.length} blocked`
+                      : "Blocked by"}
+                  </span>
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                </button>
+              }
+            >
+              {availableBlockers.length || blockedByIds.length ? (
+                (allIssuesQuery.data?.issues ?? []).map((candidate) => {
+                  const selected = blockedByIds.includes(candidate.id);
+                  return (
                     <button
-                      className="flex h-8 w-full items-center gap-2 border-t border-[#eceae5] px-3 text-left text-xs text-[#55524b] hover:bg-[#f7f6f2]"
-                      onClick={() => setBlockedByIds([])}
+                      className={cn(
+                        "flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/60",
+                        selected && "bg-muted",
+                      )}
+                      key={candidate.id}
+                      onClick={() => toggleBlocker(candidate.id)}
                       type="button"
                     >
-                      <IconX className="size-3.5" />
-                      Clear blockers
+                      <span
+                        className={cn(
+                          "flex size-4 shrink-0 items-center justify-center rounded border border-border",
+                          selected ? "bg-foreground" : "bg-background",
+                        )}
+                      >
+                        {selected ? (
+                          <span className="size-1.5 rounded-full bg-background" />
+                        ) : null}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11.5px] font-mono uppercase tracking-wide text-foreground">
+                          {candidate.identifier}
+                        </span>
+                        <span className="block truncate text-[11.5px] text-muted-foreground">
+                          {candidate.title}
+                        </span>
+                      </span>
                     </button>
-                  ) : null}
+                  );
+                })
+              ) : (
+                <div className="px-3 py-2 text-[11.5px] text-muted-foreground">
+                  No issues
                 </div>
+              )}
+
+              {blockedByIds.length ? (
+                <button
+                  className="flex h-8 w-full items-center gap-2 border-t border-border/60 px-3 text-left text-[11.5px] text-foreground hover:bg-muted/60"
+                  onClick={() => setBlockedByIds([])}
+                  type="button"
+                >
+                  <X className="size-3.5" />
+                  Clear blockers
+                </button>
               ) : null}
-            </div>
+            </Dropdown>
           </div>
 
-          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[#77746c]">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
             <input
               checked={createMore}
-              className="size-3.5 rounded border-[#c9c4bb] text-foreground accent-foreground"
+              className="size-3.5 rounded border-border text-foreground accent-foreground"
               onChange={(e) => setCreateMore(e.target.checked)}
               type="checkbox"
             />
