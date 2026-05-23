@@ -145,7 +145,7 @@ export function AsahiSidebar() {
         <span className="text-[15px] font-medium tracking-tight text-foreground">Asahi</span>
       </div>
 
-      <nav className="flex flex-col gap-0.5 px-3">
+      <nav className="flex flex-col gap-1 px-3 pb-1">
       {primary.map((item) => {
           const Icon = item.icon;
           const active = item.match(location);
@@ -179,13 +179,13 @@ export function AsahiSidebar() {
           <Plus className="size-3.5" />
         </button>
       </div>
-      <nav className="mt-1 flex flex-col gap-0.5 px-3">
+      <nav className="mt-2 flex flex-col gap-1 px-3">
         {data.projects.map((project) => (
           <ProjectLink key={project.id} location={location} project={project} />
         ))}
       </nav>
 
-      <div className="mt-auto px-3 pb-4">
+      <div className="mt-auto px-3 pb-6">
         <SettingsButton />
       </div>
 

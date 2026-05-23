@@ -161,7 +161,7 @@ export function SettingsDialog({
             <Row label="Links">
               <a
                 className="inline-flex items-center gap-1.5 text-[13px] text-foreground hover:underline"
-                href="https://github.com/danielchim/luna"
+                href="https://github.com/AkaraChen/luna"
                 rel="noreferrer"
                 target="_blank"
               >
@@ -169,7 +169,7 @@ export function SettingsDialog({
               </a>
               <a
                 className="inline-flex items-center gap-1.5 text-[13px] text-foreground hover:underline"
-                href="https://github.com/danielchim/luna/blob/master/README.md"
+                href="https://github.com/AkaraChen/luna/blob/HEAD/README.md"
                 rel="noreferrer"
                 target="_blank"
               >
