@@ -28,7 +28,11 @@ const tabs: Array<{ id: Tab; label: string }> = [
   { id: "unread", label: "Unread" },
 ];
 
-export function NotificationsView() {
+export function NotificationsView({
+  onSelectIssue: onSelectIssueProp,
+}: {
+  onSelectIssue?: (issueId: string) => void;
+}) {
   const queryClient = useQueryClient();
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("all");
@@ -67,6 +71,11 @@ export function NotificationsView() {
     if (tab === "unread") return data.notifications.filter((n) => n.read_at == null);
     return data.notifications;
   }, [data.notifications, tab]);
+
+  const handleSelectIssue = (issueId: string) => {
+    setSelectedIssueId(issueId);
+    onSelectIssueProp?.(issueId);
+  };
 
   if (data.notifications.length === 0) {
     return (
@@ -129,17 +138,17 @@ export function NotificationsView() {
 
         <ul className="min-h-0 flex-1 overflow-auto px-2 pb-4">
           {filtered.map((notification, i) => (
-            <NotificationRow
-              animationIndex={i}
-              archiveDisabled={archiveMutation.isPending}
-              key={notification.id}
-              notification={notification}
-              onArchive={() => archiveMutation.mutate(notification.id)}
-              onRead={() => readMutation.mutate(notification.id)}
-              onUnread={() => unreadMutation.mutate(notification.id)}
-              onSelectIssue={setSelectedIssueId}
-              selected={notification.issue != null && notification.issue.id === selectedIssueId}
-            />
+              <NotificationRow
+                animationIndex={i}
+                archiveDisabled={archiveMutation.isPending}
+                key={notification.id}
+                notification={notification}
+                onArchive={() => archiveMutation.mutate(notification.id)}
+                onRead={() => readMutation.mutate(notification.id)}
+                onUnread={() => unreadMutation.mutate(notification.id)}
+                onSelectIssue={handleSelectIssue}
+                selected={notification.issue != null && notification.issue.id === selectedIssueId}
+              />
           ))}
           {filtered.length === 0 ? (
             <li className="px-3 py-8 text-center text-[13px] text-muted-foreground">
@@ -229,6 +238,11 @@ function NotificationRow({
           selected && "bg-muted",
           issue && "cursor-pointer",
         )}
+        aria-label={
+          issue
+            ? `Open issue ${issue.identifier}: ${issue.title}`
+            : "Notification item"
+        }
         onClick={() => {
           if (issue) {
             onSelectIssue(issue.id);
@@ -288,7 +302,7 @@ function NotificationRow({
           ) : null}
         </div>
 
-        <div className="flex shrink-0 items-baseline gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           <KindIcon className="size-3.5 text-muted-foreground" />
           <time className="text-[11.5px] tabular-nums text-muted-foreground">
             {formatDate(notification.created_at)}

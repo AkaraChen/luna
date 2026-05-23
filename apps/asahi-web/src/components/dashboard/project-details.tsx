@@ -77,7 +77,7 @@ export function ProjectDetails({
 }
 
 function ProjectPage({
-  onSelectIssue: _onSelectIssue,
+  onSelectIssue,
   project,
 }: {
   onSelectIssue: (issueId: string) => void;
@@ -157,6 +157,7 @@ function ProjectPage({
           deleteOpen={deleteOpen}
           issues={data.issues}
           onOpenWiki={() => setSection("wiki")}
+          onSelectIssue={onSelectIssue}
           priorityMutation={priorityMutation}
           priorityOpen={priorityOpen}
           project={project}
@@ -171,7 +172,14 @@ function ProjectPage({
       {section === "issues" ? (
         <div className="grid min-h-0 flex-1 overflow-hidden xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)]">
           <div className="min-h-0 overflow-auto border-r border-border/60">
-            <IssueList issues={data.issues} onSelect={setSelectedIssueId} selectedId={selectedIssueId} />
+            <IssueList
+              issues={data.issues}
+              onSelect={(issueId) => {
+                setSelectedIssueId(issueId);
+                onSelectIssue(issueId);
+              }}
+              selectedId={selectedIssueId}
+            />
           </div>
           <div className="hidden min-h-0 overflow-hidden xl:flex xl:flex-1">
             {selectedIssue ? <IssueDetails issue={selectedIssue} /> : <EmptyDetails />}
@@ -189,6 +197,7 @@ function OverviewPane({
   deleteOpen,
   issues,
   onOpenWiki,
+  onSelectIssue,
   priorityMutation,
   priorityOpen,
   project,
@@ -202,6 +211,7 @@ function OverviewPane({
   deleteOpen: boolean;
   issues: Issue[];
   onOpenWiki: () => void;
+  onSelectIssue: (issueId: string) => void;
   priorityMutation: { isPending: boolean; mutate: (priority: number | null) => void };
   priorityOpen: boolean;
   project: Project;
@@ -333,6 +343,7 @@ function OverviewPane({
             byStatus={issuesByStatus}
             done={done}
             mine={0}
+            onSelectIssue={onSelectIssue}
             open={open}
             recent={recent}
           />
@@ -345,7 +356,7 @@ function OverviewPane({
 
 function InlineMeta({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="inline-flex items-baseline gap-1.5">
+    <div className="inline-flex items-center gap-1.5">
       <dt className="text-muted-foreground">{label}</dt>
       <dd>{children}</dd>
     </div>
@@ -356,12 +367,14 @@ function IssuesPanel({
   byStatus,
   done,
   mine,
+  onSelectIssue,
   open,
   recent,
 }: {
   byStatus: Map<string, Issue[]>;
   done: number;
   mine: number;
+  onSelectIssue: (issueId: string) => void;
   open: number;
   recent: Issue[];
 }) {
@@ -415,7 +428,12 @@ function IssuesPanel({
                 key={i.id}
                 style={{ animationDelay: `${idx * 22}ms` }}
               >
-                <div className="flex items-baseline gap-3 p-2">
+                <button
+                  className="asahi-press flex w-full items-baseline gap-3 p-2 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
+                  aria-label={`Open issue ${i.identifier}: ${i.title}`}
+                  onClick={() => onSelectIssue(i.id)}
+                  type="button"
+                >
                   <StatusIcon state={i.state} />
                   <span className="min-w-0 flex-1 truncate text-[13.5px] text-foreground">
                     {i.title}
@@ -427,7 +445,7 @@ function IssuesPanel({
                   <span className="shrink-0 text-[11.5px] tabular-nums text-muted-foreground">
                     {formatShortDate(i.updated_at)}
                   </span>
-                </div>
+                </button>
               </li>
             ))}
           </ul>

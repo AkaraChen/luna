@@ -45,6 +45,7 @@ export function IssueList({
               "[transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40",
               selectedId === issue.id && "bg-muted",
             )}
+            aria-label={`Open issue ${issue.identifier}: ${issue.title}`}
             onClick={() => onSelect(issue.id)}
             type="button"
           >

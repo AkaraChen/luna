@@ -96,7 +96,9 @@ function Dashboard() {
         >
           {view === "notifications" ? (
             <Suspense fallback={<NotificationsViewSkeleton />}>
-              <NotificationsView />
+              <NotificationsView
+                onSelectIssue={(id) => navigate(`/issues/${encodeURIComponent(id)}`)}
+              />
             </Suspense>
           ) : view === "project" ? (
             selectedProjectLocator ? (
