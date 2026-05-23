@@ -291,9 +291,9 @@ export function ProjectWiki({ project }: { project: Project }) {
     createMutation.error ?? renameMutation.error ?? deleteMutation.error ?? null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto lg:grid lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)] lg:overflow-hidden">
-      <div className="min-h-0 border-b border-border/60 lg:flex lg:flex-col lg:border-b-0 lg:border-r">
-        <div className="flex h-12 shrink-0 items-center justify-between px-4">
+    <div className="h-full min-h-0 flex-1 flex-col overflow-auto lg:grid lg:grid-cols-[minmax(15rem,18rem)_minmax(0,1fr)] lg:overflow-hidden">
+      <div className="min-h-0 lg:flex lg:flex-col lg:border-r lg:pr-3">
+        <div className="flex h-12 shrink-0 items-center justify-between px-0">
           <div className="text-sm font-medium">Wiki</div>
           <div className="flex items-center gap-1">
             <Button
@@ -321,9 +321,9 @@ export function ProjectWiki({ project }: { project: Project }) {
 
         <div className="max-h-[28rem] overflow-auto pb-2 lg:min-h-0 lg:flex-1 lg:max-h-none">
           {rootQuery.isLoading ? (
-            <div className="px-4 py-3 text-xs text-muted-foreground">Loading wiki…</div>
+            <div className="px-0 py-3 text-xs text-muted-foreground">Loading wiki…</div>
           ) : rootQuery.isError ? (
-            <div className="px-4 py-3 text-xs text-destructive">Could not load wiki.</div>
+            <div className="px-0 py-3 text-xs text-destructive">Could not load wiki.</div>
           ) : (
             <>
               {rootNodes.map((node) => (
@@ -357,7 +357,7 @@ export function ProjectWiki({ project }: { project: Project }) {
                 />
               ) : null}
               {rootNodes.length === 0 && !inlineComposer ? (
-                <div className="flex h-56 items-center justify-center px-4 text-center">
+                <div className="flex h-56 items-center justify-center px-0 text-center">
                   <div>
                     <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
                     <div className="text-sm font-medium">No wiki pages</div>
@@ -365,7 +365,7 @@ export function ProjectWiki({ project }: { project: Project }) {
                 </div>
               ) : null}
               {operationError ? (
-                <div className="px-4 py-2 text-xs text-destructive">{operationError.message}</div>
+                <div className="px-0 py-2 text-xs text-destructive">{operationError.message}</div>
               ) : null}
             </>
           )}
@@ -696,7 +696,7 @@ function WikiNodeViewer({
 
   if (!node) {
     return (
-      <div className="flex min-h-[22rem] items-center justify-center px-6 text-center">
+      <div className="flex min-h-0 h-full flex-1 items-center justify-center px-6 text-center">
         <div>
           <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
           <div className="text-sm font-medium">No wiki item selected</div>
@@ -708,8 +708,8 @@ function WikiNodeViewer({
   const isFolder = node.kind === "folder";
 
   return (
-    <article className="min-w-0 lg:min-h-0 lg:overflow-auto">
-      <div className="px-5 py-4">
+    <article className="min-w-0 px-6 lg:min-h-0 lg:overflow-auto">
+      <div className="px-0 py-4">
         <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
           {isFolder ? (
             <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.8} />
@@ -764,7 +764,7 @@ function WikiNodeViewer({
         )}
       </div>
 
-      <div className="px-5 pb-5 pt-0">
+      <div className="px-0 pb-5 pt-0">
         {isFolder ? (
           <div className="text-sm text-muted-foreground">
             {childNodes

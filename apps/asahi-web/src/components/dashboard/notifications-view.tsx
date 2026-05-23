@@ -94,9 +94,9 @@ export function NotificationsView({
   }
 
   return (
-    <section className="grid min-h-0 flex-1 overflow-hidden xl:grid-cols-[minmax(20rem,28rem)_minmax(0,1fr)]">
-      <div className="flex min-h-0 min-w-0 flex-col border-r border-border/60">
-        <div className="flex shrink-0 items-center justify-between gap-3 px-5 py-3">
+    <section className="grid min-h-0 flex-1 overflow-hidden px-6 xl:grid-cols-[minmax(20rem,28rem)_minmax(0,1fr)]">
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <div className="flex shrink-0 items-center justify-between gap-3 py-3">
           <div className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/40 p-1">
             {tabs.map((t) => {
               const active = tab === t.id;
@@ -136,7 +136,7 @@ export function NotificationsView({
           </Button>
         </div>
 
-        <ul className="min-h-0 flex-1 overflow-auto px-2 pb-4">
+        <ul className="min-h-0 flex-1 overflow-auto pb-4">
           {filtered.map((notification, i) => (
               <NotificationRow
                 animationIndex={i}
@@ -151,7 +151,7 @@ export function NotificationsView({
               />
           ))}
           {filtered.length === 0 ? (
-            <li className="px-3 py-8 text-center text-[13px] text-muted-foreground">
+            <li className="py-8 text-center text-[13px] text-muted-foreground">
               No unread activity.
             </li>
           ) : null}
@@ -233,7 +233,7 @@ function NotificationRow({
     >
       <div
         className={cn(
-          "group grid w-full grid-cols-[10px_minmax(0,1fr)_auto] items-baseline gap-x-3 border-b border-border/60 px-3 py-2.5 text-left",
+          "group flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left",
           "[transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40",
           selected && "bg-muted",
           issue && "cursor-pointer",
@@ -264,7 +264,7 @@ function NotificationRow({
         role="button"
         tabIndex={issue ? 0 : -1}
       >
-        <span className="self-start pt-[0.4rem]">
+        <span className="size-1.5 shrink-0">
           {unread ? (
             <span
               aria-label="Unread"
@@ -274,12 +274,13 @@ function NotificationRow({
           ) : null}
         </span>
 
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <p
-            className={cn(
-              "truncate text-[13.5px] leading-snug",
-              unread ? "text-foreground" : "text-muted-foreground",
-            )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-0.5">
+            <p
+              className={cn(
+                "truncate text-[13.5px] leading-snug",
+                unread ? "text-foreground" : "text-muted-foreground",
+              )}
           >
             <span className={cn(unread && "font-medium")}>{notification.title}</span>
             {issue ? (
@@ -297,9 +298,10 @@ function NotificationRow({
               </>
             ) : null}
           </p>
-          {notification.body ? (
-            <p className="truncate text-[12px] text-muted-foreground">{notification.body}</p>
-          ) : null}
+            {notification.body ? (
+              <p className="truncate text-[12px] text-muted-foreground">{notification.body}</p>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">

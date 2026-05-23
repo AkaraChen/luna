@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { Calendar, CircleDashed, Clock, FileText, FolderClosed, Plus, Trash2 } from "lucide-react";
 import { useLocation } from "wouter";
+import { parseAsStringLiteral, useQueryState } from "nuqs";
 
 import {
   deleteProject,
@@ -85,7 +86,10 @@ function ProjectPage({
 }) {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
-  const [section, setSection] = useState<ProjectSection>("overview");
+  const [section, setSection] = useQueryState<ProjectSection>(
+    "view",
+    parseAsStringLiteral(PROJECT_SECTIONS).withDefault("overview"),
+  );
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
@@ -116,7 +120,7 @@ function ProjectPage({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="z-10 shrink-0 px-5 py-2">
+      <div className="z-10 shrink-0 px-6 py-2">
         <div className="flex min-h-8 items-center justify-between gap-3">
           <div className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 p-1">
             {PROJECT_SECTIONS.map((option) => (
@@ -170,8 +174,8 @@ function ProjectPage({
       ) : null}
 
       {section === "issues" ? (
-        <div className="grid min-h-0 flex-1 overflow-hidden xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)]">
-          <div className="min-h-0 overflow-auto border-r border-border/60">
+        <div className="grid min-h-0 flex-1 overflow-hidden px-6 pt-4 xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)]">
+          <div className="min-h-0 overflow-auto">
             <IssueList
               issues={data.issues}
               onSelect={(issueId) => {
@@ -187,7 +191,11 @@ function ProjectPage({
         </div>
       ) : null}
 
-      {section === "wiki" ? <ProjectWiki project={project} /> : null}
+      {section === "wiki" ? (
+        <div className="min-h-0 h-full flex-1 overflow-hidden px-6 pt-4">
+          <ProjectWiki project={project} />
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -240,7 +248,7 @@ function OverviewPane({
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto max-w-6xl p-6">
+      <div className="px-6 py-4">
         <header className="asahi-rise">
           <div className="flex items-center justify-between gap-4">
             <span className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
@@ -394,7 +402,7 @@ function IssuesPanel({
           const ratio = list.length / max;
           return (
             <li
-              className="grid grid-cols-[20px_minmax(0,1fr)_2.5rem_minmax(96px,160px)] items-center gap-3 py-1.5 text-[13px]"
+              className="grid grid-cols-[20px_minmax(0,1fr)_2.5rem_minmax(96px,160px)] items-center gap-3 px-3 py-1.5 text-[13px]"
               key={status}
             >
               <StatusIcon state={status} />
@@ -421,7 +429,7 @@ function IssuesPanel({
         {recent.length === 0 ? (
           <p className="mt-3 text-[13px] text-muted-foreground">No issues yet.</p>
         ) : (
-          <ul className="mt-2 divide-y divide-border/60">
+          <ul className="mt-2">
             {recent.map((i, idx) => (
               <li
                 className="asahi-rise"
@@ -429,7 +437,7 @@ function IssuesPanel({
                 style={{ animationDelay: `${idx * 22}ms` }}
               >
                 <button
-                  className="asahi-press flex w-full items-baseline gap-3 p-2 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
+                  className="asahi-press flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
                   aria-label={`Open issue ${i.identifier}: ${i.title}`}
                   onClick={() => onSelectIssue(i.id)}
                   type="button"
@@ -487,18 +495,18 @@ function WikiPanel({ onOpenWiki, project }: { onOpenWiki: () => void; project: P
           No documents yet. Open the Wiki tab to create the first one.
         </p>
       ) : (
-        <ul className="mt-3 divide-y divide-border/60">
+        <ul className="mt-3">
           {recent.map((doc, i) => (
-            <li
-              className="asahi-rise"
-              key={doc.id}
-              style={{ animationDelay: `${i * 22}ms` }}
-            >
-              <button
-                className="asahi-press flex w-full items-baseline gap-3 p-2 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
-                onClick={onOpenWiki}
-                type="button"
+              <li
+                className="asahi-rise rounded-md"
+                key={doc.id}
+                style={{ animationDelay: `${i * 22}ms` }}
               >
+                <button
+                  className="asahi-press flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
+                  onClick={onOpenWiki}
+                  type="button"
+                >
                 <FileText className="size-3.5 shrink-0 translate-y-0.5 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate text-[13.5px] text-foreground">
                   {doc.title}

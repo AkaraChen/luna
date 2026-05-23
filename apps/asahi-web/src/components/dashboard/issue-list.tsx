@@ -32,7 +32,7 @@ export function IssueList({
   }
 
   return (
-    <ul className="divide-y divide-border/60">
+    <ul>
       {issues.map((issue, i) => (
         <li
           className="asahi-rise"
@@ -41,7 +41,7 @@ export function IssueList({
         >
           <button
             className={cn(
-              "group flex w-full items-baseline gap-3 p-2.5 text-left",
+              "group flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left",
               "[transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40",
               selectedId === issue.id && "bg-muted",
             )}
