@@ -146,17 +146,18 @@ export function AsahiSidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3">
-        {primary.map((item) => {
+      {primary.map((item) => {
           const Icon = item.icon;
           const active = item.match(location);
           return (
             <Link
               className={cn(
-                "asahi-press flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] [transition:background-color_180ms_var(--ease-out-strong),color_180ms_var(--ease-out-strong)]",
+                "asahi-press relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] [transition:background-color_180ms_var(--ease-out-strong),color_180ms_var(--ease-out-strong)]",
                 active
-                  ? "text-foreground"
+                  ? "bg-input font-medium text-foreground"
                   : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
               )}
+              aria-current={active ? "page" : undefined}
               href={item.href}
               key={item.href}
             >
@@ -201,11 +202,12 @@ function ProjectLink({ location, project }: { location: string; project: Project
   return (
     <Link
       className={cn(
-        "asahi-press flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] [transition:background-color_180ms_var(--ease-out-strong),color_180ms_var(--ease-out-strong)]",
+        "asahi-press relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] [transition:background-color_180ms_var(--ease-out-strong),color_180ms_var(--ease-out-strong)]",
         active
-          ? "text-foreground"
+          ? "bg-input font-medium text-foreground"
           : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
       )}
+      aria-current={active ? "page" : undefined}
       href={href}
     >
       <FolderClosed className="size-4" />
