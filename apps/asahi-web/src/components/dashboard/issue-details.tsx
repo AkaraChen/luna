@@ -1,7 +1,8 @@
-import { Suspense, useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { ChevronDown, Edit3, Link2, Trash2, X } from "lucide-react";
 import { useLocation } from "wouter";
+import { createPortal } from "react-dom";
 
 import {
   createComment,
@@ -29,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ActivitySkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { IssueCommentForm } from "@/components/dashboard/issue-comment-form";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ASAHI_LIVE_REFETCH_INTERVAL_MS,
   refreshAsahiQueries,
@@ -119,7 +121,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     <section className="grid h-full min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_18rem]">
       {/* Middle column: content scrolls in its own region; composer always pinned to the column's bottom edge */}
       <div className="flex min-h-0 min-w-0 flex-col">
-        <div className="min-h-0 flex-1 overflow-auto px-5 pt-6 pb-6">
+        <div className="min-h-0 flex-1 overflow-auto px-6 pt-6 pb-6">
           <header className="asahi-rise flex items-start justify-between gap-4">
             <div className="flex min-w-0 flex-col gap-1.5">
               <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
@@ -254,52 +256,59 @@ export function IssueDetails({ issue }: { issue: Issue }) {
       </div>
 
       {/* Right metadata rail: sticky */}
-      <aside className="sticky top-14 hidden h-[calc(100svh-3.5rem)] w-full shrink-0 self-start overflow-y-auto border-l border-border/60 px-5 py-6 lg:block">
-        <dl className="flex flex-col gap-4 text-[13px]">
-          <MetaRow label="Status">
-            <EditableStatus
-              disabled={moveMutation.isPending}
-              onChange={(state) => {
-                moveMutation.mutate(state);
-                setStatusOpen(false);
-              }}
-              open={statusOpen}
-              options={statusColumns}
-              setOpen={setStatusOpen}
-              state={issue.state}
-            />
-          </MetaRow>
-          <MetaRow label="Priority">
-            <EditablePriority
-              disabled={updateMutation.isPending}
-              onChange={(priority) => {
-                updateMutation.mutate({ priority });
-                setPriorityOpen(false);
-              }}
-              open={priorityOpen}
-              options={[...priorityOptions]}
-              priority={issue.priority}
-              setOpen={setPriorityOpen}
-            />
-          </MetaRow>
-          <MetaRow label="Blocked by">
-            <EditableBlockers
-              blockers={issue.blocked_by}
-              disabled={updateMutation.isPending}
-              issueOptions={availableBlockers}
-              onClear={() => updateMutation.mutate({ blocked_by: [] })}
-              onToggle={(issueId) => {
-                const next = blockerIds.includes(issueId)
-                  ? blockerIds.filter((id) => id !== issueId)
-                  : [...blockerIds, issueId];
-                updateMutation.mutate({ blocked_by: next });
-              }}
-              open={blockersOpen}
-              selectedIds={blockerIds}
-              setOpen={setBlockersOpen}
-            />
-          </MetaRow>
-        </dl>
+      <aside className="sticky top-14 hidden h-[calc(100svh-3.5rem)] w-full shrink-0 self-start overflow-y-auto px-6 py-6 lg:block">
+        <Card>
+          <CardHeader>
+            <CardTitle>Metadata</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <dl className="flex flex-col gap-4 text-[13px]">
+              <MetaRow label="Status">
+                <EditableStatus
+                  disabled={moveMutation.isPending}
+                  onChange={(state) => {
+                    moveMutation.mutate(state);
+                    setStatusOpen(false);
+                  }}
+                  open={statusOpen}
+                  options={statusColumns}
+                  setOpen={setStatusOpen}
+                  state={issue.state}
+                />
+              </MetaRow>
+              <MetaRow label="Priority">
+                <EditablePriority
+                  disabled={updateMutation.isPending}
+                  onChange={(priority) => {
+                    updateMutation.mutate({ priority });
+                    setPriorityOpen(false);
+                  }}
+                  open={priorityOpen}
+                  options={[...priorityOptions]}
+                  priority={issue.priority}
+                  setOpen={setPriorityOpen}
+                />
+              </MetaRow>
+              <MetaRow label="Blocked by">
+                <EditableBlockers
+                  blockers={issue.blocked_by}
+                  disabled={updateMutation.isPending}
+                  issueOptions={availableBlockers}
+                  onClear={() => updateMutation.mutate({ blocked_by: [] })}
+                  onToggle={(issueId) => {
+                    const next = blockerIds.includes(issueId)
+                      ? blockerIds.filter((id) => id !== issueId)
+                      : [...blockerIds, issueId];
+                    updateMutation.mutate({ blocked_by: next });
+                  }}
+                  open={blockersOpen}
+                  selectedIds={blockerIds}
+                  setOpen={setBlockersOpen}
+                />
+              </MetaRow>
+            </dl>
+          </CardContent>
+        </Card>
       </aside>
     </section>
   );
@@ -323,35 +332,41 @@ function Timeline({ activities, comments }: { activities: Activity[]; comments: 
   }
 
   return (
-    <ol className="mt-3 flex flex-col">
+    <ol className="mt-3 flex flex-col gap-3">
       {items.map((item, i) =>
         item.type === "comment" ? (
           <li
-            className="asahi-rise flex flex-col gap-1.5 py-3"
+            className="asahi-rise"
             key={`comment-${item.data.id}`}
             style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
           >
-            <div className="flex items-center gap-2 text-[12px]">
-              <Avatar initials="You" />
-              <span className="font-medium text-foreground">You</span>
-              <span className="text-muted-foreground">·</span>
-              <time className="text-muted-foreground">{formatDate(item.data.created_at)}</time>
-            </div>
-            <div
-              className="prose prose-sm max-w-2xl pl-7 text-[13.5px] leading-relaxed text-foreground"
-              dangerouslySetInnerHTML={{ __html: sanitizeRichText(item.data.body) }}
-            />
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Comment</CardTitle>
+                <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+                  <Avatar initials="You" />
+                  <span className="font-medium text-foreground">You</span>
+                  <span className="text-muted-foreground">·</span>
+                  <time className="text-muted-foreground">{formatDate(item.data.created_at)}</time>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div
+                  className="prose prose-sm max-w-none text-[13.5px] leading-relaxed text-foreground"
+                  dangerouslySetInnerHTML={{ __html: sanitizeRichText(item.data.body) }}
+                />
+              </CardContent>
+            </Card>
           </li>
         ) : (
           <li
-            className="asahi-fade relative my-3 flex items-center justify-center"
+            className="asahi-fade text-center"
             key={`activity-${item.data.id}`}
             style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
           >
-            <span aria-hidden className="absolute inset-x-0 top-1/2 h-px bg-border/60" />
-            <span className="relative bg-background px-3 text-[11.5px] text-muted-foreground">
+            <span className="inline-block rounded-full bg-muted px-3 py-1 text-[11.5px] text-muted-foreground">
               {item.data.title}
-              <span aria-hidden className="mx-1.5 text-border">
+              <span aria-hidden className="mx-1.5 text-muted-foreground">
                 ·
               </span>
               <time>{formatDate(item.data.created_at)}</time>
@@ -393,9 +408,63 @@ function EditableBlockers({
   selectedIds: string[];
   setOpen: (open: boolean) => void;
 }) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [popoverPosition, setPopoverPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const button = buttonRef.current;
+    if (!button) return;
+
+    const update = () => {
+      const rect = button.getBoundingClientRect();
+      const desiredWidth = Math.max(rect.width, 288);
+      const left = Math.min(
+        Math.max(8, rect.right - desiredWidth),
+        window.innerWidth - desiredWidth - 8,
+      );
+      setPopoverPosition({
+        top: rect.bottom + 4,
+        left,
+        width: desiredWidth,
+      });
+    };
+
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        (popoverRef.current && popoverRef.current.contains(target)) ||
+        (buttonRef.current && buttonRef.current.contains(target))
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open, setOpen]);
+
   return (
     <div className="relative min-w-0">
       <button
+        ref={buttonRef}
         className="asahi-press inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/60 disabled:opacity-50"
         disabled={disabled}
         onClick={() => setOpen(!open)}
@@ -411,57 +480,72 @@ function EditableBlockers({
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-full z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-border/70 bg-popover py-1 shadow-[0_1px_2px_oklch(0_0_0_/_0.04)]">
-          {issueOptions.length ? (
-            issueOptions.map((candidate) => {
-              const selected = selectedIds.includes(candidate.id);
-              return (
-                <button
-                  className={cn(
-                    "flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/60",
-                    selected && "bg-muted",
-                  )}
-                  disabled={disabled}
-                  key={candidate.id}
-                  onClick={() => onToggle(candidate.id)}
-                  type="button"
-                >
-                  <span
-                    className={cn(
-                      "flex size-4 shrink-0 items-center justify-center rounded border border-border",
-                      selected ? "bg-foreground" : "bg-background",
-                    )}
-                  >
-                    {selected ? <span className="size-1.5 rounded-full bg-background" /> : null}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-[11.5px] uppercase tracking-wide text-foreground">
-                      {candidate.identifier}
-                    </span>
-                    <span className="block truncate text-[11.5px] text-muted-foreground">
-                      {candidate.title}
-                    </span>
-                  </span>
-                </button>
-              );
-            })
-          ) : (
-            <div className="px-3 py-2 text-[11.5px] text-muted-foreground">No other issues</div>
-          )}
+        popoverPosition
+          ? createPortal(
+              <div
+                ref={popoverRef}
+                className="z-50 max-h-72 overflow-auto rounded-md border border-border/70 bg-popover py-1 shadow-[0_1px_2px_oklch(0_0_0_/_0.04)]"
+                style={{
+                  position: "fixed",
+                  top: popoverPosition.top,
+                  left: popoverPosition.left,
+                  width: popoverPosition.width,
+                }}
+              >
+                {issueOptions.length ? (
+                  issueOptions.map((candidate) => {
+                    const selected = selectedIds.includes(candidate.id);
+                    return (
+                      <button
+                        className={cn(
+                          "flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/60",
+                          selected && "bg-muted",
+                        )}
+                        disabled={disabled}
+                        key={candidate.id}
+                        onClick={() => onToggle(candidate.id)}
+                        type="button"
+                      >
+                        <span
+                          className={cn(
+                            "flex size-4 shrink-0 items-center justify-center rounded border border-border",
+                            selected ? "bg-foreground" : "bg-background",
+                          )}
+                        >
+                          {selected ? <span className="size-1.5 rounded-full bg-background" /> : null}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-mono text-[11.5px] uppercase tracking-wide text-foreground">
+                            {candidate.identifier}
+                          </span>
+                          <span className="block truncate text-[11.5px] text-muted-foreground">
+                            {candidate.title}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="px-3 py-2 text-[11.5px] text-muted-foreground">No other issues</div>
+                )}
 
-          {blockers.length ? (
-            <button
-              className="flex h-8 w-full items-center gap-2 border-t border-border/60 px-3 text-left text-[11.5px] text-foreground hover:bg-muted/60"
-              disabled={disabled}
-              onClick={onClear}
-              type="button"
-            >
-              <X className="size-3.5" />
-              Clear blockers
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+                {blockers.length ? (
+                  <button
+                    className="flex h-8 w-full items-center gap-2 border-t border-border/60 px-3 text-left text-[11.5px] text-foreground hover:bg-muted/60"
+                    disabled={disabled}
+                    onClick={onClear}
+                    type="button"
+                  >
+                    <X className="size-3.5" />
+                    Clear blockers
+                  </button>
+                ) : null}
+              </div>,
+              document.body,
+            )
+          : null
+      ) : null
+      }
     </div>
   );
 }

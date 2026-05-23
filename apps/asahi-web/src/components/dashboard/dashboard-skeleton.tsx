@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function SidebarSkeleton() {
   return (
@@ -28,7 +29,7 @@ export function IssueListSkeleton() {
   return (
     <ul className="divide-y divide-border/60">
       {Array.from({ length: 6 }).map((_, i) => (
-        <li className="flex items-baseline gap-3 px-2 py-3" key={i}>
+        <li className="flex items-baseline gap-3 py-2.5" key={i}>
           <Skeleton className="size-4 rounded-full" />
           <Skeleton className="h-4 flex-1" />
           <Skeleton className="h-3 w-14" />
@@ -48,7 +49,7 @@ export function IssuesViewSkeleton() {
       </div>
       <ul className="mx-auto max-w-5xl divide-y divide-border/60 px-6">
         {Array.from({ length: 6 }).map((_, i) => (
-          <li className="flex items-baseline gap-3 px-2 py-3" key={i}>
+          <li className="flex items-baseline gap-3 py-2.5" key={i}>
             <Skeleton className="size-4 rounded-full" />
             <Skeleton className="h-4 flex-1" />
             <Skeleton className="h-3 w-14" />
@@ -86,13 +87,20 @@ export function IssueDetailSkeleton() {
           ))}
         </div>
       </div>
-      <aside className="hidden flex-col gap-4 border-l border-border/60 p-6 lg:flex">
-        <Skeleton className="h-3 w-12" />
-        <Skeleton className="h-5 w-28" />
-        <Skeleton className="h-3 w-12" />
-        <Skeleton className="h-5 w-24" />
-        <Skeleton className="h-3 w-16" />
-        <Skeleton className="h-5 w-32" />
+      <aside className="hidden flex-col gap-4 p-6 lg:flex">
+        <Card>
+          <CardHeader>
+            <CardTitle>Metadata</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-5 w-28" />
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-5 w-32" />
+          </CardContent>
+        </Card>
       </aside>
     </div>
   );
@@ -147,19 +155,30 @@ export function NotificationsViewSkeleton() {
 
 export function ActivitySkeleton() {
   return (
-    <div className="px-5 py-4">
-      <Skeleton className="h-3 w-16" />
-      <div className="mt-3 flex flex-col gap-4">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div className="flex flex-col gap-2" key={i}>
-            <div className="flex items-center gap-2">
-              <Skeleton className="size-5 rounded-full" />
-              <Skeleton className="h-3 w-24" />
-            </div>
-            <Skeleton className="ml-7 h-3 w-full max-w-md" />
-          </div>
-        ))}
-      </div>
+    <div className="px-6 py-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Comments</CardTitle>
+        </CardHeader>
+        <CardContent className="mt-2 flex flex-col gap-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader>
+                <CardTitle className="text-sm">Comment</CardTitle>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Skeleton className="size-5 rounded-full" />
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-3 w-14" />
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <Skeleton className="h-3 w-full max-w-md" />
+                <Skeleton className="mt-2 h-3 w-3/4 max-w-lg" />
+              </CardContent>
+            </Card>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   );
 }
