@@ -1,0 +1,3 @@
+[submodule "akrc-docs"]
+	path = akrc-docs
+	url = https://github.com/akarachen/akrc-docs.git
