@@ -71,7 +71,7 @@ luna comment "Started implementation, validating tests next."
 luna
 ```
 
-Luna requires [Codex](https://github.com/openai/codex) and the [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated.
+Luna uses the vendored `angel-engine` Rust client to drive the configured agent runtime. The default runtime command is `codex app-server`, so install and authenticate [Codex](https://github.com/openai/codex) when using the default runner. GitHub Project workflows also require the [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated.
 
 ## The Vision
 

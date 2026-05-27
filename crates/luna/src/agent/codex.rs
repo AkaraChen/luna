@@ -1,15 +1,15 @@
-use std::{path::Path, process::Stdio};
+use std::{path::Path, time::Duration};
 
-use chrono::Utc;
-use serde_json::{Value, json};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, ChildStdout, Command},
-    sync::mpsc,
-    task::JoinHandle,
-    time::Duration,
+use angel_engine_client::{
+    AgentRuntime, AngelSession, ClientOptions, ClientProtocol, RuntimeOptions, SendTextRequest,
+    TurnRunEvent,
 };
-use tracing::{debug, info, warn};
+use chrono::Utc;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
+use tracing::warn;
 
 use crate::{
     agent::{CommandExecutionEvent, SessionUpdate, StopReason, TurnExit, UsageUpdate, WorkerEvent},
@@ -18,50 +18,45 @@ use crate::{
     paths::absolutize_path,
 };
 
-const MAX_JSON_LINE_BYTES: usize = 10 * 1024 * 1024;
-
-#[derive(Debug, PartialEq, Eq)]
-enum CompletedItemLog {
-    CommandExecution {
-        command: String,
-        cwd: Option<String>,
-        duration_ms: Option<i64>,
-        exit_code: Option<i64>,
-    },
-    DynamicToolCall {
-        tool: String,
-        namespace: Option<String>,
-        duration_ms: Option<i64>,
-        success: Option<bool>,
-    },
-    McpToolCall {
-        tool: String,
-        server: String,
-        duration_ms: Option<i64>,
-    },
-    CollabAgentToolCall {
-        tool: String,
-        duration_ms: Option<i64>,
-        receiver_thread_count: usize,
-    },
-}
-
 pub struct CodexSession {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    stderr_task: JoinHandle<()>,
-    next_request_id: u64,
+    command_tx: mpsc::UnboundedSender<AngelCommand>,
+    worker: JoinHandle<()>,
     issue_id: String,
     issue_identifier: String,
     events: mpsc::UnboundedSender<WorkerEvent>,
-    pid: Option<u32>,
+    config: CodexRunner,
+    session_id: Option<String>,
+    thread_id: Option<String>,
+    turn_id: Option<String>,
+}
+
+enum AngelCommand {
+    Start {
+        respond: oneshot::Sender<Result<()>>,
+    },
+    RunTurn {
+        prompt: String,
+        turn_number: u32,
+        respond: oneshot::Sender<Result<TurnExit>>,
+    },
+    SendComment {
+        body: String,
+        respond: oneshot::Sender<Result<()>>,
+    },
+    Cancel,
+    Shutdown,
+}
+
+struct AngelWorker {
+    session: AngelSession,
+    issue_id: String,
+    issue_identifier: String,
+    events: mpsc::UnboundedSender<WorkerEvent>,
     workspace_path: String,
+    pending_comments: Vec<String>,
     thread_id: Option<String>,
     turn_id: Option<String>,
     session_id: Option<String>,
-    turn_terminal_status: Option<String>,
-    config: CodexRunner,
 }
 
 impl CodexSession {
@@ -74,486 +69,49 @@ impl CodexSession {
     ) -> Result<Self> {
         let workspace_path =
             std::fs::canonicalize(workspace_path).or_else(|_| absolutize_path(workspace_path))?;
-        let mut child = Command::new("bash")
-            .arg("-lc")
-            .arg(&config.command)
-            .current_dir(&workspace_path)
-            .env("LUNA_ISSUE_ID", &issue_id)
-            .env("LUNA_ISSUE_IDENTIFIER", &issue_identifier)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let workspace_path = workspace_path.to_string_lossy().to_string();
+        let options = RuntimeOptions {
+            client: ClientOptions {
+                command: config.command.clone(),
+                args: Vec::new(),
+                protocol: ClientProtocol::CodexAppServer,
+                cwd: Some(workspace_path.clone()),
+                process_label: Some(format!("luna:{}", issue_identifier)),
+                ..ClientOptions::codex_app_server(config.command.clone())
+            },
+            runtime: AgentRuntime::Codex,
+            default_reasoning_effort: None,
+        };
+        let session = tokio::task::spawn_blocking(move || AngelSession::new(options))
+            .await
+            .map_err(|e| LunaError::Agent(format!("angel session spawn task failed: {e}")))?
+            .map_err(angel_error)?;
 
-        let pid = child.id();
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| LunaError::Agent("failed to capture codex stdin".to_string()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| LunaError::Agent("failed to capture codex stdout".to_string()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| LunaError::Agent("failed to capture codex stderr".to_string()))?;
-
-        let stderr_task = tokio::spawn(log_stderr(
-            stderr,
-            issue_id.clone(),
-            issue_identifier.clone(),
-        ));
-        let mut session = Self {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
-            stderr_task,
-            next_request_id: 1,
-            issue_id,
-            issue_identifier,
-            events,
-            pid,
-            workspace_path: workspace_path.to_string_lossy().to_string(),
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let worker = AngelWorker {
+            session,
+            issue_id: issue_id.clone(),
+            issue_identifier: issue_identifier.clone(),
+            events: events.clone(),
+            workspace_path: workspace_path.clone(),
+            pending_comments: Vec::new(),
             thread_id: None,
             turn_id: None,
             session_id: None,
-            turn_terminal_status: None,
+        };
+        let worker = tokio::task::spawn_blocking(move || worker.run(command_rx));
+
+        Ok(Self {
+            command_tx,
+            worker,
+            issue_id,
+            issue_identifier,
+            events,
             config: config.clone(),
-        };
-
-        session.initialize(config.read_timeout_ms).await?;
-        Ok(session)
-    }
-
-    async fn initialize(&mut self, read_timeout_ms: u64) -> Result<()> {
-        let params = json!({
-            "clientInfo": {
-                "name": "luna",
-                "version": env!("CARGO_PKG_VERSION"),
-            },
-            "capabilities": {
-                "experimentalApi": true,
-            }
-        });
-        self.request("initialize", params, read_timeout_ms).await?;
-        Ok(())
-    }
-
-    async fn start_thread(&mut self) -> Result<()> {
-        let response = self
-            .request(
-                "thread/start",
-                json!({
-                    "cwd": self.workspace_path.clone(),
-                    "serviceName": "luna",
-                    "sessionStartSource": "startup",
-                    "approvalPolicy": self.config.approval_policy.clone(),
-                    "sandbox": self.config.thread_sandbox.clone(),
-                }),
-                self.config.read_timeout_ms,
-            )
-            .await?;
-        self.thread_id = extract_string(&response, &["/thread/id"]);
-        if self.thread_id.is_none() {
-            return Err(LunaError::Agent(
-                "thread/start did not return thread.id".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    async fn run_turn_inner(
-        &mut self,
-        prompt: &str,
-        turn_number: u32,
-        stop_rx: &mut tokio::sync::watch::Receiver<Option<StopReason>>,
-    ) -> Result<TurnExit> {
-        self.turn_terminal_status = None;
-        let response = self
-            .request(
-                "turn/start",
-                json!({
-                    "threadId": self.thread_id.clone().ok_or_else(|| LunaError::Agent("missing thread id".to_string()))?,
-                    "cwd": self.workspace_path.clone(),
-                    "approvalPolicy": self.config.approval_policy.clone(),
-                    "sandboxPolicy": self.config.turn_sandbox_policy.clone(),
-                    "input": [
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        }
-                    ]
-                }),
-                self.config.read_timeout_ms,
-            )
-            .await?;
-
-        self.turn_id = extract_string(&response, &["/turn/id"]);
-        if let (Some(thread_id), Some(turn_id)) = (&self.thread_id, &self.turn_id) {
-            self.session_id = Some(format!("{thread_id}-{turn_id}"));
-            self.emit("session_started", None, None, Some(turn_number));
-        }
-
-        let deadline =
-            tokio::time::Instant::now() + Duration::from_millis(self.config.turn_timeout_ms);
-        loop {
-            if let Some(status) = self.turn_terminal_status.take() {
-                return Ok(match status.as_str() {
-                    "completed" => TurnExit::Completed,
-                    "interrupted" => TurnExit::Failed("turn interrupted".to_string()),
-                    "failed" => TurnExit::Failed("turn failed".to_string()),
-                    other => TurnExit::Failed(format!("unexpected turn status: {other}")),
-                });
-            }
-
-            let stop_deadline = tokio::time::sleep_until(deadline);
-            tokio::pin!(stop_deadline);
-
-            tokio::select! {
-                changed = stop_rx.changed() => {
-                    if changed.is_ok() {
-                        let reason = stop_rx.borrow().clone().unwrap_or(StopReason::Shutdown);
-                        self.kill_process().await;
-                        return Ok(TurnExit::Stopped(reason));
-                    }
-                }
-                _ = &mut stop_deadline => {
-                    self.kill_process().await;
-                    return Ok(TurnExit::TimedOut);
-                }
-                message = self.read_message(None) => {
-                    let message = message?;
-                    if message.get("method").is_none() && message.get("id").is_some() {
-                        if let Some(response_id) = message.get("id") {
-                            debug!(issue_id = %self.issue_id, response_id = %response_id, "ignoring unexpected in-flight response");
-                        }
-                        continue;
-                    }
-
-                    if let Some(method) = message.get("method").and_then(Value::as_str) {
-                        if let Some(id) = message.get("id").cloned() {
-                            let fatal = self
-                                .handle_server_request(
-                                    method,
-                                    id,
-                                    message.get("params").cloned().unwrap_or(Value::Null),
-                                )
-                                .await?;
-                            if let Some(err) = fatal {
-                                return Ok(TurnExit::Failed(err));
-                            }
-                            continue;
-                        }
-                        self.handle_notification(
-                            method,
-                            message.get("params").cloned().unwrap_or(Value::Null),
-                            turn_number,
-                        )
-                        .await?;
-                    }
-                }
-            }
-        }
-    }
-
-    async fn request(
-        &mut self,
-        method: &str,
-        params: Value,
-        read_timeout_ms: u64,
-    ) -> Result<Value> {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        self.write_json(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))
-        .await?;
-
-        loop {
-            let message = self
-                .read_message(Some(Duration::from_millis(read_timeout_ms)))
-                .await?;
-
-            if let Some(response_id) = message.get("id").and_then(Value::as_u64) {
-                if response_id == id {
-                    if let Some(error) = message.get("error") {
-                        return Err(LunaError::Agent(format!(
-                            "response_error for {method}: {}",
-                            error
-                        )));
-                    }
-                    return Ok(message.get("result").cloned().unwrap_or(Value::Null));
-                }
-            }
-
-            if message.get("method").and_then(Value::as_str).is_some()
-                && message.get("id").is_some()
-            {
-                let method = message
-                    .get("method")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                let fatal = self
-                    .handle_server_request(
-                        method,
-                        message.get("id").cloned().unwrap_or(Value::Null),
-                        message.get("params").cloned().unwrap_or(Value::Null),
-                    )
-                    .await?;
-                if let Some(err) = fatal {
-                    return Err(LunaError::Agent(err));
-                }
-                continue;
-            }
-
-            if let Some(method) = message.get("method").and_then(Value::as_str) {
-                self.handle_notification(
-                    method,
-                    message.get("params").cloned().unwrap_or(Value::Null),
-                    0,
-                )
-                .await?;
-            }
-        }
-    }
-
-    async fn handle_server_request(
-        &mut self,
-        method: &str,
-        id: Value,
-        params: Value,
-    ) -> Result<Option<String>> {
-        let response = match method {
-            "item/commandExecution/requestApproval" | "execCommandApproval" => {
-                Some(json!({"decision": "acceptForSession"}))
-            }
-            "item/fileChange/requestApproval" | "applyPatchApproval" => {
-                Some(json!({"decision": "acceptForSession"}))
-            }
-            "item/permissions/requestApproval" => Some(json!({
-                "permissions": params.get("permissions").cloned().unwrap_or(Value::Null),
-                "scope": "turn"
-            })),
-            "item/tool/call" => {
-                let tool_name = params
-                    .get("tool")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                Some(json!({
-                    "success": false,
-                    "contentItems": [
-                        {
-                            "type": "inputText",
-                            "text": format!("unsupported tool call in luna: {tool_name}")
-                        }
-                    ]
-                }))
-            }
-            "item/tool/requestUserInput" | "mcpServer/elicitation/request" => {
-                self.write_json(&json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {
-                        "code": -32000,
-                        "message": "luna is configured to reject interactive input requests"
-                    }
-                }))
-                .await?;
-                return Ok(Some("turn_input_required".to_string()));
-            }
-            _ => {
-                self.write_json(&json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {
-                        "code": -32000,
-                        "message": format!("unsupported server request: {method}")
-                    }
-                }))
-                .await?;
-                return Ok(None);
-            }
-        };
-
-        if let Some(result) = response {
-            self.write_json(&json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": result,
-            }))
-            .await?;
-        }
-
-        Ok(None)
-    }
-
-    async fn handle_notification(
-        &mut self,
-        method: &str,
-        params: Value,
-        turn_number: u32,
-    ) -> Result<bool> {
-        match method {
-            "thread/started" => {
-                if self.thread_id.is_none() {
-                    self.thread_id = extract_string(&params, &["/thread/id"]);
-                }
-                self.emit(method, None, None, Some(turn_number));
-            }
-            "turn/started" => {
-                if self.turn_id.is_none() {
-                    self.turn_id = extract_string(&params, &["/turn/id"]);
-                }
-                if let (Some(thread_id), Some(turn_id)) = (&self.thread_id, &self.turn_id) {
-                    self.session_id = Some(format!("{thread_id}-{turn_id}"));
-                }
-                self.emit(method, None, None, Some(turn_number));
-            }
-            "thread/tokenUsage/updated" => {
-                let usage = extract_usage(&params);
-                self.emit(method, None, usage, Some(turn_number));
-            }
-            "item/agentMessage/delta" => {
-                let message = params
-                    .get("delta")
-                    .and_then(Value::as_str)
-                    .map(truncate_message);
-                self.emit(method, message, None, Some(turn_number));
-            }
-            "item/completed" => {
-                self.log_completed_item(&params);
-                if let Some(item) = params.get("item") {
-                    if item.get("type").and_then(Value::as_str) == Some("commandExecution")
-                        && item.get("status").and_then(Value::as_str) == Some("completed")
-                    {
-                        let exit_code = item.get("exitCode").and_then(Value::as_i64);
-                        if matches!(exit_code, None | Some(0)) {
-                            if let Some(command) = item.get("command").and_then(Value::as_str) {
-                                let event = WorkerEvent::CommandExecuted(CommandExecutionEvent {
-                                    issue_id: self.issue_id.clone(),
-                                    issue_identifier: self.issue_identifier.clone(),
-                                    command: command.to_string(),
-                                    cwd: item
-                                        .get("cwd")
-                                        .and_then(Value::as_str)
-                                        .map(str::to_string),
-                                    duration_ms: item.get("durationMs").and_then(Value::as_i64),
-                                    exit_code,
-                                });
-                                if let Err(err) = self.events.send(event) {
-                                    warn!(
-                                        issue_id = %self.issue_id,
-                                        issue_identifier = %self.issue_identifier,
-                                        command = %command,
-                                        error = ?err,
-                                        "failed to queue command activity inspection"
-                                    );
-                                } else {
-                                    debug!(
-                                        issue_id = %self.issue_id,
-                                        issue_identifier = %self.issue_identifier,
-                                        command = %command,
-                                        "queued command activity inspection"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            "turn/completed" => {
-                self.turn_id =
-                    extract_string(&params, &["/turn/id"]).or_else(|| self.turn_id.clone());
-                self.turn_terminal_status = extract_string(&params, &["/turn/status"]);
-                let message = extract_string(&params, &["/turn/error/message"]);
-                self.emit(method, message, None, Some(turn_number));
-            }
-            "account/rateLimits/updated" => {
-                self.emit_with_rate_limits(method, params, Some(turn_number));
-            }
-            "error" => {
-                self.emit(method, Some(params.to_string()), None, Some(turn_number));
-            }
-            _ => {}
-        }
-        Ok(true)
-    }
-
-    fn log_completed_item(&self, params: &Value) {
-        let Some(item_log) = extract_completed_item_log(params) else {
-            return;
-        };
-
-        match item_log {
-            CompletedItemLog::CommandExecution {
-                command,
-                cwd,
-                duration_ms,
-                exit_code,
-            } => {
-                info!(
-                    issue_id = %self.issue_id,
-                    issue_identifier = %self.issue_identifier,
-                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
-                    command = %command,
-                    cwd = cwd.as_deref().unwrap_or("unknown"),
-                    duration_ms,
-                    exit_code,
-                    "codex command execution completed"
-                );
-            }
-            CompletedItemLog::DynamicToolCall {
-                tool,
-                namespace,
-                duration_ms,
-                success,
-            } => {
-                info!(
-                    issue_id = %self.issue_id,
-                    issue_identifier = %self.issue_identifier,
-                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
-                    tool = %tool,
-                    namespace = namespace.as_deref().unwrap_or(""),
-                    duration_ms,
-                    success,
-                    "codex dynamic tool call completed"
-                );
-            }
-            CompletedItemLog::McpToolCall {
-                tool,
-                server,
-                duration_ms,
-            } => {
-                info!(
-                    issue_id = %self.issue_id,
-                    issue_identifier = %self.issue_identifier,
-                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
-                    tool = %tool,
-                    server = %server,
-                    duration_ms,
-                    "codex mcp tool call completed"
-                );
-            }
-            CompletedItemLog::CollabAgentToolCall {
-                tool,
-                duration_ms,
-                receiver_thread_count,
-            } => {
-                info!(
-                    issue_id = %self.issue_id,
-                    issue_identifier = %self.issue_identifier,
-                    session_id = self.session_id.as_deref().unwrap_or("unknown"),
-                    tool = %tool,
-                    duration_ms,
-                    receiver_thread_count,
-                    "codex collab tool call completed"
-                );
-            }
-        }
+            session_id: None,
+            thread_id: None,
+            turn_id: None,
+        })
     }
 
     fn emit(
@@ -571,15 +129,189 @@ impl CodexSession {
             session_id: self.session_id.clone(),
             thread_id: self.thread_id.clone(),
             turn_id: self.turn_id.clone(),
-            agent_pid: self.pid,
+            agent_pid: None,
             message,
             usage,
             rate_limits: None,
             turn_count,
         }));
     }
+}
 
-    fn emit_with_rate_limits(&self, event: &str, rate_limits: Value, turn_count: Option<u32>) {
+impl AngelWorker {
+    fn run(mut self, mut command_rx: mpsc::UnboundedReceiver<AngelCommand>) {
+        while let Some(command) = command_rx.blocking_recv() {
+            match command {
+                AngelCommand::Start { respond } => {
+                    let result = self.start();
+                    let _ = respond.send(result);
+                }
+                AngelCommand::RunTurn {
+                    prompt,
+                    turn_number,
+                    respond,
+                } => {
+                    let result = self.run_turn(prompt, turn_number);
+                    let _ = respond.send(result);
+                }
+                AngelCommand::SendComment { body, respond } => {
+                    self.pending_comments.push(body);
+                    let _ = respond.send(Ok(()));
+                }
+                AngelCommand::Cancel => {
+                    if let Err(err) = self.session.cancel_turn() {
+                        warn!(issue_id = %self.issue_id, error = %err, "failed to cancel angel turn");
+                    }
+                }
+                AngelCommand::Shutdown => break,
+            }
+        }
+        self.session.close();
+    }
+
+    fn start(&mut self) -> Result<()> {
+        let request = SendTextRequest {
+            text: "Initialize this Luna workspace. Do not make changes yet.".to_string(),
+            cwd: Some(self.workspace_path.clone()),
+            ..SendTextRequest::default()
+        };
+        let events = self.session.start_text_turn(request).map_err(angel_error)?;
+        for event in events {
+            self.handle_turn_event(event, 0)?;
+        }
+        self.drain_until_result(0).map(|_| ())
+    }
+
+    fn run_turn(&mut self, mut prompt: String, turn_number: u32) -> Result<TurnExit> {
+        if !self.pending_comments.is_empty() {
+            let comments = std::mem::take(&mut self.pending_comments);
+            let comments_text = comments
+                .iter()
+                .map(|c| format!("- {}", c.trim()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            prompt = format!("{prompt}\n\nNew comments on this issue:\n{comments_text}");
+        }
+
+        let request = SendTextRequest {
+            text: prompt,
+            cwd: Some(self.workspace_path.clone()),
+            ..SendTextRequest::default()
+        };
+        let events = self.session.start_text_turn(request).map_err(angel_error)?;
+        for event in events {
+            self.handle_turn_event(event, turn_number)?;
+        }
+        self.drain_until_result(turn_number)
+    }
+
+    fn drain_until_result(&mut self, turn_number: u32) -> Result<TurnExit> {
+        loop {
+            match self
+                .session
+                .next_turn_event(Duration::from_millis(250))
+                .map_err(angel_error)?
+            {
+                Some(event) => {
+                    if matches!(event, TurnRunEvent::Result { .. }) {
+                        self.handle_turn_event(event, turn_number)?;
+                        return Ok(TurnExit::Completed);
+                    }
+                    self.handle_turn_event(event, turn_number)?;
+                }
+                None => continue,
+            }
+        }
+    }
+
+    fn handle_turn_event(&mut self, event: TurnRunEvent, turn_number: u32) -> Result<()> {
+        match event {
+            TurnRunEvent::Delta { text, turn_id, .. } => {
+                if let Some(turn_id) = turn_id {
+                    self.set_turn_id(turn_id, turn_number);
+                }
+                self.emit("item/agentMessage/delta", Some(truncate_message(text)), None, Some(turn_number));
+            }
+            TurnRunEvent::ActionObserved { action, .. }
+            | TurnRunEvent::ActionUpdated { action, .. } => {
+                self.set_turn_id(action.turn_id.clone(), turn_number);
+                if action.kind == "command" && action.phase == "completed" && action.error.is_none() {
+                    if let Some(command) = action.input_summary.or(action.raw_input) {
+                        let _ = self.events.send(WorkerEvent::CommandExecuted(CommandExecutionEvent {
+                            issue_id: self.issue_id.clone(),
+                            issue_identifier: self.issue_identifier.clone(),
+                            command,
+                            cwd: Some(self.workspace_path.clone()),
+                            duration_ms: None,
+                            exit_code: None,
+                        }));
+                    }
+                }
+            }
+            TurnRunEvent::ActionOutputDelta { turn_id, .. } => {
+                self.set_turn_id(turn_id, turn_number);
+            }
+            TurnRunEvent::Elicitation { elicitation, .. } => {
+                self.set_turn_id(elicitation.turn_id.unwrap_or_default(), turn_number);
+                let events = self
+                    .session
+                    .resolve_elicitation(elicitation.id, angel_engine_client::ElicitationResponse::Allow)
+                    .map_err(angel_error)?;
+                for event in events {
+                    self.handle_turn_event(event, turn_number)?;
+                }
+            }
+            TurnRunEvent::PlanUpdated { turn_id, .. } => {
+                if let Some(turn_id) = turn_id {
+                    self.set_turn_id(turn_id, turn_number);
+                }
+            }
+            TurnRunEvent::Result { result } => {
+                if let Some(remote_thread_id) = result.remote_thread_id.clone() {
+                    self.thread_id = Some(remote_thread_id);
+                }
+                if let Some(turn_id) = result.turn_id.clone() {
+                    self.set_turn_id(turn_id, turn_number);
+                }
+                if let Some(conversation) = result.conversation {
+                    self.thread_id = conversation.remote_id.or(Some(conversation.id));
+                    if let Some(usage) = conversation.usage {
+                        self.emit(
+                            "thread/tokenUsage/updated",
+                            None,
+                            Some(UsageUpdate {
+                                input_tokens: usage.used,
+                                output_tokens: 0,
+                                total_tokens: usage.used,
+                            }),
+                            Some(turn_number),
+                        );
+                    }
+                }
+                self.emit("turn/completed", None, None, Some(turn_number));
+            }
+        }
+        Ok(())
+    }
+
+    fn set_turn_id(&mut self, turn_id: String, turn_number: u32) {
+        if turn_id.is_empty() {
+            return;
+        }
+        self.turn_id = Some(turn_id.clone());
+        if let Some(thread_id) = &self.thread_id {
+            self.session_id = Some(format!("{thread_id}-{turn_id}"));
+        }
+        self.emit("turn/started", None, None, Some(turn_number));
+    }
+
+    fn emit(
+        &self,
+        event: &str,
+        message: Option<String>,
+        usage: Option<UsageUpdate>,
+        turn_count: Option<u32>,
+    ) {
         let _ = self.events.send(WorkerEvent::Session(SessionUpdate {
             issue_id: self.issue_id.clone(),
             issue_identifier: self.issue_identifier.clone(),
@@ -588,53 +320,26 @@ impl CodexSession {
             session_id: self.session_id.clone(),
             thread_id: self.thread_id.clone(),
             turn_id: self.turn_id.clone(),
-            agent_pid: self.pid,
-            message: None,
-            usage: None,
-            rate_limits: Some(rate_limits),
+            agent_pid: None,
+            message,
+            usage,
+            rate_limits: None,
             turn_count,
         }));
-    }
-
-    async fn read_message(&mut self, timeout_duration: Option<Duration>) -> Result<Value> {
-        let mut buf = Vec::new();
-        let read = async { self.stdout.read_until(b'\n', &mut buf).await };
-        let bytes = match timeout_duration {
-            Some(duration) => tokio::time::timeout(duration, read)
-                .await
-                .map_err(|_| LunaError::Agent("response_timeout".to_string()))??,
-            None => read.await?,
-        };
-
-        if bytes == 0 {
-            return Err(LunaError::Agent("port_exit".to_string()));
-        }
-        if buf.len() > MAX_JSON_LINE_BYTES {
-            return Err(LunaError::Agent("protocol line exceeded 10MB".to_string()));
-        }
-        let message = String::from_utf8_lossy(&buf).trim().to_string();
-        serde_json::from_str(&message).map_err(Into::into)
-    }
-
-    async fn write_json(&mut self, value: &Value) -> Result<()> {
-        let serialized = serde_json::to_vec(value)?;
-        self.stdin.write_all(&serialized).await?;
-        self.stdin.write_all(b"\n").await?;
-        self.stdin.flush().await?;
-        Ok(())
-    }
-
-    async fn kill_process(&mut self) {
-        if let Err(err) = self.child.kill().await {
-            warn!(issue_id = %self.issue_id, error = %err, "failed to kill codex process");
-        }
     }
 }
 
 #[async_trait::async_trait]
 impl crate::agent::AgentSession for CodexSession {
     async fn start(&mut self) -> Result<()> {
-        self.start_thread().await
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(AngelCommand::Start { respond: tx })
+            .map_err(|_| LunaError::Agent("angel worker channel closed".to_string()))?;
+        rx.await
+            .map_err(|_| LunaError::Agent("angel start response channel closed".to_string()))??;
+        self.emit("session_started", None, None, Some(0));
+        Ok(())
     }
 
     async fn run_turn(
@@ -643,192 +348,62 @@ impl crate::agent::AgentSession for CodexSession {
         turn_number: u32,
         stop_rx: &mut tokio::sync::watch::Receiver<Option<StopReason>>,
     ) -> Result<TurnExit> {
-        self.run_turn_inner(prompt, turn_number, stop_rx).await
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(AngelCommand::RunTurn {
+                prompt: prompt.to_string(),
+                turn_number,
+                respond: tx,
+            })
+            .map_err(|_| LunaError::Agent("angel worker channel closed".to_string()))?;
+
+        tokio::select! {
+            result = rx => {
+                result.map_err(|_| LunaError::Agent("angel turn response channel closed".to_string()))?
+            }
+            changed = stop_rx.changed() => {
+                if changed.is_ok() {
+                    let reason = stop_rx.borrow().clone().unwrap_or(StopReason::Shutdown);
+                    let _ = self.command_tx.send(AngelCommand::Cancel);
+                    return Ok(TurnExit::Stopped(reason));
+                }
+                Ok(TurnExit::Stopped(StopReason::Shutdown))
+            }
+            _ = tokio::time::sleep(Duration::from_millis(self.config.turn_timeout_ms)) => {
+                let _ = self.command_tx.send(AngelCommand::Cancel);
+                Ok(TurnExit::TimedOut)
+            }
+        }
     }
 
     async fn send_comment(&mut self, body: &str) -> Result<()> {
-        let thread_id = self.thread_id.clone().ok_or_else(|| {
-            LunaError::Agent("missing thread id".to_string())
-        })?;
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": self.next_request_id,
-            "method": "thread/inject_items",
-            "params": {
-                "threadId": thread_id,
-                "items": [
-                    {
-                        "type": "message",
-                        "role": "user",
-                        "content": [
-                            { "type": "input_text", "text": body }
-                        ]
-                    }
-                ]
-            }
-        });
-        self.next_request_id += 1;
-        self.write_json(&payload).await
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(AngelCommand::SendComment {
+                body: body.to_string(),
+                respond: tx,
+            })
+            .map_err(|_| LunaError::Agent("angel worker channel closed".to_string()))?;
+        rx.await
+            .map_err(|_| LunaError::Agent("angel comment response channel closed".to_string()))?
     }
 
     async fn shutdown(&mut self) {
-        self.kill_process().await;
-        self.stderr_task.abort();
+        let _ = self.command_tx.send(AngelCommand::Shutdown);
+        self.worker.abort();
     }
 }
 
-async fn log_stderr(
-    stderr: tokio::process::ChildStderr,
-    issue_id: String,
-    issue_identifier: String,
-) {
-    let mut reader = BufReader::new(stderr).lines();
-    while let Ok(Some(line)) = reader.next_line().await {
-        warn!(
-            issue_id = %issue_id,
-            issue_identifier = %issue_identifier,
-            codex_stderr = %truncate_message(line),
-            "codex stderr"
-        );
-    }
+fn angel_error(error: angel_engine_client::ClientError) -> LunaError {
+    LunaError::Agent(format!("angel-engine client error: {error}"))
 }
 
-fn extract_string(value: &Value, pointers: &[&str]) -> Option<String> {
-    pointers.iter().find_map(|pointer| {
-        value
-            .pointer(pointer)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    })
-}
-
-fn extract_usage(value: &Value) -> Option<UsageUpdate> {
-    let input_tokens = value
-        .pointer("/tokenUsage/total/inputTokens")
-        .and_then(Value::as_u64)?;
-    let output_tokens = value
-        .pointer("/tokenUsage/total/outputTokens")
-        .and_then(Value::as_u64)?;
-    let total_tokens = value
-        .pointer("/tokenUsage/total/totalTokens")
-        .and_then(Value::as_u64)?;
-    Some(UsageUpdate {
-        input_tokens,
-        output_tokens,
-        total_tokens,
-    })
-}
-
-fn extract_completed_item_log(params: &Value) -> Option<CompletedItemLog> {
-    let item = params.get("item")?;
-    let item_type = item.get("type")?.as_str()?;
-    let status = item.get("status").and_then(Value::as_str)?;
-
-    match item_type {
-        "commandExecution" if status == "completed" => {
-            let exit_code = item.get("exitCode").and_then(Value::as_i64);
-            if !matches!(exit_code, None | Some(0)) {
-                return None;
-            }
-
-            Some(CompletedItemLog::CommandExecution {
-                command: item
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .map(truncate_message)?,
-                cwd: item.get("cwd").and_then(Value::as_str).map(str::to_string),
-                duration_ms: item.get("durationMs").and_then(Value::as_i64),
-                exit_code,
-            })
-        }
-        "dynamicToolCall" if status == "completed" => {
-            let success = item.get("success").and_then(Value::as_bool);
-            if success == Some(false) {
-                return None;
-            }
-
-            Some(CompletedItemLog::DynamicToolCall {
-                tool: item.get("tool").and_then(Value::as_str)?.to_string(),
-                namespace: item
-                    .get("namespace")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                duration_ms: item.get("durationMs").and_then(Value::as_i64),
-                success,
-            })
-        }
-        "mcpToolCall" if status == "completed" => Some(CompletedItemLog::McpToolCall {
-            tool: item.get("tool").and_then(Value::as_str)?.to_string(),
-            server: item.get("server").and_then(Value::as_str)?.to_string(),
-            duration_ms: item.get("durationMs").and_then(Value::as_i64),
-        }),
-        "collabAgentToolCall" if status == "completed" => {
-            Some(CompletedItemLog::CollabAgentToolCall {
-                tool: item.get("tool").and_then(Value::as_str)?.to_string(),
-                duration_ms: item.get("durationMs").and_then(Value::as_i64),
-                receiver_thread_count: item
-                    .get("receiverThreadIds")
-                    .and_then(Value::as_array)
-                    .map_or(0, Vec::len),
-            })
-        }
-        _ => None,
+fn truncate_message(message: String) -> String {
+    const MAX: usize = 512;
+    if message.chars().count() <= MAX {
+        return message;
     }
-}
-
-fn truncate_message(value: impl AsRef<str>) -> String {
-    let value = value.as_ref();
-    const LIMIT: usize = 400;
-    if value.len() <= LIMIT {
-        value.to_string()
-    } else {
-        format!("{}...", &value[..LIMIT])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{CompletedItemLog, extract_completed_item_log};
-
-    #[test]
-    fn extracts_successful_command_execution_log() {
-        let params = json!({
-            "item": {
-                "type": "commandExecution",
-                "status": "completed",
-                "command": "gh issue view 31 -R AkaraChen/fama",
-                "cwd": "/tmp/workspace",
-                "durationMs": 1250,
-                "exitCode": 0
-            }
-        });
-
-        assert_eq!(
-            extract_completed_item_log(&params),
-            Some(CompletedItemLog::CommandExecution {
-                command: "gh issue view 31 -R AkaraChen/fama".to_string(),
-                cwd: Some("/tmp/workspace".to_string()),
-                duration_ms: Some(1250),
-                exit_code: Some(0),
-            })
-        );
-    }
-
-    #[test]
-    fn ignores_unsuccessful_dynamic_tool_call() {
-        let params = json!({
-            "item": {
-                "type": "dynamicToolCall",
-                "status": "completed",
-                "tool": "linear_graphql",
-                "namespace": "luna",
-                "durationMs": 42,
-                "success": false
-            }
-        });
-
-        assert_eq!(extract_completed_item_log(&params), None);
-    }
+    let mut truncated = message.chars().take(MAX).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }

@@ -1,3 +1,6 @@
 [submodule "akrc-docs"]
 	path = akrc-docs
 	url = https://github.com/akarachen/akrc-docs.git
+[submodule "angel-engine"]
+	path = angel-engine
+	url = https://github.com/akarachen/angel-engine.git
