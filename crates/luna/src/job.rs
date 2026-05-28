@@ -207,6 +207,7 @@ async fn run_angel_job(
         let request = SendTextRequest {
             text: prompt,
             cwd: Some(workspace_path),
+            permission_mode: Some(default_permission_mode(&runtime_name).to_string()),
             ..SendTextRequest::default()
         };
         let events = session.start_text_turn(request).map_err(angel_error)?;
@@ -226,7 +227,19 @@ async fn run_angel_job(
             {
                 Some(event) => {
                     let done = matches!(event, TurnRunEvent::Result { .. });
+                    let approval_id = permission_elicitation_id(&event);
                     write_turn_event(&event)?;
+                    if let Some(elicitation_id) = approval_id {
+                        let events = session
+                            .resolve_elicitation(
+                                elicitation_id,
+                                angel_engine_client::ElicitationResponse::AllowForSession,
+                            )
+                            .map_err(angel_error)?;
+                        for event in events {
+                            write_turn_event(&event)?;
+                        }
+                    }
                     if done {
                         session.close();
                         return Ok(());
@@ -238,6 +251,22 @@ async fn run_angel_job(
     })
     .await
     .map_err(|err| LunaError::Agent(format!("job task failed: {err}")))?
+}
+
+fn default_permission_mode(runtime_name: &str) -> &'static str {
+    match runtime_name {
+        "codex" => "never",
+        "opencode" => "bypassPermissions",
+        _ => "never",
+    }
+}
+
+fn permission_elicitation_id(event: &TurnRunEvent) -> Option<String> {
+    let TurnRunEvent::Elicitation { elicitation, .. } = event else {
+        return None;
+    };
+    matches!(elicitation.kind.as_str(), "approval" | "permissionProfile")
+        .then(|| elicitation.id.clone())
 }
 
 fn write_turn_event(event: &TurnRunEvent) -> Result<()> {

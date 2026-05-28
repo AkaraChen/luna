@@ -41,6 +41,7 @@ struct AngelRuntimeLaunchConfig {
     args: Vec<String>,
     turn_timeout_ms: u64,
     default_reasoning_effort: Option<String>,
+    default_permission_mode: String,
 }
 
 impl AngelRuntimeLaunchConfig {
@@ -51,6 +52,7 @@ impl AngelRuntimeLaunchConfig {
             args: config.args.clone(),
             turn_timeout_ms: config.turn_timeout_ms,
             default_reasoning_effort: None,
+            default_permission_mode: "never".to_string(),
         }
     }
 
@@ -61,6 +63,7 @@ impl AngelRuntimeLaunchConfig {
             args: config.args.clone(),
             turn_timeout_ms: config.turn_timeout_ms,
             default_reasoning_effort: None,
+            default_permission_mode: "bypassPermissions".to_string(),
         }
     }
 }
@@ -104,6 +107,7 @@ struct AngelWorker {
     thread_id: Option<String>,
     turn_id: Option<String>,
     session_id: Option<String>,
+    default_permission_mode: String,
 }
 
 impl AngelRuntimeSession {
@@ -191,6 +195,7 @@ impl AngelRuntimeSession {
             thread_id: None,
             turn_id: None,
             session_id: None,
+            default_permission_mode: config.default_permission_mode.clone(),
         };
         let worker = tokio::task::spawn_blocking(move || worker.run(command_rx));
 
@@ -266,6 +271,7 @@ impl AngelWorker {
         let request = SendTextRequest {
             text: "Initialize this Luna workspace. Do not make changes yet.".to_string(),
             cwd: Some(self.workspace_path.clone()),
+            permission_mode: Some(self.default_permission_mode.clone()),
             ..SendTextRequest::default()
         };
         let events = self.session.start_text_turn(request).map_err(angel_error)?;
@@ -289,6 +295,7 @@ impl AngelWorker {
         let request = SendTextRequest {
             text: prompt,
             cwd: Some(self.workspace_path.clone()),
+            permission_mode: Some(self.default_permission_mode.clone()),
             ..SendTextRequest::default()
         };
         let events = self.session.start_text_turn(request).map_err(angel_error)?;
@@ -358,7 +365,7 @@ impl AngelWorker {
                     .session
                     .resolve_elicitation(
                         elicitation.id,
-                        angel_engine_client::ElicitationResponse::Allow,
+                        angel_engine_client::ElicitationResponse::AllowForSession,
                     )
                     .map_err(angel_error)?;
                 for event in events {
