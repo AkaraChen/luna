@@ -9,6 +9,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 use luna::{
     error::Result,
     init::{InitOptions, run_init},
+    job::{JobOptions, JobWorkspaceMode, run_job},
     orchestrator,
     paths::absolutize_path,
     tracker::{
@@ -97,6 +98,18 @@ enum Commands {
         issue: Option<String>,
         #[arg(value_name = "STATE", help = "Target tracker state name.")]
         state: String,
+    },
+    #[command(about = "Run a one-off Angel Engine job and stream TurnRunEvent JSONL")]
+    Job {
+        #[arg(
+            long,
+            help = "Path to WORKFLOW.md. Defaults to the nearest WORKFLOW.md or workflow.md in the current directory tree."
+        )]
+        workflow: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = JobWorkspaceMode::None)]
+        workspace: JobWorkspaceMode,
+        #[arg(value_name = "PROMPT")]
+        prompt: Vec<String>,
     },
     #[command(about = "Browse the current issue's project wiki via a virtual shell")]
     Wiki {
@@ -190,7 +203,29 @@ async fn main() -> Result<()> {
             println!("moved {identifier}");
             Ok(())
         }
-        Some(Commands::Wiki { workflow, issue, args }) => {
+        Some(Commands::Job {
+            workflow,
+            workspace,
+            prompt,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            let workflow_path = match workflow {
+                Some(path) => absolutize_path(&path)?,
+                None => discover_workflow_path(&cwd)?,
+            };
+            load_dotenv_file(&workflow_path)?;
+            run_job(JobOptions {
+                workflow_path,
+                prompt: read_job_prompt(prompt)?,
+                workspace,
+            })
+            .await
+        }
+        Some(Commands::Wiki {
+            workflow,
+            issue,
+            args,
+        }) => {
             let target = resolve_tracker_target(workflow, issue)?;
             load_dotenv_file(&target.workflow_path)?;
             let result = run_wiki_command(WikiCommandOptions { target, args }).await?;
@@ -229,7 +264,21 @@ fn resolve_tracker_target(
     })
 }
 
+fn read_job_prompt(args: Vec<String>) -> Result<String> {
+    read_text_arg_or_stdin(
+        args,
+        "job prompt is required; pass text or pipe stdin to `luna job`",
+    )
+}
+
 fn read_comment_body(args: Vec<String>) -> Result<String> {
+    read_text_arg_or_stdin(
+        args,
+        "comment body is required; pass text or pipe stdin to `luna comment`",
+    )
+}
+
+fn read_text_arg_or_stdin(args: Vec<String>, missing_message: &str) -> Result<String> {
     let body = if args.is_empty() {
         if io::stdin().is_terminal() {
             String::new()
@@ -245,7 +294,7 @@ fn read_comment_body(args: Vec<String>) -> Result<String> {
     let body = body.trim().to_string();
     if body.is_empty() {
         return Err(luna::error::LunaError::InvalidConfig(
-            "comment body is required; pass text or pipe stdin to `luna comment`".to_string(),
+            missing_message.to_string(),
         ));
     }
 
@@ -254,7 +303,11 @@ fn read_comment_body(args: Vec<String>) -> Result<String> {
 
 fn init_logging() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let _ = fmt().with_env_filter(filter).with_target(false).try_init();
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_writer(io::stderr)
+        .try_init();
 }
 
 fn load_dotenv_file(workflow_path: &Path) -> Result<()> {

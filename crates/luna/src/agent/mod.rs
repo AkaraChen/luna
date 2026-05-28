@@ -17,7 +17,7 @@ use crate::{
 
 mod acp;
 mod angel_runtime;
-mod command_line;
+pub(crate) mod command_line;
 
 pub use acp::AcpSession;
 pub use angel_runtime::AngelRuntimeSession;
