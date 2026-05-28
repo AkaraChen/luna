@@ -1,4 +1,4 @@
-use asahi_migration::{Migrator, MigratorTrait};
+use crate::migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
 
 const DEFAULT_DATABASE_URL: &str = "sqlite://asahi.db?mode=rwc";

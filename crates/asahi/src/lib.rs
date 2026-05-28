@@ -1,4 +1,5 @@
 pub mod api;
+pub mod migration;
 pub mod app;
 pub mod db;
 pub mod domain;

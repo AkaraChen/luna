@@ -223,21 +223,14 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 name = "asahi"
 version = "0.1.0"
 dependencies = [
- "asahi-migration",
  "chrono",
  "garde 0.21.1",
  "rocket",
  "sea-orm",
+ "sea-orm-migration",
  "serde",
  "thiserror 2.0.18",
  "uuid",
-]
-
-[[package]]
-name = "asahi-migration"
-version = "0.1.0"
-dependencies = [
- "sea-orm-migration",
 ]
 
 [[package]]
