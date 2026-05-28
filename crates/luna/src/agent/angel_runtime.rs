@@ -1,8 +1,7 @@
 use std::{path::Path, time::Duration};
 
 use angel_engine_client::{
-    AgentRuntime, AngelSession, ClientOptions, ClientProtocol, RuntimeOptions, SendTextRequest,
-    TurnRunEvent,
+    AngelSession, RuntimeOptionsOverrides, SendTextRequest, TurnRunEvent, create_runtime_options,
 };
 use chrono::Utc;
 use tokio::{
@@ -13,18 +12,66 @@ use tracing::warn;
 
 use crate::{
     agent::{CommandExecutionEvent, SessionUpdate, StopReason, TurnExit, UsageUpdate, WorkerEvent},
-    config::CodexRunner,
+    config::{CodexRunner, OpencodeRunner},
     error::{LunaError, Result},
     paths::absolutize_path,
 };
 
-pub struct CodexSession {
+use super::command_line::split_command;
+
+#[derive(Clone, Copy, Debug)]
+enum AngelRuntimeKind {
+    Codex,
+    Opencode,
+}
+
+impl AngelRuntimeKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Opencode => "opencode",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct AngelRuntimeLaunchConfig {
+    kind: AngelRuntimeKind,
+    command: String,
+    args: Vec<String>,
+    turn_timeout_ms: u64,
+    default_reasoning_effort: Option<String>,
+}
+
+impl AngelRuntimeLaunchConfig {
+    fn codex(config: &CodexRunner) -> Self {
+        Self {
+            kind: AngelRuntimeKind::Codex,
+            command: config.command.clone(),
+            args: config.args.clone(),
+            turn_timeout_ms: config.turn_timeout_ms,
+            default_reasoning_effort: None,
+        }
+    }
+
+    fn opencode(config: &OpencodeRunner) -> Self {
+        Self {
+            kind: AngelRuntimeKind::Opencode,
+            command: config.command.clone(),
+            args: config.args.clone(),
+            turn_timeout_ms: config.turn_timeout_ms,
+            default_reasoning_effort: None,
+        }
+    }
+}
+
+pub struct AngelRuntimeSession {
     command_tx: mpsc::UnboundedSender<AngelCommand>,
     worker: JoinHandle<()>,
     issue_id: String,
     issue_identifier: String,
     events: mpsc::UnboundedSender<WorkerEvent>,
-    config: CodexRunner,
+    config: AngelRuntimeLaunchConfig,
     session_id: Option<String>,
     thread_id: Option<String>,
     turn_id: Option<String>,
@@ -59,9 +106,53 @@ struct AngelWorker {
     session_id: Option<String>,
 }
 
-impl CodexSession {
+impl AngelRuntimeSession {
     pub async fn launch(
         config: &CodexRunner,
+        workspace_path: &Path,
+        issue_id: String,
+        issue_identifier: String,
+        events: mpsc::UnboundedSender<WorkerEvent>,
+    ) -> Result<Self> {
+        Self::launch_codex(config, workspace_path, issue_id, issue_identifier, events).await
+    }
+
+    pub async fn launch_codex(
+        config: &CodexRunner,
+        workspace_path: &Path,
+        issue_id: String,
+        issue_identifier: String,
+        events: mpsc::UnboundedSender<WorkerEvent>,
+    ) -> Result<Self> {
+        Self::launch_runtime(
+            AngelRuntimeLaunchConfig::codex(config),
+            workspace_path,
+            issue_id,
+            issue_identifier,
+            events,
+        )
+        .await
+    }
+
+    pub async fn launch_opencode(
+        config: &OpencodeRunner,
+        workspace_path: &Path,
+        issue_id: String,
+        issue_identifier: String,
+        events: mpsc::UnboundedSender<WorkerEvent>,
+    ) -> Result<Self> {
+        Self::launch_runtime(
+            AngelRuntimeLaunchConfig::opencode(config),
+            workspace_path,
+            issue_id,
+            issue_identifier,
+            events,
+        )
+        .await
+    }
+
+    async fn launch_runtime(
+        config: AngelRuntimeLaunchConfig,
         workspace_path: &Path,
         issue_id: String,
         issue_identifier: String,
@@ -70,18 +161,20 @@ impl CodexSession {
         let workspace_path =
             std::fs::canonicalize(workspace_path).or_else(|_| absolutize_path(workspace_path))?;
         let workspace_path = workspace_path.to_string_lossy().to_string();
-        let options = RuntimeOptions {
-            client: ClientOptions {
-                command: config.command.clone(),
-                args: Vec::new(),
-                protocol: ClientProtocol::CodexAppServer,
+        let (command, args) = split_command(&config.command, &config.args)?;
+        let options = create_runtime_options(
+            Some(config.kind.name()),
+            RuntimeOptionsOverrides {
+                command: Some(command),
+                args: Some(args),
                 cwd: Some(workspace_path.clone()),
-                process_label: Some(format!("luna:{}", issue_identifier)),
-                ..ClientOptions::codex_app_server(config.command.clone())
+                process_label: Some(format!("luna:{}:{}", config.kind.name(), issue_identifier)),
+                client_name: Some("luna".to_string()),
+                client_title: Some("Luna".to_string()),
+                default_reasoning_effort: config.default_reasoning_effort.clone(),
+                ..RuntimeOptionsOverrides::default()
             },
-            runtime: AgentRuntime::Codex,
-            default_reasoning_effort: None,
-        };
+        );
         let session = tokio::task::spawn_blocking(move || AngelSession::new(options))
             .await
             .map_err(|e| LunaError::Agent(format!("angel session spawn task failed: {e}")))?
@@ -107,7 +200,7 @@ impl CodexSession {
             issue_id,
             issue_identifier,
             events,
-            config: config.clone(),
+            config,
             session_id: None,
             thread_id: None,
             turn_id: None,
@@ -230,21 +323,29 @@ impl AngelWorker {
                 if let Some(turn_id) = turn_id {
                     self.set_turn_id(turn_id, turn_number);
                 }
-                self.emit("item/agentMessage/delta", Some(truncate_message(text)), None, Some(turn_number));
+                self.emit(
+                    "item/agentMessage/delta",
+                    Some(truncate_message(text)),
+                    None,
+                    Some(turn_number),
+                );
             }
             TurnRunEvent::ActionObserved { action, .. }
             | TurnRunEvent::ActionUpdated { action, .. } => {
                 self.set_turn_id(action.turn_id.clone(), turn_number);
-                if action.kind == "command" && action.phase == "completed" && action.error.is_none() {
+                if action.kind == "command" && action.phase == "completed" && action.error.is_none()
+                {
                     if let Some(command) = action.input_summary.or(action.raw_input) {
-                        let _ = self.events.send(WorkerEvent::CommandExecuted(CommandExecutionEvent {
-                            issue_id: self.issue_id.clone(),
-                            issue_identifier: self.issue_identifier.clone(),
-                            command,
-                            cwd: Some(self.workspace_path.clone()),
-                            duration_ms: None,
-                            exit_code: None,
-                        }));
+                        let _ =
+                            self.events
+                                .send(WorkerEvent::CommandExecuted(CommandExecutionEvent {
+                                    issue_id: self.issue_id.clone(),
+                                    issue_identifier: self.issue_identifier.clone(),
+                                    command,
+                                    cwd: Some(self.workspace_path.clone()),
+                                    duration_ms: None,
+                                    exit_code: None,
+                                }));
                     }
                 }
             }
@@ -255,7 +356,10 @@ impl AngelWorker {
                 self.set_turn_id(elicitation.turn_id.unwrap_or_default(), turn_number);
                 let events = self
                     .session
-                    .resolve_elicitation(elicitation.id, angel_engine_client::ElicitationResponse::Allow)
+                    .resolve_elicitation(
+                        elicitation.id,
+                        angel_engine_client::ElicitationResponse::Allow,
+                    )
                     .map_err(angel_error)?;
                 for event in events {
                     self.handle_turn_event(event, turn_number)?;
@@ -330,7 +434,7 @@ impl AngelWorker {
 }
 
 #[async_trait::async_trait]
-impl crate::agent::AgentSession for CodexSession {
+impl crate::agent::AgentSession for AngelRuntimeSession {
     async fn start(&mut self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.command_tx

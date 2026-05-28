@@ -353,6 +353,8 @@ scheduler:
 runner:
   kind: codex
   command: codex app-server
+  # Alternative:
+  # kind: opencode      # command: opencode acp
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:

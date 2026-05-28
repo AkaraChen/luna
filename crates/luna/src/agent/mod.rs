@@ -16,10 +16,13 @@ use crate::{
 };
 
 mod acp;
-mod codex;
+mod angel_runtime;
+mod command_line;
 
 pub use acp::AcpSession;
-pub use codex::CodexSession;
+pub use angel_runtime::AngelRuntimeSession;
+
+pub type CodexSession = AngelRuntimeSession;
 
 #[derive(Clone, Debug)]
 pub enum StopReason {
@@ -117,8 +120,15 @@ pub async fn run_agent_attempt(
     comment_rx: mpsc::Receiver<String>,
 ) {
     let started = Instant::now();
-    let outcome =
-        run_agent_attempt_inner(issue.clone(), attempt, workflow, events.clone(), stop_rx, comment_rx).await;
+    let outcome = run_agent_attempt_inner(
+        issue.clone(),
+        attempt,
+        workflow,
+        events.clone(),
+        stop_rx,
+        comment_rx,
+    )
+    .await;
 
     let (worker_outcome, error) = match outcome {
         Ok(WorkerOutcome::Normal) => (WorkerOutcome::Normal, None),
@@ -239,7 +249,12 @@ async fn run_agent_attempt_inner(
         let prompt = if turn_number == 1 {
             prompt.clone()
         } else {
-            build_continuation_prompt(&issue, turn_number, workflow.config.scheduler.max_turns, &new_comments)
+            build_continuation_prompt(
+                &issue,
+                turn_number,
+                workflow.config.scheduler.max_turns,
+                &new_comments,
+            )
         };
 
         match session.run_turn(&prompt, turn_number, &mut stop_rx).await? {
@@ -300,7 +315,24 @@ pub async fn build_agent_session(
 ) -> Result<Box<dyn AgentSession>> {
     match config {
         RunnerConfig::Codex(c) => Ok(Box::new(
-            CodexSession::launch(c, workspace_path, issue_id, issue_identifier, events).await?,
+            AngelRuntimeSession::launch_codex(
+                c,
+                workspace_path,
+                issue_id,
+                issue_identifier,
+                events,
+            )
+            .await?,
+        )),
+        RunnerConfig::Opencode(c) => Ok(Box::new(
+            AngelRuntimeSession::launch_opencode(
+                c,
+                workspace_path,
+                issue_id,
+                issue_identifier,
+                events,
+            )
+            .await?,
         )),
         RunnerConfig::Acp(c) => Ok(Box::new(
             AcpSession::launch(c, workspace_path, issue_id, issue_identifier, events).await?,

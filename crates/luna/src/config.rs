@@ -25,6 +25,7 @@ const DEFAULT_TURN_TIMEOUT_MS: u64 = 3_600_000;
 const DEFAULT_READ_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_STALL_TIMEOUT_MS: i64 = 300_000;
 const DEFAULT_CODEX_COMMAND: &str = "codex app-server";
+const DEFAULT_OPENCODE_COMMAND: &str = "opencode acp";
 const DEFAULT_ACP_COMMAND: &str = "kimi acp";
 const DEFAULT_GH_COMMAND: &str = "gh";
 
@@ -173,6 +174,8 @@ impl AsahiTrackerConfig {
 pub enum RunnerConfig {
     #[serde(rename = "codex")]
     Codex(#[garde(dive)] CodexRunner),
+    #[serde(rename = "opencode")]
+    Opencode(#[garde(dive)] OpencodeRunner),
     #[serde(rename = "acp")]
     Acp(#[garde(dive)] AcpRunner),
 }
@@ -187,6 +190,7 @@ impl RunnerConfig {
     pub fn command(&self) -> &str {
         match self {
             Self::Codex(c) => &c.command,
+            Self::Opencode(c) => &c.command,
             Self::Acp(c) => &c.command,
         }
     }
@@ -194,6 +198,7 @@ impl RunnerConfig {
     pub fn turn_timeout_ms(&self) -> u64 {
         match self {
             Self::Codex(c) => c.turn_timeout_ms,
+            Self::Opencode(c) => c.turn_timeout_ms,
             Self::Acp(c) => c.turn_timeout_ms,
         }
     }
@@ -201,6 +206,7 @@ impl RunnerConfig {
     pub fn read_timeout_ms(&self) -> u64 {
         match self {
             Self::Codex(c) => c.read_timeout_ms,
+            Self::Opencode(c) => c.read_timeout_ms,
             Self::Acp(c) => c.read_timeout_ms,
         }
     }
@@ -208,6 +214,7 @@ impl RunnerConfig {
     pub fn stall_timeout_ms(&self) -> i64 {
         match self {
             Self::Codex(c) => c.stall_timeout_ms,
+            Self::Opencode(c) => c.stall_timeout_ms,
             Self::Acp(c) => c.stall_timeout_ms,
         }
     }
@@ -219,6 +226,9 @@ pub struct CodexRunner {
     #[serde(default = "default_codex_command")]
     #[garde(custom(not_blank))]
     pub command: String,
+    #[serde(default)]
+    #[garde(inner(custom(not_blank)))]
+    pub args: Vec<String>,
     #[garde(skip)]
     pub approval_policy: Option<JsonValue>,
     #[garde(inner(custom(not_blank)))]
@@ -240,9 +250,42 @@ impl Default for CodexRunner {
     fn default() -> Self {
         Self {
             command: DEFAULT_CODEX_COMMAND.to_string(),
+            args: Vec::new(),
             approval_policy: None,
             thread_sandbox: None,
             turn_sandbox_policy: None,
+            turn_timeout_ms: DEFAULT_TURN_TIMEOUT_MS,
+            read_timeout_ms: DEFAULT_READ_TIMEOUT_MS,
+            stall_timeout_ms: DEFAULT_STALL_TIMEOUT_MS,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct OpencodeRunner {
+    #[serde(default = "default_opencode_command")]
+    #[garde(custom(not_blank))]
+    pub command: String,
+    #[serde(default)]
+    #[garde(inner(custom(not_blank)))]
+    pub args: Vec<String>,
+    #[serde(default = "default_turn_timeout_ms")]
+    #[garde(range(min = 1))]
+    pub turn_timeout_ms: u64,
+    #[serde(default = "default_read_timeout_ms")]
+    #[garde(range(min = 1))]
+    pub read_timeout_ms: u64,
+    #[serde(default = "default_stall_timeout_ms")]
+    #[garde(range(min = 0))]
+    pub stall_timeout_ms: i64,
+}
+
+impl Default for OpencodeRunner {
+    fn default() -> Self {
+        Self {
+            command: DEFAULT_OPENCODE_COMMAND.to_string(),
+            args: Vec::new(),
             turn_timeout_ms: DEFAULT_TURN_TIMEOUT_MS,
             read_timeout_ms: DEFAULT_READ_TIMEOUT_MS,
             stall_timeout_ms: DEFAULT_STALL_TIMEOUT_MS,
@@ -574,6 +617,9 @@ fn default_stall_timeout_ms() -> i64 {
 fn default_codex_command() -> String {
     DEFAULT_CODEX_COMMAND.to_string()
 }
+fn default_opencode_command() -> String {
+    DEFAULT_OPENCODE_COMMAND.to_string()
+}
 fn default_acp_command() -> String {
     DEFAULT_ACP_COMMAND.to_string()
 }
@@ -610,7 +656,6 @@ fn default_linear_terminal_states() -> Vec<String> {
         "Done".to_string(),
     ]
 }
-
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -699,6 +744,35 @@ tracker:
                 assert_eq!(r.command, "kimi acp");
             }
             other => panic!("expected acp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn opencode_runner_parses() {
+        let yaml = serde_yaml::from_str(
+            r#"
+runner:
+  kind: opencode
+  command: opencode
+  args: [acp]
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        match config.runner {
+            RunnerConfig::Opencode(r) => {
+                assert_eq!(r.command, "opencode");
+                assert_eq!(r.args, vec!["acp"]);
+            }
+            other => panic!("expected opencode, got {:?}", other),
         }
     }
 
