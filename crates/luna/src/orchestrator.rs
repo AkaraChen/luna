@@ -7,7 +7,7 @@ use std::{
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use tokio::{
     signal,
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
     time::{Duration, Instant, interval, interval_at},
 };
@@ -31,56 +31,7 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
     let raw_def = parse_workflow_definition(&raw_contents)?;
     let auto_start_asahi = !raw_def.config.contains_key("tracker");
 
-    let mut asahi_shutdown: Option<tokio::sync::oneshot::Sender<()>> = None;
-
-    let should_embed = auto_start_asahi
-        || matches!(
-            &store.current().config.tracker,
-            TrackerConfig::Asahi(cfg) if cfg.db.is_some()
-        );
-
-    if should_embed {
-        let port = match &store.current().config.tracker {
-            TrackerConfig::Asahi(cfg) if cfg.port.is_some() => cfg.port.unwrap(),
-            _ => find_available_port().await?,
-        };
-
-        let db_path = match &store.current().config.tracker {
-            TrackerConfig::Asahi(cfg) => cfg
-                .db
-                .as_ref()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| store.current().config.workflow_dir.join("asahi.db")),
-            _ => store.current().config.workflow_dir.join("asahi.db"),
-        };
-
-        let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
-        let rocket = asahi::rocket_with_database_url_and_port(db_url, port);
-
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        asahi_shutdown = Some(tx);
-
-        tokio::spawn(async move {
-            match rocket.launch().await {
-                Ok(orbit) => {
-                    let _ = rx.await;
-                    orbit.shutdown().notify();
-                }
-                Err(e) => {
-                    error!(error = %e, "asahi server error");
-                }
-            }
-        });
-
-        let endpoint = format!("http://127.0.0.1:{}", port);
-        wait_for_asahi(&endpoint).await?;
-
-        if let TrackerConfig::Asahi(ref mut config) = store.current_mut().config.tracker {
-            config.endpoint = endpoint;
-        }
-
-        info!("embedded asahi started on port {}", port);
-    }
+    let mut embedded_asahi = start_embedded_asahi_if_needed(&mut store, auto_start_asahi).await?;
 
     let initial = store.current().clone();
 
@@ -120,8 +71,8 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
             _ = signal::ctrl_c() => {
                 info!("received shutdown signal");
                 shutdown_running(&mut state);
-                if let Some(tx) = asahi_shutdown.take() {
-                    let _ = tx.send(());
+                if let Some(handle) = embedded_asahi.as_mut() {
+                    handle.shutdown();
                     info!("signaled embedded asahi to stop");
                 }
                 break;
@@ -196,7 +147,12 @@ async fn on_tick(
         }
     };
 
-    info!(candidate_count = candidates.len(), running = state.running.len(), claimed = state.claimed.len(), "poll tick");
+    info!(
+        candidate_count = candidates.len(),
+        running = state.running.len(),
+        claimed = state.claimed.len(),
+        "poll tick"
+    );
 
     // Group candidates by project slug, sort each group by created_at (oldest first)
     let mut by_project: HashMap<Option<String>, Vec<Issue>> = HashMap::new();
@@ -319,9 +275,9 @@ fn apply_usage_update(state: &mut OrchestratorState, issue_id: &str, usage: Usag
     entry.agent_input_tokens = usage.input_tokens;
     entry.agent_output_tokens = usage.output_tokens;
     entry.agent_total_tokens = usage.total_tokens;
-    entry.last_reported_input_tokens = usage.input_tokens;
-    entry.last_reported_output_tokens = usage.output_tokens;
-    entry.last_reported_total_tokens = usage.total_tokens;
+    entry.last_reported_input_tokens = entry.last_reported_input_tokens.max(usage.input_tokens);
+    entry.last_reported_output_tokens = entry.last_reported_output_tokens.max(usage.output_tokens);
+    entry.last_reported_total_tokens = entry.last_reported_total_tokens.max(usage.total_tokens);
 
     state.agent_totals.input_tokens += delta_input;
     state.agent_totals.output_tokens += delta_output;
@@ -993,6 +949,93 @@ enum RetryDelay {
 
 // ─── Asahi auto-start helpers ───────────────────────────────────────────────
 
+#[derive(Debug)]
+struct EmbeddedAsahiHandle {
+    #[cfg(test)]
+    endpoint: String,
+    #[cfg(test)]
+    db_path: PathBuf,
+    shutdown: Option<oneshot::Sender<()>>,
+}
+
+impl EmbeddedAsahiHandle {
+    fn shutdown(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+async fn start_embedded_asahi_if_needed(
+    store: &mut WorkflowStore,
+    auto_start_asahi: bool,
+) -> Result<Option<EmbeddedAsahiHandle>> {
+    let should_embed = auto_start_asahi
+        || matches!(
+            &store.current().config.tracker,
+            TrackerConfig::Asahi(cfg) if cfg.db.is_some()
+        );
+
+    if !should_embed {
+        return Ok(None);
+    }
+
+    let port = match &store.current().config.tracker {
+        TrackerConfig::Asahi(cfg) if cfg.port.is_some() => cfg.port.unwrap(),
+        _ => find_available_port().await?,
+    };
+    let db_path = embedded_asahi_db_path(&store.current().config);
+    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    let rocket = asahi::rocket_with_database_url_and_port(db_url, port);
+
+    let (tx, rx) = oneshot::channel::<()>();
+    tokio::spawn(async move {
+        match rocket.launch().await {
+            Ok(orbit) => {
+                let _ = rx.await;
+                orbit.shutdown().notify();
+            }
+            Err(e) => {
+                error!(error = %e, "asahi server error");
+            }
+        }
+    });
+
+    let endpoint = format!("http://127.0.0.1:{port}");
+    wait_for_asahi(&endpoint).await?;
+
+    if let TrackerConfig::Asahi(ref mut config) = store.current_mut().config.tracker {
+        config.endpoint = endpoint.clone();
+    }
+
+    info!("embedded asahi started on port {}", port);
+
+    Ok(Some(EmbeddedAsahiHandle {
+        #[cfg(test)]
+        endpoint,
+        #[cfg(test)]
+        db_path,
+        shutdown: Some(tx),
+    }))
+}
+
+fn embedded_asahi_db_path(config: &ServiceConfig) -> PathBuf {
+    let db_path = match &config.tracker {
+        TrackerConfig::Asahi(cfg) => cfg
+            .db
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("asahi.db")),
+        _ => PathBuf::from("asahi.db"),
+    };
+
+    if db_path.is_absolute() {
+        db_path
+    } else {
+        config.workflow_dir.join(db_path)
+    }
+}
+
 async fn find_available_port() -> Result<u16> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -1019,4 +1062,1875 @@ async fn wait_for_asahi(endpoint: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::{Path, PathBuf},
+        time::Duration as StdDuration,
+    };
+
+    use chrono::{Duration as ChronoDuration, TimeZone};
+    use serde_json::{Value, json};
+    use tokio::sync::{mpsc, watch};
+
+    use crate::{
+        agent::{CommandExecutionEvent, SessionUpdate, WorkerEvent, WorkerExit, WorkerOutcome},
+        config::{RunnerConfig, ServiceConfig, TrackerConfig, resolve_service_config},
+        model::{BlockerRef, Issue, ProjectRef, WorkflowDefinition},
+        test_support::{MockHttpServer, MockResponse, issue_json},
+        workflow::WorkflowStore,
+    };
+
+    use super::{
+        OrchestratorState, RetryEntry, RunningEntry, StopReason, UsageUpdate, apply_session_update,
+        apply_usage_update, compare_priority, embedded_asahi_db_path, handle_command_executed,
+        handle_retry_due, handle_worker_event, handle_worker_exit, has_available_state_slot,
+        on_tick, poll_comments, reconcile_running_issues, reconcile_stalled_runs, should_dispatch,
+        sort_issues_for_dispatch, start_embedded_asahi_if_needed,
+        startup_terminal_workspace_cleanup,
+    };
+
+    fn codex_config(tracker_yaml: &str, scheduler_yaml: &str, runner_yaml: &str) -> ServiceConfig {
+        let yaml = serde_yaml::from_str(&format!(
+            r#"
+tracker:
+{tracker_yaml}
+runner:
+  kind: codex
+{runner_yaml}
+scheduler:
+{scheduler_yaml}
+"#
+        ))
+        .unwrap();
+        let definition = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&definition, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert!(matches!(config.runner, RunnerConfig::Codex(_)));
+        config
+    }
+
+    fn github_codex_config() -> ServiceConfig {
+        codex_config(
+            "  kind: github_project\n  owner: acme\n  project_number: 12",
+            "  max_concurrent: 2",
+            "",
+        )
+    }
+
+    fn asahi_codex_config() -> ServiceConfig {
+        codex_config("  kind: asahi\n  db: ./asahi.db", "  max_concurrent: 2", "")
+    }
+
+    fn asahi_endpoint_codex_workflow(
+        endpoint: &str,
+        workspace_root: PathBuf,
+    ) -> (tempfile::TempDir, WorkflowStore) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        write_asahi_endpoint_codex_workflow(&workflow_path, endpoint, &workspace_root, 2, 30_000);
+        let store = WorkflowStore::load(workflow_path).expect("workflow");
+        (temp, store)
+    }
+
+    fn write_asahi_endpoint_codex_workflow(
+        workflow_path: &Path,
+        endpoint: &str,
+        workspace_root: &Path,
+        max_concurrent: usize,
+        interval_ms: u64,
+    ) {
+        let workspace_root = workspace_root
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        std::fs::write(
+            workflow_path,
+            format!(
+                r#"---
+tracker:
+  kind: asahi
+  endpoint: "{endpoint}"
+workspace:
+  root: "{workspace_root}"
+hooks:
+  timeout_ms: 1000
+polling:
+  interval_ms: {interval_ms}
+scheduler:
+  max_concurrent: {max_concurrent}
+  retry_backoff_ms: 10000
+runner:
+  kind: codex
+  command: '"codex'
+shell_activity_patterns:
+  - git commit
+---
+Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
+"#,
+            ),
+        )
+        .expect("write workflow");
+    }
+
+    struct FakeGh {
+        _dir: tempfile::TempDir,
+        command: String,
+        log_path: PathBuf,
+    }
+
+    fn fake_github_project_gh() -> FakeGh {
+        let dir = tempfile::tempdir().unwrap();
+        let gh_path = dir.path().join("gh");
+        let log_path = dir.path().join("calls.log");
+        let response = json!({
+            "data": {
+                "repositoryOwner": {
+                    "projectV2": {
+                        "url": "https://github.com/orgs/acme/projects/12",
+                        "items": {
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            },
+                            "nodes": [
+                                {
+                                    "id": "PVTI_1",
+                                    "createdAt": "2026-01-01T00:00:00Z",
+                                    "updatedAt": "2026-01-02T00:00:00Z",
+                                    "statusFieldValue": {
+                                        "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                        "name": "Todo"
+                                    },
+                                    "priorityFieldValue": {
+                                        "__typename": "ProjectV2ItemFieldTextValue",
+                                        "text": "P1"
+                                    },
+                                    "content": {
+                                        "__typename": "Issue",
+                                        "id": "I_42",
+                                        "number": 42,
+                                        "title": "Fix GitHub workflow",
+                                        "body": "Body",
+                                        "url": "https://github.com/acme/repo/issues/42",
+                                        "state": "OPEN",
+                                        "closed": false,
+                                        "createdAt": "2026-01-01T00:00:00Z",
+                                        "updatedAt": "2026-01-02T00:00:00Z",
+                                        "repository": {
+                                            "nameWithOwner": "acme/repo"
+                                        },
+                                        "labels": {
+                                            "nodes": [
+                                                { "name": "CI" }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        })
+        .to_string();
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+CALL_LOG='{log_path}'
+printf '%q ' "$@" >> "$CALL_LOG"
+printf '\n' >> "$CALL_LOG"
+if [[ "${{1:-}}" == "api" && "${{2:-}}" == "graphql" ]]; then
+  cat <<'JSON'
+{response}
+JSON
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 64
+fi
+"#,
+            log_path = log_path.display(),
+        );
+        std::fs::write(&gh_path, script).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&gh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&gh_path, permissions).unwrap();
+        }
+
+        FakeGh {
+            _dir: dir,
+            command: gh_path.to_string_lossy().to_string(),
+            log_path,
+        }
+    }
+
+    fn fake_github_comments_gh() -> FakeGh {
+        let dir = tempfile::tempdir().unwrap();
+        let gh_path = dir.path().join("gh");
+        let log_path = dir.path().join("calls.log");
+        let count_path = dir.path().join("comment-count");
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+CALL_LOG='{log_path}'
+COUNT_FILE='{count_path}'
+printf '%q ' "$@" >> "$CALL_LOG"
+printf '\n' >> "$CALL_LOG"
+if [[ "${{1:-}}" == "api" && "${{2:-}}" == "repos/acme/repo/issues/42/comments" ]]; then
+  count=0
+  if [[ -f "$COUNT_FILE" ]]; then
+    count="$(cat "$COUNT_FILE")"
+  fi
+  count=$((count + 1))
+  printf '%s' "$count" > "$COUNT_FILE"
+  if [[ "$count" == "1" ]]; then
+    cat <<'JSON'
+[
+  {{"node_id":"comment-1","body":"first github comment","created_at":"2026-01-01T00:00:00Z"}},
+  {{"id":"comment-2","body":"second github comment","created_at":"2026-01-02T00:00:00Z"}}
+]
+JSON
+  else
+    cat <<'JSON'
+[
+  {{"node_id":"comment-1","body":"first github comment","created_at":"2026-01-01T00:00:00Z"}},
+  {{"node_id":"comment-3","body":"third github comment","created_at":"2026-01-03T00:00:00Z"}}
+]
+JSON
+  fi
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 64
+fi
+"#,
+            log_path = log_path.display(),
+            count_path = count_path.display(),
+        );
+        std::fs::write(&gh_path, script).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&gh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&gh_path, permissions).unwrap();
+        }
+
+        FakeGh {
+            _dir: dir,
+            command: gh_path.to_string_lossy().to_string(),
+            log_path,
+        }
+    }
+
+    fn fake_github_issue_comment_gh() -> FakeGh {
+        let dir = tempfile::tempdir().unwrap();
+        let gh_path = dir.path().join("gh");
+        let log_path = dir.path().join("calls.log");
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+CALL_LOG='{log_path}'
+printf '%q ' "$@" >> "$CALL_LOG"
+printf '\n' >> "$CALL_LOG"
+if [[ "${{1:-}}" == "issue" && "${{2:-}}" == "comment" ]]; then
+  exit 0
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 64
+fi
+"#,
+            log_path = log_path.display(),
+        );
+        std::fs::write(&gh_path, script).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&gh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&gh_path, permissions).unwrap();
+        }
+
+        FakeGh {
+            _dir: dir,
+            command: gh_path.to_string_lossy().to_string(),
+            log_path,
+        }
+    }
+
+    fn write_github_project_codex_workflow(
+        workflow_path: &Path,
+        gh_command: &str,
+        workspace_root: &Path,
+    ) {
+        write_github_project_codex_workflow_with_patterns(
+            workflow_path,
+            gh_command,
+            workspace_root,
+            &["gh pr create"],
+        );
+    }
+
+    fn write_github_project_codex_workflow_with_default_patterns(
+        workflow_path: &Path,
+        gh_command: &str,
+        workspace_root: &Path,
+    ) {
+        write_github_project_codex_workflow_inner(workflow_path, gh_command, workspace_root, None);
+    }
+
+    fn write_github_project_codex_workflow_with_patterns(
+        workflow_path: &Path,
+        gh_command: &str,
+        workspace_root: &Path,
+        shell_activity_patterns: &[&str],
+    ) {
+        write_github_project_codex_workflow_inner(
+            workflow_path,
+            gh_command,
+            workspace_root,
+            Some(shell_activity_patterns),
+        );
+    }
+
+    fn write_github_project_codex_workflow_inner(
+        workflow_path: &Path,
+        gh_command: &str,
+        workspace_root: &Path,
+        shell_activity_patterns: Option<&[&str]>,
+    ) {
+        let gh_command = gh_command.replace('\\', "\\\\").replace('"', "\\\"");
+        let workspace_root = workspace_root
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let shell_activity_yaml = match shell_activity_patterns {
+            Some([]) => "shell_activity_patterns: []\n".to_string(),
+            Some(shell_activity_patterns) => {
+                let patterns = shell_activity_patterns
+                    .iter()
+                    .map(|pattern| format!("  - {pattern}\n"))
+                    .collect::<String>();
+                format!("shell_activity_patterns:\n{patterns}")
+            }
+            None => String::new(),
+        };
+        std::fs::write(
+            workflow_path,
+            format!(
+                r#"---
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+  gh_command: "{gh_command}"
+workspace:
+  root: "{workspace_root}"
+hooks:
+  timeout_ms: 1000
+scheduler:
+  max_concurrent: 2
+  retry_backoff_ms: 10000
+runner:
+  kind: codex
+  command: '"codex'
+{shell_activity_yaml}
+---
+Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
+"#,
+            ),
+        )
+        .expect("write workflow");
+    }
+
+    fn issue(id: &str, identifier: &str, state: &str) -> Issue {
+        Issue {
+            id: id.to_string(),
+            identifier: identifier.to_string(),
+            title: format!("Issue {identifier}"),
+            description: None,
+            priority: None,
+            state: state.to_string(),
+            branch_name: None,
+            url: None,
+            labels: Vec::new(),
+            blocked_by: Vec::new(),
+            created_at: None,
+            updated_at: None,
+            project: None,
+            source_data: None,
+        }
+    }
+
+    fn issue_with_project(id: &str, identifier: &str, state: &str, project_slug: &str) -> Issue {
+        let mut issue = issue(id, identifier, state);
+        issue.project = Some(ProjectRef {
+            id: format!("project-{project_slug}"),
+            slug: project_slug.to_string(),
+            name: project_slug.to_string(),
+            state: "Active".to_string(),
+            priority: None,
+        });
+        issue
+    }
+
+    fn running_entry(issue: Issue) -> (RunningEntry, watch::Receiver<Option<StopReason>>) {
+        let (stop_tx, stop_rx) = watch::channel(None);
+        let (comment_tx, _comment_rx) = mpsc::channel(1);
+        let worker = tokio::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        let entry = RunningEntry {
+            worker,
+            stop_tx,
+            comment_tx: Some(comment_tx),
+            seen_comment_ids: Default::default(),
+            identifier: issue.identifier.clone(),
+            issue,
+            session_id: None,
+            thread_id: None,
+            turn_id: None,
+            agent_pid: None,
+            last_agent_message: None,
+            last_agent_event: None,
+            last_agent_timestamp: None,
+            agent_input_tokens: 0,
+            agent_output_tokens: 0,
+            agent_total_tokens: 0,
+            last_reported_input_tokens: 0,
+            last_reported_output_tokens: 0,
+            last_reported_total_tokens: 0,
+            retry_attempt: None,
+            started_at: chrono::Utc::now(),
+            pending_cleanup: false,
+            turn_count: 0,
+        };
+        (entry, stop_rx)
+    }
+
+    fn running_entry_with_comment_rx(
+        issue: Issue,
+    ) -> (
+        RunningEntry,
+        mpsc::Receiver<String>,
+        watch::Receiver<Option<StopReason>>,
+    ) {
+        let (stop_tx, stop_rx) = watch::channel(None);
+        let (comment_tx, comment_rx) = mpsc::channel(8);
+        let worker = tokio::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        let entry = RunningEntry {
+            worker,
+            stop_tx,
+            comment_tx: Some(comment_tx),
+            seen_comment_ids: Default::default(),
+            identifier: issue.identifier.clone(),
+            issue,
+            session_id: None,
+            thread_id: None,
+            turn_id: None,
+            agent_pid: None,
+            last_agent_message: None,
+            last_agent_event: None,
+            last_agent_timestamp: None,
+            agent_input_tokens: 0,
+            agent_output_tokens: 0,
+            agent_total_tokens: 0,
+            last_reported_input_tokens: 0,
+            last_reported_output_tokens: 0,
+            last_reported_total_tokens: 0,
+            retry_attempt: None,
+            started_at: chrono::Utc::now(),
+            pending_cleanup: false,
+            turn_count: 0,
+        };
+        (entry, comment_rx, stop_rx)
+    }
+
+    fn retry_entry(issue_id: &str, identifier: &str, attempt: u32) -> RetryEntry {
+        RetryEntry {
+            issue_id: issue_id.to_string(),
+            identifier: identifier.to_string(),
+            attempt,
+            _due_at: chrono::Utc::now(),
+            _error: None,
+            task: tokio::spawn(async {
+                std::future::pending::<()>().await;
+            }),
+        }
+    }
+
+    #[test]
+    fn codex_configs_cover_github_and_asahi_tracker_state_semantics() {
+        let github = github_codex_config();
+        assert!(matches!(github.tracker, TrackerConfig::GitHubProject(_)));
+        assert!(github.tracker.is_active_state("todo"));
+        assert!(github.tracker.is_active_state("IN PROGRESS"));
+        assert!(github.tracker.is_terminal_state("done"));
+        assert!(!github.tracker.is_active_state("Backlog"));
+
+        let asahi = asahi_codex_config();
+        assert!(matches!(asahi.tracker, TrackerConfig::Asahi(_)));
+        assert!(asahi.tracker.is_active_state("Todo"));
+        assert!(asahi.tracker.is_active_state("in progress"));
+        assert!(asahi.tracker.is_terminal_state("Done"));
+        assert!(!asahi.tracker.is_active_state("Backlog"));
+    }
+
+    #[tokio::test]
+    async fn should_dispatch_accepts_valid_codex_github_and_asahi_issues() {
+        let github = github_codex_config();
+        let asahi = asahi_codex_config();
+        let github_state = OrchestratorState::new(&github);
+        let asahi_state = OrchestratorState::new(&asahi);
+
+        assert!(should_dispatch(
+            &issue("1", "acme/repo#1", "Todo"),
+            &github_state,
+            &github
+        ));
+        assert!(should_dispatch(
+            &issue("2", "ASAHI-2", "In Progress"),
+            &asahi_state,
+            &asahi
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_dispatch_rejects_invalid_or_unavailable_codex_work() {
+        let config = github_codex_config();
+        let mut state = OrchestratorState::new(&config);
+
+        assert!(!should_dispatch(
+            &issue("", "acme/repo#1", "Todo"),
+            &state,
+            &config
+        ));
+        assert!(!should_dispatch(&issue("1", "", "Todo"), &state, &config));
+        assert!(!should_dispatch(
+            &issue("1", "acme/repo#1", "Backlog"),
+            &state,
+            &config
+        ));
+        assert!(!should_dispatch(
+            &issue("1", "acme/repo#1", "Done"),
+            &state,
+            &config
+        ));
+
+        state.claimed.insert("1".to_string());
+        assert!(!should_dispatch(
+            &issue("1", "acme/repo#1", "Todo"),
+            &state,
+            &config
+        ));
+        state.claimed.clear();
+
+        let (entry, _stop_rx) = running_entry(issue("1", "acme/repo#1", "Todo"));
+        state.running.insert("1".to_string(), entry);
+        assert!(!should_dispatch(
+            &issue("1", "acme/repo#1", "Todo"),
+            &state,
+            &config
+        ));
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn should_dispatch_respects_global_and_state_concurrency_limits() {
+        let config = codex_config(
+            "  kind: github_project\n  owner: acme\n  project_number: 12",
+            "  max_concurrent: 1\n  max_concurrent_by_state:\n    Todo: 1",
+            "",
+        );
+        let mut state = OrchestratorState::new(&config);
+        let (entry, _stop_rx) = running_entry(issue("1", "acme/repo#1", "Todo"));
+        state.running.insert("1".to_string(), entry);
+
+        assert_eq!(super::available_global_slots(&state, &config), 0);
+        assert!(!has_available_state_slot("Todo", &state, &config));
+        assert!(!should_dispatch(
+            &issue("2", "acme/repo#2", "Todo"),
+            &state,
+            &config
+        ));
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[test]
+    fn should_dispatch_rejects_unresolved_blockers_only() {
+        let config = github_codex_config();
+        let state = OrchestratorState::new(&config);
+        let mut blocked = issue("1", "acme/repo#1", "Todo");
+        blocked.blocked_by = vec![BlockerRef {
+            id: Some("blocker".to_string()),
+            identifier: Some("acme/repo#0".to_string()),
+            state: Some("Todo".to_string()),
+        }];
+        assert!(!should_dispatch(&blocked, &state, &config));
+
+        blocked.blocked_by[0].state = Some("Done".to_string());
+        assert!(should_dispatch(&blocked, &state, &config));
+
+        blocked.blocked_by[0].state = None;
+        assert!(!should_dispatch(&blocked, &state, &config));
+    }
+
+    #[test]
+    fn sort_dispatches_oldest_then_highest_priority_then_identifier() {
+        let mut oldest_low = issue("1", "C", "Todo");
+        oldest_low.created_at = Some(chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+        oldest_low.priority = Some(3);
+
+        let mut oldest_high_b = issue("2", "B", "Todo");
+        oldest_high_b.created_at = Some(chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+        oldest_high_b.priority = Some(1);
+
+        let mut oldest_high_a = issue("3", "A", "Todo");
+        oldest_high_a.created_at = Some(chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+        oldest_high_a.priority = Some(1);
+
+        let mut newer = issue("4", "D", "Todo");
+        newer.created_at = Some(chrono::Utc.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap());
+        newer.priority = Some(0);
+
+        let mut issues = vec![newer, oldest_low, oldest_high_b, oldest_high_a];
+        issues.sort_by(sort_issues_for_dispatch);
+
+        assert_eq!(
+            issues
+                .into_iter()
+                .map(|issue| issue.identifier)
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "C", "D"]
+        );
+        assert_eq!(compare_priority(Some(1), Some(2)), std::cmp::Ordering::Less);
+        assert_eq!(compare_priority(Some(1), None), std::cmp::Ordering::Less);
+        assert_eq!(compare_priority(None, Some(1)), std::cmp::Ordering::Greater);
+    }
+
+    #[tokio::test]
+    async fn reconcile_stalled_runs_sends_stalled_stop_for_codex_runner() {
+        let config = codex_config(
+            "  kind: github_project\n  owner: acme\n  project_number: 12",
+            "  max_concurrent: 1",
+            "  stall_timeout_ms: 1",
+        );
+        let mut state = OrchestratorState::new(&config);
+        let (mut entry, stop_rx) = running_entry(issue("1", "acme/repo#1", "Todo"));
+        entry.started_at = chrono::Utc::now() - ChronoDuration::milliseconds(10);
+        state.running.insert("1".to_string(), entry);
+
+        reconcile_stalled_runs(&mut state, &config);
+
+        assert!(matches!(
+            stop_rx.borrow().clone(),
+            Some(StopReason::Stalled)
+        ));
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn usage_updates_count_only_new_token_deltas() {
+        let config = github_codex_config();
+        let mut state = OrchestratorState::new(&config);
+        let (entry, _stop_rx) = running_entry(issue("1", "acme/repo#1", "Todo"));
+        state.running.insert("1".to_string(), entry);
+
+        apply_usage_update(
+            &mut state,
+            "1",
+            UsageUpdate {
+                input_tokens: 100,
+                output_tokens: 20,
+                total_tokens: 120,
+            },
+        );
+        apply_usage_update(
+            &mut state,
+            "1",
+            UsageUpdate {
+                input_tokens: 150,
+                output_tokens: 25,
+                total_tokens: 175,
+            },
+        );
+        apply_usage_update(
+            &mut state,
+            "1",
+            UsageUpdate {
+                input_tokens: 140,
+                output_tokens: 22,
+                total_tokens: 162,
+            },
+        );
+        apply_usage_update(
+            &mut state,
+            "1",
+            UsageUpdate {
+                input_tokens: 151,
+                output_tokens: 26,
+                total_tokens: 177,
+            },
+        );
+
+        assert_eq!(state.agent_totals.input_tokens, 151);
+        assert_eq!(state.agent_totals.output_tokens, 26);
+        assert_eq!(state.agent_totals.total_tokens, 177);
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn session_updates_refresh_running_entry_metadata() {
+        let config = github_codex_config();
+        let mut state = OrchestratorState::new(&config);
+        let (entry, _stop_rx) = running_entry(issue("1", "acme/repo#1", "Todo"));
+        state.running.insert("1".to_string(), entry);
+
+        apply_session_update(
+            crate::agent::SessionUpdate {
+                issue_id: "1".to_string(),
+                issue_identifier: "acme/repo#1".to_string(),
+                event: "turn/started".to_string(),
+                timestamp: chrono::Utc::now(),
+                session_id: Some("session".to_string()),
+                thread_id: Some("thread".to_string()),
+                turn_id: Some("turn".to_string()),
+                agent_pid: Some(123),
+                message: Some("delta".to_string()),
+                usage: Some(UsageUpdate {
+                    input_tokens: 10,
+                    output_tokens: 2,
+                    total_tokens: 12,
+                }),
+                rate_limits: Some(serde_json::json!({"remaining": 1})),
+                turn_count: Some(2),
+            },
+            &mut state,
+        );
+
+        let running = state.running.get("1").unwrap();
+        assert_eq!(running.last_agent_event.as_deref(), Some("turn/started"));
+        assert_eq!(running.session_id.as_deref(), Some("session"));
+        assert_eq!(running.thread_id.as_deref(), Some("thread"));
+        assert_eq!(running.turn_id.as_deref(), Some("turn"));
+        assert_eq!(running.agent_pid, Some(123));
+        assert_eq!(running.last_agent_message.as_deref(), Some("delta"));
+        assert_eq!(running.turn_count, 2);
+        assert_eq!(state.agent_totals.total_tokens, 12);
+        assert_eq!(
+            state.agent_rate_limits,
+            Some(serde_json::json!({"remaining": 1}))
+        );
+        running.worker.abort();
+    }
+
+    #[tokio::test]
+    async fn worker_event_entry_routes_codex_session_command_and_exit() {
+        let fake = fake_github_issue_comment_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+        );
+        let mut store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, _stop_rx) = running_entry(issue("PVTI_1", "acme/repo#42", "Todo"));
+        state.running.insert("PVTI_1".to_string(), entry);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        handle_worker_event(
+            WorkerEvent::Session(SessionUpdate {
+                issue_id: "PVTI_1".to_string(),
+                issue_identifier: "acme/repo#42".to_string(),
+                event: "turn/started".to_string(),
+                timestamp: chrono::Utc::now(),
+                session_id: Some("session".to_string()),
+                thread_id: Some("thread".to_string()),
+                turn_id: Some("turn".to_string()),
+                agent_pid: Some(456),
+                message: Some("ready".to_string()),
+                usage: Some(UsageUpdate {
+                    input_tokens: 33,
+                    output_tokens: 7,
+                    total_tokens: 40,
+                }),
+                rate_limits: Some(serde_json::json!({"remaining": 3})),
+                turn_count: Some(1),
+            }),
+            &mut store,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        let running = state.running.get("PVTI_1").unwrap();
+        assert_eq!(running.session_id.as_deref(), Some("session"));
+        assert_eq!(running.thread_id.as_deref(), Some("thread"));
+        assert_eq!(running.turn_id.as_deref(), Some("turn"));
+        assert_eq!(running.agent_pid, Some(456));
+        assert_eq!(running.last_agent_message.as_deref(), Some("ready"));
+        assert_eq!(state.agent_totals.total_tokens, 40);
+
+        handle_worker_event(
+            WorkerEvent::CommandExecuted(CommandExecutionEvent {
+                issue_id: "PVTI_1".to_string(),
+                issue_identifier: "acme/repo#42".to_string(),
+                command: "gh pr create -R acme/repo --fill".to_string(),
+                cwd: Some("/tmp/work".to_string()),
+                duration_ms: Some(300),
+                exit_code: Some(0),
+            }),
+            &mut store,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        let calls = std::fs::read_to_string(&fake.log_path).expect("fake gh log");
+        assert!(calls.contains("issue comment 42"));
+
+        handle_worker_event(
+            WorkerEvent::Exited(WorkerExit {
+                issue_id: "PVTI_1".to_string(),
+                issue_identifier: "acme/repo#42".to_string(),
+                outcome: WorkerOutcome::Normal,
+                runtime_seconds: 1.25,
+                error: None,
+            }),
+            &mut store,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        assert!(!state.running.contains_key("PVTI_1"));
+        assert!(state.completed.contains("PVTI_1"));
+        assert_eq!(state.retry_attempts.get("PVTI_1").unwrap().attempt, 1);
+        assert_eq!(state.agent_totals.seconds_running, 1.25);
+        state.retry_attempts.get("PVTI_1").unwrap().task.abort();
+    }
+
+    #[tokio::test]
+    async fn worker_event_entry_routes_codex_retry_due() {
+        let server = MockHttpServer::spawn(vec![MockResponse::json(
+            200,
+            json!({
+                "issues": [issue_json("1", "ASAHI-1", "Todo", None)]
+            }),
+        )])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, mut store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut state = OrchestratorState::new(&store.current().config);
+        state.claimed.insert("1".to_string());
+        state
+            .retry_attempts
+            .insert("1".to_string(), retry_entry("1", "ASAHI-1", 4));
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        handle_worker_event(
+            WorkerEvent::RetryDue("1".to_string()),
+            &mut store,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        assert!(!state.retry_attempts.contains_key("1"));
+        assert!(state.running.contains_key("1"));
+        assert_eq!(state.running.get("1").unwrap().retry_attempt, Some(4));
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn worker_exit_outcomes_schedule_codex_retries_or_release_claims() {
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) = asahi_endpoint_codex_workflow(
+            "http://127.0.0.1:9",
+            workspace_temp.path().join("workspaces"),
+        );
+        let workflow = store.current().clone();
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let mut state = OrchestratorState::new(&workflow.config);
+
+        let normal_workspace = workflow.config.workspace.root.join("ASAHI-1");
+        tokio::fs::create_dir_all(&normal_workspace)
+            .await
+            .expect("workspace");
+        let (mut normal_entry, _stop_rx) = running_entry(issue("1", "ASAHI-1", "Todo"));
+        normal_entry.pending_cleanup = true;
+        state.claimed.insert("1".to_string());
+        state.running.insert("1".to_string(), normal_entry);
+
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "1".to_string(),
+                issue_identifier: "ASAHI-1".to_string(),
+                outcome: WorkerOutcome::Normal,
+                runtime_seconds: 1.5,
+                error: None,
+            },
+            workflow.clone(),
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        assert!(state.running.get("1").is_none());
+        assert!(state.completed.contains("1"));
+        assert!(!normal_workspace.exists());
+        assert_eq!(state.retry_attempts.get("1").unwrap().attempt, 1);
+        assert_eq!(state.agent_totals.seconds_running, 1.5);
+
+        let (mut failed_entry, _stop_rx) = running_entry(issue("2", "ASAHI-2", "Todo"));
+        failed_entry.retry_attempt = Some(2);
+        state.running.insert("2".to_string(), failed_entry);
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "2".to_string(),
+                issue_identifier: "ASAHI-2".to_string(),
+                outcome: WorkerOutcome::Failed("boom".to_string()),
+                runtime_seconds: 2.0,
+                error: Some("boom".to_string()),
+            },
+            workflow.clone(),
+            &mut state,
+            &events_tx,
+        )
+        .await;
+        let failed_retry = state.retry_attempts.get("2").unwrap();
+        assert_eq!(failed_retry.attempt, 3);
+        assert_eq!(failed_retry._error.as_deref(), Some("boom"));
+
+        let (timeout_entry, _stop_rx) = running_entry(issue("3", "ASAHI-3", "Todo"));
+        state.running.insert("3".to_string(), timeout_entry);
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "3".to_string(),
+                issue_identifier: "ASAHI-3".to_string(),
+                outcome: WorkerOutcome::TimedOut,
+                runtime_seconds: 3.0,
+                error: Some("turn_timeout".to_string()),
+            },
+            workflow.clone(),
+            &mut state,
+            &events_tx,
+        )
+        .await;
+        assert_eq!(
+            state.retry_attempts.get("3").unwrap()._error.as_deref(),
+            Some("turn_timeout")
+        );
+
+        let (stalled_entry, _stop_rx) = running_entry(issue("4", "ASAHI-4", "Todo"));
+        state.running.insert("4".to_string(), stalled_entry);
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "4".to_string(),
+                issue_identifier: "ASAHI-4".to_string(),
+                outcome: WorkerOutcome::Stalled,
+                runtime_seconds: 4.0,
+                error: Some("stalled".to_string()),
+            },
+            workflow.clone(),
+            &mut state,
+            &events_tx,
+        )
+        .await;
+        assert_eq!(
+            state.retry_attempts.get("4").unwrap()._error.as_deref(),
+            Some("stalled")
+        );
+
+        let (canceled_entry, _stop_rx) = running_entry(issue("5", "ASAHI-5", "Todo"));
+        state.claimed.insert("5".to_string());
+        state.running.insert("5".to_string(), canceled_entry);
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "5".to_string(),
+                issue_identifier: "ASAHI-5".to_string(),
+                outcome: WorkerOutcome::CanceledByReconciliation,
+                runtime_seconds: 5.0,
+                error: Some("canceled_by_reconciliation".to_string()),
+            },
+            workflow,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+        assert!(!state.claimed.contains("5"));
+        assert!(!state.retry_attempts.contains_key("5"));
+
+        for retry in state.retry_attempts.values() {
+            retry.task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_due_dispatches_active_codex_issue_and_releases_missing_issue() {
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(
+                200,
+                json!({
+                    "issues": [
+                        issue_json("1", "ASAHI-1", "Todo", None),
+                        issue_json("2", "ASAHI-2", "Done", None)
+                    ]
+                }),
+            ),
+            MockResponse::json(200, json!({ "issues": [] })),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let workflow = store.current().clone();
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let mut state = OrchestratorState::new(&workflow.config);
+        state.claimed.insert("1".to_string());
+        state
+            .retry_attempts
+            .insert("1".to_string(), retry_entry("1", "ASAHI-1", 2));
+
+        handle_retry_due("1".to_string(), workflow.clone(), &mut state, &events_tx).await;
+
+        assert!(state.retry_attempts.get("1").is_none());
+        assert!(state.running.contains_key("1"));
+        state.running.get("1").unwrap().worker.abort();
+
+        state.claimed.insert("missing".to_string());
+        state.retry_attempts.insert(
+            "missing".to_string(),
+            retry_entry("missing", "ASAHI-missing", 1),
+        );
+        handle_retry_due("missing".to_string(), workflow, &mut state, &events_tx).await;
+
+        assert!(!state.claimed.contains("missing"));
+        assert!(!state.retry_attempts.contains_key("missing"));
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].target.starts_with("/api/issues?"));
+        assert!(requests[1].target.starts_with("/api/issues?"));
+    }
+
+    #[tokio::test]
+    async fn poll_comments_forwards_only_new_asahi_comments_to_running_codex() {
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(
+                200,
+                json!({
+                    "comments": [
+                        {
+                            "id": "c1",
+                            "issue_id": "1",
+                            "body": "first",
+                            "created_at": "2026-01-01T00:00:00Z"
+                        },
+                        {
+                            "id": "c2",
+                            "issue_id": "1",
+                            "body": "second",
+                            "created_at": "2026-01-02T00:00:00Z"
+                        }
+                    ]
+                }),
+            ),
+            MockResponse::json(
+                200,
+                json!({
+                    "comments": [
+                        {
+                            "id": "c1",
+                            "issue_id": "1",
+                            "body": "first",
+                            "created_at": "2026-01-01T00:00:00Z"
+                        },
+                        {
+                            "id": "c3",
+                            "issue_id": "1",
+                            "body": "third",
+                            "created_at": "2026-01-03T00:00:00Z"
+                        }
+                    ]
+                }),
+            ),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, mut store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, mut comment_rx, _stop_rx) =
+            running_entry_with_comment_rx(issue("1", "ASAHI-1", "Todo"));
+        state.running.insert("1".to_string(), entry);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("poll comments");
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("poll comments again");
+
+        assert_eq!(comment_rx.try_recv().unwrap(), "first");
+        assert_eq!(comment_rx.try_recv().unwrap(), "second");
+        assert_eq!(comment_rx.try_recv().unwrap(), "third");
+        assert!(comment_rx.try_recv().is_err());
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests[0].target, "/api/issues/1/comments");
+        assert_eq!(requests[1].target, "/api/issues/1/comments");
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_comments_ignores_fetch_errors_and_missing_codex_comment_sender() {
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(500, json!({"error": "boom"})),
+            MockResponse::json(
+                200,
+                json!({
+                    "comments": [
+                        {
+                            "id": "c1",
+                            "issue_id": "1",
+                            "body": "not delivered",
+                            "created_at": "2026-01-01T00:00:00Z"
+                        }
+                    ]
+                }),
+            ),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, mut store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, mut comment_rx, _stop_rx) =
+            running_entry_with_comment_rx(issue("1", "ASAHI-1", "Todo"));
+        state.running.insert("1".to_string(), entry);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("fetch error is logged but not returned");
+        assert!(comment_rx.try_recv().is_err());
+        assert!(state.running.get("1").unwrap().seen_comment_ids.is_empty());
+
+        state.running.get_mut("1").unwrap().comment_tx = None;
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("missing comment sender is ignored");
+
+        assert!(comment_rx.try_recv().is_err());
+        assert!(
+            state
+                .running
+                .get("1")
+                .unwrap()
+                .seen_comment_ids
+                .contains("c1")
+        );
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].target, "/api/issues/1/comments");
+        assert_eq!(requests[1].target, "/api/issues/1/comments");
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_comments_forwards_only_new_github_comments_to_running_codex() {
+        let fake = fake_github_comments_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+        );
+        let mut store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, mut comment_rx, _stop_rx) =
+            running_entry_with_comment_rx(issue("PVTI_1", "acme/repo#42", "Todo"));
+        state.running.insert("PVTI_1".to_string(), entry);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("poll github comments");
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("poll github comments again");
+
+        assert_eq!(comment_rx.try_recv().unwrap(), "first github comment");
+        assert_eq!(comment_rx.try_recv().unwrap(), "second github comment");
+        assert_eq!(comment_rx.try_recv().unwrap(), "third github comment");
+        assert!(comment_rx.try_recv().is_err());
+        let calls = std::fs::read_to_string(&fake.log_path).expect("fake gh log");
+        assert_eq!(
+            calls.matches("repos/acme/repo/issues/42/comments").count(),
+            2
+        );
+        state.running.get("PVTI_1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn command_activity_posts_asahi_comment_and_activity_for_matching_codex_command() {
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(200, json!({})),
+            MockResponse::json(200, json!({})),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, _stop_rx) = running_entry(issue("1", "ASAHI-1", "Todo"));
+        state.running.insert("1".to_string(), entry);
+
+        handle_command_executed(
+            CommandExecutionEvent {
+                issue_id: "1".to_string(),
+                issue_identifier: "ASAHI-1".to_string(),
+                command: "git commit -m test".to_string(),
+                cwd: Some("/tmp/work".to_string()),
+                duration_ms: Some(1200),
+                exit_code: Some(0),
+            },
+            &store,
+            &mut state,
+        )
+        .await;
+
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "POST");
+        assert_eq!(requests[0].target, "/api/issues/1/comments");
+        assert_eq!(requests[1].method, "POST");
+        assert_eq!(requests[1].target, "/api/issues/1/activities");
+        let comment_body = serde_json::from_str::<Value>(&requests[0].body).unwrap();
+        assert!(
+            comment_body["body"]
+                .as_str()
+                .unwrap()
+                .contains("git commit -m test")
+        );
+        let activity_body = serde_json::from_str::<Value>(&requests[1].body).unwrap();
+        assert_eq!(activity_body["kind"], "command_executed");
+        assert!(
+            activity_body["title"]
+                .as_str()
+                .unwrap()
+                .contains("git commit -m test")
+        );
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn command_activity_posts_github_backing_issue_comment_for_matching_codex_command() {
+        let fake = fake_github_issue_comment_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+        );
+        let store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, _stop_rx) = running_entry(issue("PVTI_1", "acme/repo#42", "Todo"));
+        state.running.insert("PVTI_1".to_string(), entry);
+
+        handle_command_executed(
+            CommandExecutionEvent {
+                issue_id: "PVTI_1".to_string(),
+                issue_identifier: "acme/repo#42".to_string(),
+                command: "gh pr create -R acme/repo --fill".to_string(),
+                cwd: Some("/tmp/work".to_string()),
+                duration_ms: Some(2500),
+                exit_code: Some(0),
+            },
+            &store,
+            &mut state,
+        )
+        .await;
+
+        let calls = std::fs::read_to_string(&fake.log_path).expect("fake gh log");
+        assert!(calls.contains("issue comment 42"));
+        assert!(calls.contains("-R acme/repo"));
+        assert!(calls.contains("--body"));
+        assert!(calls.contains("gh\\ pr\\ create"));
+        state.running.get("PVTI_1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn command_activity_posts_github_comment_for_matching_ci_watch_command() {
+        let fake = fake_github_issue_comment_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow_with_patterns(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+            &["gh run watch"],
+        );
+        let store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, _stop_rx) = running_entry(issue("PVTI_1", "acme/repo#42", "Todo"));
+        state.running.insert("PVTI_1".to_string(), entry);
+
+        handle_command_executed(
+            CommandExecutionEvent {
+                issue_id: "PVTI_1".to_string(),
+                issue_identifier: "acme/repo#42".to_string(),
+                command: "gh run watch 123456 -R acme/repo".to_string(),
+                cwd: Some("/tmp/work".to_string()),
+                duration_ms: Some(5000),
+                exit_code: Some(0),
+            },
+            &store,
+            &mut state,
+        )
+        .await;
+
+        let calls = std::fs::read_to_string(&fake.log_path).expect("fake gh log");
+        assert!(calls.contains("issue comment 42"));
+        assert!(calls.contains("-R acme/repo"));
+        assert!(calls.contains("gh\\ run\\ watch"));
+        state.running.get("PVTI_1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn command_activity_posts_github_comment_for_default_ci_check_command() {
+        let fake = fake_github_issue_comment_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow_with_default_patterns(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+        );
+        let store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, _stop_rx) = running_entry(issue("PVTI_1", "acme/repo#42", "Todo"));
+        state.running.insert("PVTI_1".to_string(), entry);
+
+        handle_command_executed(
+            CommandExecutionEvent {
+                issue_id: "PVTI_1".to_string(),
+                issue_identifier: "acme/repo#42".to_string(),
+                command: "gh pr checks 42 -R acme/repo --watch".to_string(),
+                cwd: Some("/tmp/work".to_string()),
+                duration_ms: Some(7500),
+                exit_code: Some(0),
+            },
+            &store,
+            &mut state,
+        )
+        .await;
+
+        let calls = std::fs::read_to_string(&fake.log_path).expect("fake gh log");
+        assert!(calls.contains("issue comment 42"));
+        assert!(calls.contains("-R acme/repo"));
+        assert!(calls.contains("gh\\ pr\\ checks"));
+        state.running.get("PVTI_1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn command_activity_skip_paths_do_not_call_github_tracker_for_codex() {
+        let fake = fake_github_issue_comment_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+        );
+        let store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+
+        let command_event = |issue_id: &str, command: &str| CommandExecutionEvent {
+            issue_id: issue_id.to_string(),
+            issue_identifier: "acme/repo#42".to_string(),
+            command: command.to_string(),
+            cwd: Some("/tmp/work".to_string()),
+            duration_ms: Some(100),
+            exit_code: Some(0),
+        };
+
+        handle_command_executed(
+            command_event("missing", "gh pr create -R acme/repo --fill"),
+            &store,
+            &mut state,
+        )
+        .await;
+
+        let (entry, _stop_rx) = running_entry(issue("PVTI_1", "acme/repo#42", "Todo"));
+        state.running.insert("PVTI_1".to_string(), entry);
+        handle_command_executed(command_event("PVTI_1", "git status"), &store, &mut state).await;
+        handle_command_executed(
+            command_event("PVTI_1", "echo \"unterminated"),
+            &store,
+            &mut state,
+        )
+        .await;
+
+        let no_patterns_workflow_path = workflow_temp.path().join("NO_PATTERNS_WORKFLOW.md");
+        write_github_project_codex_workflow_with_patterns(
+            &no_patterns_workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("no-pattern-workspaces"),
+            &[],
+        );
+        let no_patterns_store =
+            WorkflowStore::load(no_patterns_workflow_path).expect("no pattern workflow");
+        let mut no_patterns_state = OrchestratorState::new(&no_patterns_store.current().config);
+        let (entry, _stop_rx) = running_entry(issue("PVTI_2", "acme/repo#42", "Todo"));
+        no_patterns_state
+            .running
+            .insert("PVTI_2".to_string(), entry);
+        handle_command_executed(
+            command_event("PVTI_2", "gh pr create -R acme/repo --fill"),
+            &no_patterns_store,
+            &mut no_patterns_state,
+        )
+        .await;
+
+        let calls = std::fs::read_to_string(&fake.log_path).unwrap_or_default();
+        assert!(calls.is_empty(), "unexpected fake gh calls: {calls}");
+        state.running.get("PVTI_1").unwrap().worker.abort();
+        no_patterns_state
+            .running
+            .get("PVTI_2")
+            .unwrap()
+            .worker
+            .abort();
+    }
+
+    #[tokio::test]
+    async fn on_tick_reload_error_keeps_last_codex_config_but_skips_dispatch() {
+        let server = MockHttpServer::spawn(vec![MockResponse::json(
+            200,
+            json!({
+                "issues": [issue_json("1", "ASAHI-1", "Todo", None)]
+            }),
+        )])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_asahi_endpoint_codex_workflow(
+            &workflow_path,
+            &endpoint,
+            &workspace_temp.path().join("workspaces"),
+            2,
+            30_000,
+        );
+        let mut store = WorkflowStore::load(workflow_path.clone()).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        tokio::time::sleep(StdDuration::from_millis(25)).await;
+        std::fs::write(
+            &workflow_path,
+            "---\ntracker:\n  kind: asahi\n  endpoint: [\n---\nbroken\n",
+        )
+        .expect("write broken workflow");
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("tick should recover from reload error");
+
+        assert!(matches!(
+            store.current().config.tracker,
+            TrackerConfig::Asahi(_)
+        ));
+        assert!(state.running.is_empty());
+        assert!(state.claimed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn on_tick_reload_success_dispatches_codex_from_new_asahi_endpoint() {
+        let old_workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_asahi_endpoint_codex_workflow(
+            &workflow_path,
+            "http://127.0.0.1:9",
+            &old_workspace_temp.path().join("old-workspaces"),
+            1,
+            30_000,
+        );
+        let mut store = WorkflowStore::load(workflow_path.clone()).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(
+                200,
+                json!({
+                    "issues": [issue_json("new", "ASAHI-99", "Todo", None)]
+                }),
+            ),
+            MockResponse::json(200, json!({})),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let new_workspace_temp = tempfile::tempdir().unwrap();
+
+        tokio::time::sleep(StdDuration::from_millis(25)).await;
+        write_asahi_endpoint_codex_workflow(
+            &workflow_path,
+            &endpoint,
+            &new_workspace_temp.path().join("new-workspaces"),
+            3,
+            123,
+        );
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("tick should reload and dispatch");
+
+        assert_eq!(state.poll_interval_ms, 123);
+        assert_eq!(state.max_concurrent_agents, 3);
+        assert!(state.running.contains_key("new"));
+        assert!(state.claimed.contains("new"));
+        assert!(
+            state
+                .running
+                .get("new")
+                .unwrap()
+                .issue
+                .identifier
+                .eq("ASAHI-99")
+        );
+
+        let requests = tokio::time::timeout(StdDuration::from_secs(2), server.recorded_requests())
+            .await
+            .expect("new Asahi endpoint should receive candidate fetch and activity");
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].target.starts_with("/api/issues?"));
+        assert_eq!(requests[1].method, "POST");
+        assert_eq!(requests[1].target, "/api/issues/new/activities");
+
+        for entry in state.running.values() {
+            entry.worker.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn on_tick_dispatches_github_project_codex_issue_from_fake_gh() {
+        let fake = fake_github_project_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+        );
+        let mut store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("tick should dispatch GitHub Project issue");
+
+        let calls = std::fs::read_to_string(&fake.log_path).expect("fake gh log");
+        assert!(calls.contains("api graphql"), "fake gh calls: {calls}");
+        assert!(calls.contains("projectNumber"), "fake gh calls: {calls}");
+        assert!(calls.contains("statusField"), "fake gh calls: {calls}");
+        assert!(calls.contains("priorityField"), "fake gh calls: {calls}");
+
+        let running_keys = state.running.keys().cloned().collect::<Vec<_>>();
+        assert!(
+            state.running.contains_key("PVTI_1"),
+            "running keys after fake gh dispatch: {running_keys:?}; calls: {calls}"
+        );
+        assert!(state.claimed.contains("PVTI_1"));
+        let running = state.running.get("PVTI_1").unwrap();
+        assert_eq!(running.issue.identifier, "acme/repo#42");
+        assert_eq!(running.issue.state, "Todo");
+        assert_eq!(running.issue.priority, Some(1));
+
+        for entry in state.running.values() {
+            entry.worker.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn on_tick_prefers_running_project_and_respects_codex_global_slots() {
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(
+                200,
+                json!({
+                    "issues": [
+                        issue_json("existing", "ASAHI-1", "Todo", Some("proj-a"))
+                    ]
+                }),
+            ),
+            MockResponse::json(
+                200,
+                json!({
+                    "issues": [
+                        issue_json("new-b", "ASAHI-3", "Todo", Some("proj-b")),
+                        issue_json("new-a", "ASAHI-2", "Todo", Some("proj-a"))
+                    ]
+                }),
+            ),
+            MockResponse::json(200, json!({})),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_asahi_endpoint_codex_workflow(
+            &workflow_path,
+            &endpoint,
+            &workspace_temp.path().join("workspaces"),
+            2,
+            30_000,
+        );
+        let mut store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, _stop_rx) =
+            running_entry(issue_with_project("existing", "ASAHI-1", "Todo", "proj-a"));
+        state.running.insert("existing".to_string(), entry);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("tick should batch same project and respect slots");
+
+        assert!(state.running.contains_key("existing"));
+        assert!(state.running.contains_key("new-a"));
+        assert!(!state.running.contains_key("new-b"));
+        assert!(state.claimed.contains("new-a"));
+        assert!(!state.claimed.contains("new-b"));
+        assert_eq!(
+            state
+                .running
+                .get("new-a")
+                .unwrap()
+                .issue
+                .project
+                .as_ref()
+                .map(|project| project.slug.as_str()),
+            Some("proj-a")
+        );
+
+        let requests = tokio::time::timeout(StdDuration::from_secs(2), server.recorded_requests())
+            .await
+            .expect("Asahi should receive reconcile, candidates, and activity");
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].target.starts_with("/api/issues?"));
+        assert!(requests[0].target.contains("ids=existing"));
+        assert!(requests[1].target.starts_with("/api/issues?"));
+        assert!(requests[1].target.contains("states=Todo"));
+        assert!(
+            requests[1].target.contains("In%20Progress")
+                || requests[1].target.contains("In+Progress"),
+            "candidate request target: {}",
+            requests[1].target
+        );
+        assert_eq!(requests[2].method, "POST");
+        assert_eq!(requests[2].target, "/api/issues/new-a/activities");
+
+        for entry in state.running.values() {
+            entry.worker.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn embedded_asahi_autostarts_for_missing_tracker_codex_workflow() {
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            r#"---
+runner:
+  kind: codex
+  command: '"codex'
+---
+Issue {{ issue.identifier }}: {{ issue.title }}
+"#,
+        )
+        .expect("write workflow");
+        let mut store = WorkflowStore::load(workflow_path).expect("workflow");
+
+        let mut handle = start_embedded_asahi_if_needed(&mut store, true)
+            .await
+            .expect("embedded Asahi should start")
+            .expect("embedded Asahi handle");
+
+        let expected_db_path = workflow_temp.path().join("asahi.db");
+        assert_eq!(
+            embedded_asahi_db_path(&store.current().config),
+            expected_db_path
+        );
+        assert_eq!(handle.db_path, expected_db_path);
+        assert!(handle.db_path.exists());
+        match &store.current().config.tracker {
+            TrackerConfig::Asahi(config) => {
+                assert_eq!(config.endpoint, handle.endpoint);
+                assert!(config.endpoint.starts_with("http://127.0.0.1:"));
+            }
+            other => panic!("expected Asahi tracker, got {other:?}"),
+        }
+
+        let response = reqwest::get(format!("{}/api/issues", handle.endpoint))
+            .await
+            .expect("embedded Asahi request");
+        assert!(response.status().is_success());
+
+        handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn embedded_asahi_skips_explicit_endpoint_without_db_for_codex_workflow() {
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            r#"---
+tracker:
+  kind: asahi
+  endpoint: "http://127.0.0.1:9"
+runner:
+  kind: codex
+  command: '"codex'
+---
+Issue {{ issue.identifier }}: {{ issue.title }}
+"#,
+        )
+        .expect("write workflow");
+        let mut store = WorkflowStore::load(workflow_path).expect("workflow");
+
+        let handle = start_embedded_asahi_if_needed(&mut store, false)
+            .await
+            .expect("explicit endpoint-only Asahi should not fail");
+
+        assert!(handle.is_none());
+        match &store.current().config.tracker {
+            TrackerConfig::Asahi(config) => {
+                assert_eq!(config.endpoint, "http://127.0.0.1:9");
+                assert_eq!(config.db, None);
+            }
+            other => panic!("expected Asahi tracker, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_cleanup_removes_terminal_asahi_workspaces_for_codex_workflow() {
+        let server = MockHttpServer::spawn(vec![MockResponse::json(
+            200,
+            json!({
+                "issues": [
+                    issue_json("1", "ASAHI-1", "Done", None),
+                    issue_json("2", "ASAHI-2", "Done", None)
+                ]
+            }),
+        )])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workspace_root = workspace_temp.path().join("workspaces");
+        let asahi_one = workspace_root.join("ASAHI-1");
+        let asahi_two = workspace_root.join("ASAHI-2");
+        let active = workspace_root.join("ASAHI-3");
+        tokio::fs::create_dir_all(&asahi_one).await.unwrap();
+        tokio::fs::create_dir_all(&asahi_two).await.unwrap();
+        tokio::fs::create_dir_all(&active).await.unwrap();
+        let (_temp, store) = asahi_endpoint_codex_workflow(&endpoint, workspace_root);
+
+        startup_terminal_workspace_cleanup(store.current()).await;
+
+        assert!(!asahi_one.exists());
+        assert!(!asahi_two.exists());
+        assert!(active.exists());
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].target.starts_with("/api/issues?"));
+        assert!(requests[0].target.contains("states=Done"));
+    }
+
+    #[tokio::test]
+    async fn reconcile_running_asahi_issues_updates_active_and_stops_nonactive_or_terminal_codex() {
+        let server = MockHttpServer::spawn(vec![MockResponse::json(
+            200,
+            json!({
+                "issues": [
+                    issue_json("1", "ASAHI-1", "Done", None),
+                    issue_json("2", "ASAHI-2", "Backlog", None),
+                    issue_json("3", "ASAHI-3", "In Progress", None)
+                ]
+            }),
+        )])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let workflow = store.current().clone();
+        let mut state = OrchestratorState::new(&workflow.config);
+        let (terminal_entry, terminal_stop_rx) = running_entry(issue("1", "ASAHI-1", "Todo"));
+        let (nonactive_entry, nonactive_stop_rx) = running_entry(issue("2", "ASAHI-2", "Todo"));
+        let (active_entry, active_stop_rx) = running_entry(issue("3", "ASAHI-3", "Todo"));
+        state.running.insert("1".to_string(), terminal_entry);
+        state.running.insert("2".to_string(), nonactive_entry);
+        state.running.insert("3".to_string(), active_entry);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        reconcile_running_issues(&mut state, &workflow, &events_tx).await;
+
+        assert!(state.running.get("1").unwrap().pending_cleanup);
+        assert!(matches!(
+            terminal_stop_rx.borrow().clone(),
+            Some(StopReason::Terminal)
+        ));
+        assert!(matches!(
+            nonactive_stop_rx.borrow().clone(),
+            Some(StopReason::NonActive)
+        ));
+        assert!(active_stop_rx.borrow().is_none());
+        assert_eq!(state.running.get("3").unwrap().issue.state, "In Progress");
+
+        for entry in state.running.values() {
+            entry.worker.abort();
+        }
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].target.starts_with("/api/issues?"));
+        assert!(requests[0].target.contains("ids="));
+        assert!(requests[0].target.contains('1'));
+        assert!(requests[0].target.contains('2'));
+        assert!(requests[0].target.contains('3'));
+    }
 }

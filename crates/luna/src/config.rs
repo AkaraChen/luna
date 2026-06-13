@@ -627,7 +627,12 @@ fn default_gh_command() -> String {
     DEFAULT_GH_COMMAND.to_string()
 }
 fn default_shell_activity_patterns() -> Vec<String> {
-    vec!["git commit".to_string(), "gh pr create".to_string()]
+    vec![
+        "git commit".to_string(),
+        "gh pr create".to_string(),
+        "gh pr checks".to_string(),
+        "gh run watch".to_string(),
+    ]
 }
 fn default_github_status_field() -> String {
     "Status".to_string()
@@ -690,6 +695,261 @@ runner:
                 assert_eq!(t.project_number, 12);
             }
             other => panic!("expected github_project, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn missing_tracker_defaults_to_asahi_and_codex_runner() {
+        let yaml = serde_yaml::from_str(
+            r#"
+runner:
+  kind: codex
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        match config.tracker {
+            TrackerConfig::Asahi(t) => {
+                assert_eq!(t.db.as_deref(), Some("./asahi.db"));
+                assert_eq!(t.endpoint, "");
+            }
+            other => panic!("expected asahi, got {:?}", other),
+        }
+        match config.runner {
+            RunnerConfig::Codex(c) => {
+                assert_eq!(c.command, "codex app-server");
+                assert!(c.args.is_empty());
+                assert_eq!(c.turn_timeout_ms, DEFAULT_TURN_TIMEOUT_MS);
+                assert_eq!(c.read_timeout_ms, DEFAULT_READ_TIMEOUT_MS);
+                assert_eq!(c.stall_timeout_ms, DEFAULT_STALL_TIMEOUT_MS);
+            }
+            other => panic!("expected codex, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn codex_runner_parses_args_and_timeouts() {
+        let yaml = serde_yaml::from_str(
+            r#"
+runner:
+  kind: codex
+  command: /usr/local/bin/codex
+  args: [app-server, --experimental]
+  turn_timeout_ms: 100
+  read_timeout_ms: 200
+  stall_timeout_ms: 300
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        match config.runner {
+            RunnerConfig::Codex(c) => {
+                assert_eq!(c.command, "/usr/local/bin/codex");
+                assert_eq!(c.args, vec!["app-server", "--experimental"]);
+                assert_eq!(c.turn_timeout_ms, 100);
+                assert_eq!(c.read_timeout_ms, 200);
+                assert_eq!(c.stall_timeout_ms, 300);
+            }
+            other => panic!("expected codex, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn codex_workflow_shell_activity_patterns_default_and_can_be_disabled() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert_eq!(
+            config.shell_activity_patterns,
+            vec![
+                "git commit".to_string(),
+                "gh pr create".to_string(),
+                "gh pr checks".to_string(),
+                "gh run watch".to_string(),
+            ]
+        );
+
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+shell_activity_patterns: []
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert!(config.shell_activity_patterns.is_empty());
+    }
+
+    #[test]
+    fn codex_workflow_scheduler_state_limits_are_normalized_and_validated() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+scheduler:
+  max_concurrent: 3
+  max_concurrent_by_state:
+    Todo: 1
+    In Progress: 2
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert_eq!(config.scheduler.max_concurrent_by_state["todo"], 1);
+        assert_eq!(config.scheduler.max_concurrent_by_state["in progress"], 2);
+
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+scheduler:
+  max_concurrent_by_state:
+    Todo: 0
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+        assert!(err.to_string().contains("limit must be greater than 0"));
+    }
+
+    #[test]
+    fn codex_workflow_rejects_blank_runner_and_hook_fields() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+  command: " "
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+        assert!(err.to_string().contains("must be non-empty"));
+
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+hooks:
+  before_run: " "
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+        assert!(err.to_string().contains("must be non-empty"));
+    }
+
+    #[test]
+    fn asahi_tracker_requires_endpoint_when_db_is_unset() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: asahi
+runner:
+  kind: codex
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+
+        assert!(err.to_string().contains("endpoint is required"));
+    }
+
+    #[test]
+    fn asahi_tracker_accepts_explicit_endpoint_without_db() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: asahi
+  endpoint: http://127.0.0.1:49306
+runner:
+  kind: codex
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        match config.tracker {
+            TrackerConfig::Asahi(t) => {
+                assert_eq!(t.endpoint, "http://127.0.0.1:49306");
+                assert_eq!(t.db, None);
+            }
+            other => panic!("expected asahi, got {:?}", other),
         }
     }
 

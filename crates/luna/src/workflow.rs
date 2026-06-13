@@ -171,11 +171,16 @@ pub fn parse_workflow_definition(contents: &str) -> Result<WorkflowDefinition> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, thread, time::Duration};
 
     use tempfile::tempdir;
 
-    use super::{discover_workflow_path, parse_workflow_definition};
+    use crate::{
+        config::{RunnerConfig, TrackerConfig},
+        error::LunaError,
+    };
+
+    use super::{WorkflowStore, discover_workflow_path, parse_workflow_definition};
 
     #[test]
     fn parses_front_matter() {
@@ -188,10 +193,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_crlf_front_matter() {
+        let workflow = parse_workflow_definition(
+            "---\r\ntracker:\r\n  kind: asahi\r\n  db: ./asahi.db\r\n---\r\nhello\r\n",
+        )
+        .expect("workflow should parse");
+        assert_eq!(workflow.prompt_template, "hello");
+        assert!(!workflow.config.is_empty());
+    }
+
+    #[test]
     fn parses_without_front_matter() {
         let workflow = parse_workflow_definition("body only").expect("workflow should parse");
         assert_eq!(workflow.prompt_template, "body only");
         assert!(workflow.config.is_empty());
+    }
+
+    #[test]
+    fn reports_invalid_front_matter_shapes() {
+        let err = parse_workflow_definition("---\ntracker:\n  kind: asahi\nbody")
+            .expect_err("unclosed front matter should fail");
+        assert!(err.to_string().contains("front matter opened"));
+
+        let err = parse_workflow_definition("---\n- not\n- a map\n---\nbody")
+            .expect_err("front matter list should fail");
+        assert!(matches!(err, LunaError::WorkflowFrontMatterNotAMap));
     }
 
     #[test]
@@ -212,5 +238,87 @@ mod tests {
 
         let path = discover_workflow_path(temp.path()).expect("workflow path");
         assert_eq!(path, temp.path().join("workflow.md"));
+    }
+
+    #[test]
+    fn discovers_uppercase_workflow_in_start_directory() {
+        let temp = tempdir().expect("tempdir");
+        fs::write(temp.path().join("WORKFLOW.md"), "upper").expect("write uppercase workflow");
+
+        let path = discover_workflow_path(temp.path()).expect("workflow path");
+
+        assert_eq!(path, temp.path().join("WORKFLOW.md"));
+    }
+
+    #[test]
+    fn discover_workflow_reports_missing_start_path() {
+        let temp = tempdir().expect("tempdir");
+        let missing = temp.path().join("missing");
+
+        let err = discover_workflow_path(&missing).expect_err("missing workflow should fail");
+
+        assert!(err.to_string().contains("WORKFLOW.md"));
+    }
+
+    #[test]
+    fn workflow_store_reload_updates_tracker_runner_and_prompt() {
+        let temp = tempdir().expect("tempdir");
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        fs::write(
+            &workflow_path,
+            r#"---
+tracker:
+  kind: asahi
+  db: ./asahi.db
+runner:
+  kind: codex
+---
+first prompt
+"#,
+        )
+        .expect("write workflow");
+
+        let mut store = WorkflowStore::load(workflow_path.clone()).expect("workflow");
+        assert!(matches!(
+            store.current().config.tracker,
+            TrackerConfig::Asahi(_)
+        ));
+        assert!(matches!(
+            store.current().config.runner,
+            RunnerConfig::Codex(_)
+        ));
+        assert_eq!(store.current().definition.prompt_template, "first prompt");
+
+        let updated = r#"---
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 7
+runner:
+  kind: codex
+---
+second prompt
+"#;
+        let mut reloaded = false;
+        for _ in 0..20 {
+            thread::sleep(Duration::from_millis(25));
+            fs::write(&workflow_path, updated).expect("rewrite workflow");
+            if store.reload_if_changed().expect("reload workflow") {
+                reloaded = true;
+                break;
+            }
+        }
+
+        assert!(reloaded, "workflow reload should detect rewritten file");
+        assert!(matches!(
+            store.current().config.tracker,
+            TrackerConfig::GitHubProject(_)
+        ));
+        assert!(matches!(
+            store.current().config.runner,
+            RunnerConfig::Codex(_)
+        ));
+        assert_eq!(store.current().definition.prompt_template, "second prompt");
+        assert!(!store.reload_if_changed().expect("unchanged workflow"));
     }
 }

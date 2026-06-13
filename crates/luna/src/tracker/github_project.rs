@@ -709,9 +709,23 @@ fn truncate(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::model::Issue;
+    use std::{fs, path::Path};
 
-    use super::{issue_matches_locator, parse_github_issue_reference};
+    use crate::model::Issue;
+    use tempfile::TempDir;
+
+    use crate::{
+        config::{TrackerConfig, resolve_service_config},
+        model::WorkflowDefinition,
+        tracker::{GitHubProjectTracker, Tracker},
+    };
+
+    use super::{
+        ProjectDraftIssueContent, ProjectFieldValue, ProjectIssueContent, ProjectIssueLabelNode,
+        ProjectIssueLabels, ProjectIssueRepository, ProjectItemContent, ProjectItemNode,
+        issue_matches_locator, normalize_project_item, parse_gh_json_output,
+        parse_github_issue_reference, parse_priority_string,
+    };
 
     fn issue(identifier: &str) -> Issue {
         Issue {
@@ -732,6 +746,113 @@ mod tests {
         }
     }
 
+    struct FakeGh {
+        _dir: TempDir,
+        command: String,
+        log_path: std::path::PathBuf,
+    }
+
+    fn fake_gh(script_body: &str) -> FakeGh {
+        let dir = tempfile::tempdir().unwrap();
+        let gh_path = dir.path().join("gh");
+        let log_path = dir.path().join("calls.log");
+        let script = format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\nCALL_LOG='{}'\nlog_args() {{ printf '%q ' \"$@\" >> \"$CALL_LOG\"; printf '\\n' >> \"$CALL_LOG\"; }}\n{}\n",
+            log_path.display(),
+            script_body
+        );
+        fs::write(&gh_path, script).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&gh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&gh_path, permissions).unwrap();
+        }
+
+        FakeGh {
+            _dir: dir,
+            command: gh_path.to_string_lossy().to_string(),
+            log_path,
+        }
+    }
+
+    fn tracker_with_gh(gh_command: &str) -> GitHubProjectTracker {
+        let escaped = gh_command.replace('\'', "''");
+        let yaml = serde_yaml::from_str(&format!(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+  gh_command: '{escaped}'
+runner:
+  kind: codex
+"#
+        ))
+        .unwrap();
+        let definition = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&definition, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        match config.tracker {
+            TrackerConfig::GitHubProject(config) => GitHubProjectTracker::new(config),
+            other => panic!("expected github tracker, got {other:?}"),
+        }
+    }
+
+    fn project_item_issue(
+        id: &str,
+        status: Option<ProjectFieldValue>,
+        priority: Option<ProjectFieldValue>,
+        number: i64,
+        closed: bool,
+    ) -> ProjectItemNode {
+        ProjectItemNode {
+            id: id.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            status,
+            priority,
+            content: Some(ProjectItemContent::Issue(ProjectIssueContent {
+                number,
+                title: format!("Issue {number}"),
+                body: Some("Body".to_string()),
+                url: format!("https://github.com/acme/repo/issues/{number}"),
+                state: if closed { "CLOSED" } else { "OPEN" }.to_string(),
+                closed,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+                repository: ProjectIssueRepository {
+                    name_with_owner: "acme/repo".to_string(),
+                },
+                labels: ProjectIssueLabels {
+                    nodes: vec![ProjectIssueLabelNode {
+                        name: "Bug".to_string(),
+                    }],
+                },
+            })),
+        }
+    }
+
+    fn project_item_draft(id: &str) -> ProjectItemNode {
+        ProjectItemNode {
+            id: id.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            status: None,
+            priority: None,
+            content: Some(ProjectItemContent::DraftIssue(ProjectDraftIssueContent {
+                title: "Draft task".to_string(),
+                body: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+            })),
+        }
+    }
+
     #[test]
     fn matches_issue_locator_against_identifier_and_workspace_key() {
         let issue = issue("acme/repo#42");
@@ -749,6 +870,304 @@ mod tests {
         assert_eq!(
             parse_github_issue_reference("acme/projects/1#draft-42"),
             None
+        );
+    }
+
+    #[test]
+    fn normalizes_issue_draft_and_ignored_project_items() {
+        let config = match resolve_service_config(
+            &WorkflowDefinition {
+                config: serde_yaml::from_str(
+                    r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+"#,
+                )
+                .unwrap(),
+                prompt_template: String::new(),
+            },
+            Path::new("/tmp/WORKFLOW.md"),
+        )
+        .unwrap()
+        .tracker
+        {
+            TrackerConfig::GitHubProject(config) => config,
+            other => panic!("expected github tracker, got {other:?}"),
+        };
+
+        let issue = normalize_project_item(
+            project_item_issue(
+                "PVTI_open",
+                Some(ProjectFieldValue::ProjectV2ItemFieldSingleSelectValue {
+                    name: Some("In Progress".to_string()),
+                }),
+                Some(ProjectFieldValue::ProjectV2ItemFieldTextValue {
+                    text: Some("P1".to_string()),
+                }),
+                42,
+                false,
+            ),
+            "https://github.com/orgs/acme/projects/12",
+            &config,
+        )
+        .unwrap();
+        assert_eq!(issue.identifier, "acme/repo#42");
+        assert_eq!(issue.state, "In Progress");
+        assert_eq!(issue.priority, Some(1));
+        assert_eq!(issue.labels, vec!["bug"]);
+        assert!(issue.source_data.is_some());
+
+        let closed = normalize_project_item(
+            project_item_issue("PVTI_closed", None, None, 43, true),
+            "https://github.com/orgs/acme/projects/12",
+            &config,
+        )
+        .unwrap();
+        assert_eq!(closed.state, "Done");
+
+        let draft = normalize_project_item(
+            project_item_draft("PVTI_draft_abc123"),
+            "https://github.com/orgs/acme/projects/12",
+            &config,
+        )
+        .unwrap();
+        assert_eq!(draft.identifier, "acme/projects/12#draft-abc123");
+        assert_eq!(draft.state, "Todo");
+        assert_eq!(
+            draft.url.as_deref(),
+            Some("https://github.com/orgs/acme/projects/12")
+        );
+
+        let pull_request = ProjectItemNode {
+            id: "PVTI_pr".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            status: None,
+            priority: None,
+            content: Some(ProjectItemContent::PullRequest {}),
+        };
+        assert!(
+            normalize_project_item(
+                pull_request,
+                "https://github.com/orgs/acme/projects/12",
+                &config
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_priority_field_variants() {
+        assert_eq!(parse_priority_string("P0 urgent"), Some(0));
+        assert_eq!(parse_priority_string("critical"), Some(1));
+        assert_eq!(parse_priority_string("High"), Some(2));
+        assert_eq!(parse_priority_string("medium"), Some(3));
+        assert_eq!(parse_priority_string("low"), Some(4));
+        assert_eq!(parse_priority_string("none"), None);
+        assert_eq!(
+            ProjectFieldValue::ProjectV2ItemFieldNumberValue { number: Some(2.6) }.as_priority(),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn parses_gh_json_output_success_failure_and_invalid_json() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+
+        #[cfg(unix)]
+        {
+            let success = std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: br#"{"ok":true}"#.to_vec(),
+                stderr: Vec::new(),
+            };
+            let parsed: serde_json::Value = parse_gh_json_output("gh test", success).unwrap();
+            assert_eq!(parsed["ok"], true);
+
+            let failure = std::process::Output {
+                status: std::process::ExitStatus::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: b"permission denied".to_vec(),
+            };
+            let err = parse_gh_json_output::<serde_json::Value>("gh test", failure).unwrap_err();
+            assert!(err.to_string().contains("gh test failed"));
+            assert!(err.to_string().contains("permission denied"));
+
+            let invalid = std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"not json".to_vec(),
+                stderr: Vec::new(),
+            };
+            assert!(parse_gh_json_output::<serde_json::Value>("gh test", invalid).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_candidate_issues_filters_active_items_across_pages() {
+        let fake = fake_gh(
+            r#"
+log_args "$@"
+STATE_FILE="$(dirname "$CALL_LOG")/count"
+COUNT=0
+if [[ -f "$STATE_FILE" ]]; then
+  COUNT="$(cat "$STATE_FILE")"
+fi
+NEXT=$((COUNT + 1))
+printf '%s' "$NEXT" > "$STATE_FILE"
+if [[ "$COUNT" == "0" ]]; then
+cat <<'JSON'
+{"data":{"repositoryOwner":{"projectV2":{"url":"https://github.com/orgs/acme/projects/12","items":{"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"},"nodes":[{"id":"PVTI_1","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","statusFieldValue":{"__typename":"ProjectV2ItemFieldSingleSelectValue","name":"Todo"},"priorityFieldValue":{"__typename":"ProjectV2ItemFieldNumberValue","number":2},"content":{"__typename":"Issue","id":"I_1","number":42,"title":"Open issue","body":"Body","url":"https://github.com/acme/repo/issues/42","state":"OPEN","closed":false,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","repository":{"nameWithOwner":"acme/repo"},"labels":{"nodes":[{"name":"Bug"}]}}},{"id":"PVTI_2","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","statusFieldValue":{"__typename":"ProjectV2ItemFieldSingleSelectValue","name":"Backlog"},"priorityFieldValue":null,"content":{"__typename":"Issue","id":"I_2","number":43,"title":"Backlog issue","body":null,"url":"https://github.com/acme/repo/issues/43","state":"OPEN","closed":false,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","repository":{"nameWithOwner":"acme/repo"},"labels":{"nodes":[]}}}]}}}}}
+JSON
+else
+cat <<'JSON'
+{"data":{"repositoryOwner":{"projectV2":{"url":"https://github.com/orgs/acme/projects/12","items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PVTI_draft_xyz","createdAt":"2026-01-03T00:00:00Z","updatedAt":"2026-01-04T00:00:00Z","statusFieldValue":{"__typename":"ProjectV2ItemFieldSingleSelectValue","name":"In Progress"},"priorityFieldValue":{"__typename":"ProjectV2ItemFieldTextValue","text":"High"},"content":{"__typename":"DraftIssue","id":"D_1","title":"Draft task","body":"Draft body","createdAt":"2026-01-03T00:00:00Z","updatedAt":"2026-01-04T00:00:00Z"}}]}}}}}
+JSON
+fi
+"#,
+        );
+        let tracker = tracker_with_gh(&fake.command);
+
+        let candidates = tracker.fetch_candidate_issues().await.unwrap();
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].identifier, "acme/repo#42");
+        assert_eq!(candidates[1].identifier, "acme/projects/12#draft-xyz");
+        let calls = fs::read_to_string(fake.log_path).unwrap();
+        assert_eq!(calls.lines().count(), 2);
+        assert!(calls.contains("cursor=cursor-1"));
+    }
+
+    #[tokio::test]
+    async fn fetch_candidate_issues_errors_when_paginated_response_has_no_cursor() {
+        let fake = fake_gh(
+            r#"
+cat <<'JSON'
+{"data":{"repositoryOwner":{"projectV2":{"url":"https://github.com/orgs/acme/projects/12","items":{"pageInfo":{"hasNextPage":true,"endCursor":null},"nodes":[]}}}}}
+JSON
+"#,
+        );
+        let tracker = tracker_with_gh(&fake.command);
+
+        let err = tracker.fetch_candidate_issues().await.unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("github_project_missing_end_cursor")
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_comments_parses_backing_issue_comments_and_skips_drafts() {
+        let fake = fake_gh(
+            r#"
+log_args "$@"
+cat <<'JSON'
+[{"node_id":"IC_kw1","body":"please update docs","created_at":"2026-01-01T00:00:00Z"}]
+JSON
+"#,
+        );
+        let tracker = tracker_with_gh(&fake.command);
+
+        let comments = tracker
+            .fetch_comments(&issue("acme/repo#42"))
+            .await
+            .unwrap();
+        let draft_comments = tracker
+            .fetch_comments(&issue("acme/projects/12#draft-xyz"))
+            .await
+            .unwrap();
+
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].body, "please update docs");
+        assert!(draft_comments.is_empty());
+        let calls = fs::read_to_string(fake.log_path).unwrap();
+        assert!(calls.contains("repos/acme/repo/issues/42/comments"));
+        assert_eq!(calls.lines().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_comment_posts_to_backing_issue_and_rejects_draft() {
+        let fake = fake_gh(
+            r#"
+log_args "$@"
+"#,
+        );
+        let tracker = tracker_with_gh(&fake.command);
+
+        tracker
+            .create_comment(&issue("acme/repo#42"), "hello from luna")
+            .await
+            .unwrap();
+        let err = tracker
+            .create_comment(&issue("acme/projects/12#draft-xyz"), "draft")
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("requires a backing GitHub issue"));
+        let calls = fs::read_to_string(fake.log_path).unwrap();
+        assert!(calls.contains("issue comment 42"));
+        assert!(calls.contains("-R acme/repo"));
+        assert!(calls.contains("--body"));
+        assert!(calls.contains("hello\\ from\\ luna"));
+    }
+
+    #[tokio::test]
+    async fn update_issue_state_resolves_status_field_and_updates_project_item() {
+        let fake = fake_gh(
+            r#"
+log_args "$@"
+case "$*" in
+  *ProjectStatusField*)
+cat <<'JSON'
+{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_1","fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","id":"PVTSSF_status","name":"Status","options":[{"id":"todo-id","name":"Todo"},{"id":"done-id","name":"Done"}]}]}}}}}
+JSON
+    ;;
+  *UpdateProjectItemStatus*)
+cat <<'JSON'
+{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_1"}}}}
+JSON
+    ;;
+  *)
+    echo "unexpected query" >&2
+    exit 1
+    ;;
+esac
+"#,
+        );
+        let tracker = tracker_with_gh(&fake.command);
+
+        tracker.update_issue_state("PVTI_1", "done").await.unwrap();
+
+        let calls = fs::read_to_string(fake.log_path).unwrap();
+        assert_eq!(calls.lines().count(), 2);
+        assert!(calls.contains("optionId=done-id"));
+        assert!(calls.contains("itemId=PVTI_1"));
+    }
+
+    #[tokio::test]
+    async fn update_issue_state_reports_missing_status_option() {
+        let fake = fake_gh(
+            r#"
+cat <<'JSON'
+{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_1","fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","id":"PVTSSF_status","name":"Status","options":[{"id":"todo-id","name":"Todo"}]}]}}}}}
+JSON
+"#,
+        );
+        let tracker = tracker_with_gh(&fake.command);
+
+        let err = tracker
+            .update_issue_state("PVTI_1", "Done")
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("github_project_state_option_not_found")
         );
     }
 }

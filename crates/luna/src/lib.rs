@@ -12,3 +12,6 @@ pub mod tracker;
 pub mod wiki;
 pub mod workflow;
 pub mod workspace;
+
+#[cfg(test)]
+pub(crate) mod test_support;

@@ -247,7 +247,7 @@ impl WorkspaceManager {
 }
 
 pub fn sanitize_workspace_key(issue_identifier: &str) -> String {
-    issue_identifier
+    let key: String = issue_identifier
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
@@ -256,7 +256,13 @@ pub fn sanitize_workspace_key(issue_identifier: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect();
+
+    if key.is_empty() || key == "." || key == ".." {
+        "_".to_string()
+    } else {
+        key
+    }
 }
 
 fn ensure_within_root(root: &Path, path: &Path) -> Result<()> {
@@ -285,7 +291,15 @@ fn truncate_output(output: &str) -> String {
     if trimmed.len() <= HOOK_OUTPUT_LIMIT {
         trimmed.to_string()
     } else {
-        format!("{}...", &trimmed[..HOOK_OUTPUT_LIMIT])
+        let mut end = 0;
+        for (index, ch) in trimmed.char_indices() {
+            let next = index + ch.len_utf8();
+            if next > HOOK_OUTPUT_LIMIT {
+                break;
+            }
+            end = next;
+        }
+        format!("{}...", &trimmed[..end])
     }
 }
 
@@ -296,11 +310,160 @@ async fn is_directory_empty(path: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_workspace_key;
+    use std::path::Path;
+
+    use tempfile::tempdir;
+
+    use crate::config::HooksConfig;
+
+    use super::{WorkspaceManager, sanitize_workspace_key, truncate_output};
 
     #[test]
     fn sanitizes_workspace_keys() {
         assert_eq!(sanitize_workspace_key("ABC-123"), "ABC-123");
         assert_eq!(sanitize_workspace_key("ABC/123 hello"), "ABC_123_hello");
+        assert_eq!(sanitize_workspace_key(""), "_");
+        assert_eq!(sanitize_workspace_key("."), "_");
+        assert_eq!(sanitize_workspace_key(".."), "_");
+        assert_eq!(sanitize_workspace_key("..."), "...");
+    }
+
+    #[tokio::test]
+    async fn workspace_lifecycle_runs_codex_workspace_hooks_and_best_effort_cleanup() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("workspaces");
+        let removed_marker = temp.path().join("removed.txt");
+        let hooks = HooksConfig {
+            after_create: Some("printf created > after_create.txt".to_string()),
+            before_run: Some("printf before > before_run.txt".to_string()),
+            after_run: Some("printf after > after_run.txt; exit 9".to_string()),
+            before_remove: Some(format!("printf removed > {}", shell_quote(&removed_marker))),
+            timeout_ms: 1000,
+        };
+        let manager = WorkspaceManager::new(root, hooks, Some(temp.path().to_path_buf()));
+
+        let workspace = manager.prepare("ASAHI-1").await.expect("prepare");
+        manager.before_run(&workspace).await.expect("before run");
+        manager.after_run_best_effort(&workspace).await;
+
+        assert_eq!(
+            tokio::fs::read_to_string(workspace.path.join("after_create.txt"))
+                .await
+                .expect("after_create marker"),
+            "created"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(workspace.path.join("before_run.txt"))
+                .await
+                .expect("before_run marker"),
+            "before"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(workspace.path.join("after_run.txt"))
+                .await
+                .expect("after_run marker"),
+            "after"
+        );
+
+        manager
+            .cleanup(&workspace.workspace_key)
+            .await
+            .expect("cleanup");
+
+        assert!(!workspace.path.exists());
+        assert_eq!(
+            tokio::fs::read_to_string(removed_marker)
+                .await
+                .expect("before_remove marker"),
+            "removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_existing_nonempty_non_git_workspace() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("workspaces");
+        let existing = root.join("ASAHI-1");
+        tokio::fs::create_dir_all(&existing)
+            .await
+            .expect("existing workspace");
+        tokio::fs::write(existing.join("file.txt"), "content")
+            .await
+            .expect("existing file");
+        let manager = WorkspaceManager::new(root, HooksConfig::default(), None);
+
+        let err = manager
+            .prepare("ASAHI-1")
+            .await
+            .expect_err("nonempty non-git workspace should fail");
+
+        assert!(err.to_string().contains("not a git worktree"));
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_existing_file_workspace_path() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("workspaces");
+        tokio::fs::create_dir_all(&root).await.expect("root");
+        tokio::fs::write(root.join("ASAHI-1"), "file")
+            .await
+            .expect("file workspace path");
+        let manager = WorkspaceManager::new(root, HooksConfig::default(), None);
+
+        let err = manager
+            .prepare("ASAHI-1")
+            .await
+            .expect_err("file workspace path should fail");
+
+        assert!(err.to_string().contains("not a directory"));
+    }
+
+    #[tokio::test]
+    async fn before_run_hook_failure_is_fatal_but_cleanup_hook_failure_is_best_effort() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("workspaces");
+        let hooks = HooksConfig {
+            before_run: Some("echo before-run-failed >&2; exit 7".to_string()),
+            before_remove: Some("echo before-remove-failed >&2; exit 8".to_string()),
+            timeout_ms: 1000,
+            ..HooksConfig::default()
+        };
+        let manager = WorkspaceManager::new(root, hooks, None);
+        let workspace = manager.prepare("ASAHI-1").await.expect("prepare");
+
+        let err = manager
+            .before_run(&workspace)
+            .await
+            .expect_err("before_run failure should be fatal");
+        assert!(err.to_string().contains("hook failed: before_run"));
+
+        manager
+            .cleanup(&workspace.workspace_key)
+            .await
+            .expect("cleanup ignores before_remove failure");
+        assert!(!workspace.path.exists());
+    }
+
+    #[tokio::test]
+    async fn cleanup_missing_workspace_is_ok() {
+        let temp = tempdir().expect("tempdir");
+        let manager =
+            WorkspaceManager::new(temp.path().join("workspaces"), HooksConfig::default(), None);
+
+        manager.cleanup("ASAHI-missing").await.expect("cleanup");
+    }
+
+    #[test]
+    fn truncate_output_preserves_utf8_boundaries() {
+        let output = "好".repeat(3000);
+        let truncated = truncate_output(&output);
+
+        assert!(truncated.ends_with("..."));
+        assert!(truncated.len() <= super::HOOK_OUTPUT_LIMIT + 3);
+        assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    fn shell_quote(path: &Path) -> String {
+        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
     }
 }

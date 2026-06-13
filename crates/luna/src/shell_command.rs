@@ -2,7 +2,7 @@ use clash_brush_parser::ast::{
     AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, CompoundListItem,
     Pipeline, SimpleCommand,
 };
-use clash_brush_parser::{ast, Parser, ParserOptions};
+use clash_brush_parser::{Parser, ParserOptions, ast};
 use std::io::Cursor;
 
 /// Check if any command in the shell string matches any of the given patterns.
@@ -309,10 +309,34 @@ mod tests {
     }
 
     #[test]
+    fn matches_in_loop_bodies() {
+        assert!(matches_shell_activity_pattern(
+            "for file in a b; do git commit -m \"$file\"; done",
+            &["git commit".to_string()]
+        ));
+        assert!(matches_shell_activity_pattern(
+            "while gh run watch 123; do sleep 1; done",
+            &["gh run watch".to_string()]
+        ));
+    }
+
+    #[test]
     fn matches_gh_pr_create() {
         assert!(matches_shell_activity_pattern(
             "gh pr create --title foo --body bar",
             &["gh pr create".to_string()]
+        ));
+    }
+
+    #[test]
+    fn matches_github_ci_commands_when_configured() {
+        assert!(matches_shell_activity_pattern(
+            "gh pr checks 42 --watch",
+            &["gh pr checks".to_string()]
+        ));
+        assert!(matches_shell_activity_pattern(
+            "gh run watch 123456",
+            &["gh run watch".to_string()]
         ));
     }
 }

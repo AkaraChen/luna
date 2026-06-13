@@ -323,3 +323,177 @@ fn load_dotenv_file(workflow_path: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::{
+        Cli, Commands, JobWorkspaceMode, load_dotenv_file, read_comment_body, read_job_prompt,
+        read_text_arg_or_stdin, resolve_tracker_target,
+    };
+
+    #[test]
+    fn cli_parses_codex_workflow_subcommands() {
+        let cli = Cli::try_parse_from([
+            "luna",
+            "init",
+            "repo",
+            "--tracker",
+            "asahi",
+            "--non-interactive",
+            "--project-title",
+            "Local Backlog",
+        ])
+        .expect("init cli");
+        match cli.command {
+            Some(Commands::Init {
+                dir,
+                tracker,
+                non_interactive,
+                project_title,
+                ..
+            }) => {
+                assert_eq!(dir, std::path::PathBuf::from("repo"));
+                assert_eq!(tracker.as_deref(), Some("asahi"));
+                assert!(non_interactive);
+                assert_eq!(project_title.as_deref(), Some("Local Backlog"));
+            }
+            other => panic!("expected init command, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "luna",
+            "comment",
+            "--workflow",
+            "WORKFLOW.md",
+            "--issue",
+            "ASAHI-1",
+            "ship",
+            "it",
+        ])
+        .expect("comment cli");
+        match cli.command {
+            Some(Commands::Comment {
+                workflow,
+                issue,
+                body,
+            }) => {
+                assert_eq!(workflow.unwrap(), std::path::PathBuf::from("WORKFLOW.md"));
+                assert_eq!(issue.as_deref(), Some("ASAHI-1"));
+                assert_eq!(body, vec!["ship", "it"]);
+            }
+            other => panic!("expected comment command, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["luna", "show", "--issue", "ASAHI-1", "--json"])
+            .expect("show cli");
+        match cli.command {
+            Some(Commands::Show { issue, json, .. }) => {
+                assert_eq!(issue.as_deref(), Some("ASAHI-1"));
+                assert!(json);
+            }
+            other => panic!("expected show command, got {other:?}"),
+        }
+
+        let cli =
+            Cli::try_parse_from(["luna", "move", "--issue", "ASAHI-1", "Done"]).expect("move cli");
+        match cli.command {
+            Some(Commands::Move { issue, state, .. }) => {
+                assert_eq!(issue.as_deref(), Some("ASAHI-1"));
+                assert_eq!(state, "Done");
+            }
+            other => panic!("expected move command, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "luna",
+            "job",
+            "--workspace",
+            "repo",
+            "inspect",
+            "repository",
+        ])
+        .expect("job cli");
+        match cli.command {
+            Some(Commands::Job {
+                workspace, prompt, ..
+            }) => {
+                assert_eq!(workspace, JobWorkspaceMode::Repo);
+                assert_eq!(prompt, vec!["inspect", "repository"]);
+            }
+            other => panic!("expected job command, got {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["luna", "wiki", "--issue", "ASAHI-1", "grep", "API"])
+            .expect("wiki cli");
+        match cli.command {
+            Some(Commands::Wiki { issue, args, .. }) => {
+                assert_eq!(issue.as_deref(), Some("ASAHI-1"));
+                assert_eq!(args, vec!["grep", "API"]);
+            }
+            other => panic!("expected wiki command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_without_subcommand_preserves_optional_workflow_path() {
+        let cli = Cli::try_parse_from(["luna", "custom-WORKFLOW.md"]).expect("daemon cli");
+
+        assert!(cli.command.is_none());
+        assert_eq!(
+            cli.workflow.as_deref(),
+            Some(std::path::Path::new("custom-WORKFLOW.md"))
+        );
+    }
+
+    #[test]
+    fn cli_text_args_join_trim_and_report_missing_prompt_or_comment() {
+        assert_eq!(
+            read_job_prompt(vec!["  inspect".to_string(), "repo  ".to_string()]).unwrap(),
+            "inspect repo"
+        );
+        assert_eq!(
+            read_comment_body(vec!["  ship".to_string(), "it  ".to_string()]).unwrap(),
+            "ship it"
+        );
+        assert_eq!(
+            read_text_arg_or_stdin(vec!["  hello ".to_string()], "missing").unwrap(),
+            "hello"
+        );
+
+        let job_err = read_job_prompt(vec!["  ".to_string()]).unwrap_err();
+        assert!(job_err.to_string().contains("job prompt is required"));
+        let comment_err = read_comment_body(vec!["  ".to_string()]).unwrap_err();
+        assert!(comment_err.to_string().contains("comment body is required"));
+    }
+
+    #[test]
+    fn resolve_tracker_target_absolutizes_explicit_workflow_and_preserves_issue() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflow = temp.path().join("WORKFLOW.md");
+        std::fs::write(&workflow, "---\n---\n").expect("workflow");
+
+        let target = resolve_tracker_target(Some(workflow.clone()), Some("ASAHI-1".to_string()))
+            .expect("target");
+
+        assert!(target.workflow_path.is_absolute());
+        assert!(target.workflow_path.ends_with("WORKFLOW.md"));
+        assert_eq!(target.issue_locator.as_deref(), Some("ASAHI-1"));
+        assert!(target.cwd.is_absolute());
+    }
+
+    #[test]
+    fn load_dotenv_file_loads_env_from_workflow_directory_and_ignores_missing_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflow = temp.path().join("WORKFLOW.md");
+        std::fs::write(&workflow, "---\n---\n").expect("workflow");
+        let key = format!("LUNA_TEST_ENV_{}", std::process::id());
+        std::fs::write(temp.path().join(".env.luna"), format!("{key}=loaded\n")).expect("env");
+
+        load_dotenv_file(&workflow).expect("load dotenv");
+
+        assert_eq!(std::env::var(&key).as_deref(), Ok("loaded"));
+        load_dotenv_file(&temp.path().join("nested/WORKFLOW.md")).expect("missing dotenv ignored");
+    }
+}

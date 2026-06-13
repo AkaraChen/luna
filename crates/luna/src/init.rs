@@ -64,10 +64,7 @@ pub async fn run_init(options: InitOptions) -> Result<Vec<PathBuf>> {
 }
 
 async fn build_non_interactive_context(options: &InitOptions) -> Result<InitContext> {
-    let tracker_kind = options
-        .tracker_kind
-        .clone()
-        .unwrap_or_else(|| "github_project".to_string());
+    let tracker_kind = normalize_tracker_kind(options.tracker_kind.as_deref())?;
 
     if tracker_kind == "asahi" {
         let project_title = options
@@ -130,10 +127,7 @@ async fn build_non_interactive_context(options: &InitOptions) -> Result<InitCont
 }
 
 async fn build_interactive_context(options: &InitOptions) -> Result<InitContext> {
-    let tracker_default = options
-        .tracker_kind
-        .clone()
-        .unwrap_or_else(|| "github_project".to_string());
+    let tracker_default = normalize_tracker_kind(options.tracker_kind.as_deref())?;
     let tracker_kind = if options.tracker_kind.is_some() {
         tracker_default
     } else {
@@ -221,6 +215,16 @@ async fn build_interactive_context(options: &InitOptions) -> Result<InitContext>
         asahi_port: None,
         asahi_db: None,
     })
+}
+
+fn normalize_tracker_kind(value: Option<&str>) -> Result<String> {
+    let kind = value.unwrap_or("github_project");
+    match kind {
+        "github_project" | "asahi" => Ok(kind.to_string()),
+        other => Err(LunaError::InvalidConfig(format!(
+            "unknown tracker kind `{other}`; expected github_project or asahi"
+        ))),
+    }
 }
 
 async fn detect_current_github_login() -> Option<String> {
@@ -570,9 +574,82 @@ fn ensure_gitignore_entries(path: &Path, entries: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{GITIGNORE_TEMPLATE, ensure_gitignore_entries};
-    use std::fs;
+    use crate::{
+        config::{RunnerConfig, TrackerConfig, resolve_service_config},
+        workflow::{WorkflowStore, parse_workflow_definition},
+    };
+
+    use super::{
+        DEFAULT_PROJECT_TITLE, GITIGNORE_TEMPLATE, InitContext, InitOptions, default_project_title,
+        ensure_gitignore_entries, render_workflow_template, run_init, write_file,
+    };
+    use std::{ffi::OsString, fs, path::Path, sync::Mutex};
     use tempfile::tempdir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct PathRestore {
+        previous: Option<OsString>,
+    }
+
+    impl Drop for PathRestore {
+        fn drop(&mut self) {
+            // Tests that mutate process PATH hold ENV_LOCK and restore it before releasing.
+            unsafe {
+                if let Some(previous) = self.previous.take() {
+                    std::env::set_var("PATH", previous);
+                } else {
+                    std::env::remove_var("PATH");
+                }
+            }
+        }
+    }
+
+    fn prepend_path_for_test(path: &Path) -> PathRestore {
+        let previous = std::env::var_os("PATH");
+        let mut paths = vec![path.to_path_buf()];
+        if let Some(previous) = &previous {
+            paths.extend(std::env::split_paths(previous));
+        }
+        let joined = std::env::join_paths(paths).expect("join PATH");
+        // Tests that mutate process PATH hold ENV_LOCK and restore it before releasing.
+        unsafe {
+            std::env::set_var("PATH", joined);
+        }
+        PathRestore { previous }
+    }
+
+    fn write_fake_gh(dir: &Path, log_path: &Path, project_create_result: &str) {
+        let gh_path = dir.join("gh");
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+CALL_LOG='{log_path}'
+printf '%q ' "$@" >> "$CALL_LOG"
+printf '\n' >> "$CALL_LOG"
+if [[ "${{1:-}}" == "project" && "${{2:-}}" == "create" ]]; then
+  {project_create_result}
+elif [[ "${{1:-}}" == "repo" && "${{2:-}}" == "view" ]]; then
+  exit 1
+elif [[ "${{1:-}}" == "api" && "${{2:-}}" == "user" ]]; then
+  printf 'fake-user\n'
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 64
+fi
+"#,
+            log_path = log_path.display(),
+        );
+        fs::write(&gh_path, script).expect("fake gh");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&gh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&gh_path, permissions).unwrap();
+        }
+    }
 
     #[test]
     fn creates_gitignore_from_template() {
@@ -599,5 +676,277 @@ mod tests {
             fs::read_to_string(path).expect("read gitignore"),
             "/target\n.env.luna\n.luna/\nasahi.db\n"
         );
+    }
+
+    #[test]
+    fn renders_asahi_workflow_with_codex_runner_and_wiki_guidance() {
+        let context = InitContext {
+            tracker_kind: "asahi".to_string(),
+            owner: "unused".to_string(),
+            project_number: 1,
+            project_title: "Local Backlog".to_string(),
+            repo_name_with_owner: None,
+            created_project: false,
+            asahi_port: Some(49306),
+            asahi_db: Some("./asahi.db".to_string()),
+        };
+
+        let workflow = render_workflow_template(&context);
+        let definition = parse_workflow_definition(&workflow).expect("workflow parses");
+        let temp = tempdir().expect("tempdir");
+        let config =
+            resolve_service_config(&definition, &temp.path().join("WORKFLOW.md")).expect("config");
+
+        match config.tracker {
+            TrackerConfig::Asahi(tracker) => {
+                assert_eq!(tracker.db.as_deref(), Some("./asahi.db"));
+                assert_eq!(tracker.port, Some(49306));
+            }
+            other => panic!("expected asahi tracker, got {other:?}"),
+        }
+        match config.runner {
+            RunnerConfig::Codex(runner) => {
+                assert_eq!(runner.command, "codex app-server");
+                assert_eq!(runner.approval_policy, Some(serde_json::json!("never")));
+            }
+            other => panic!("expected codex runner, got {other:?}"),
+        }
+        assert!(workflow.contains("luna wiki <command>"));
+        assert!(workflow.contains("luna show"));
+        assert!(workflow.contains("luna comment"));
+        assert!(workflow.contains("luna move"));
+    }
+
+    #[test]
+    fn renders_github_project_workflow_with_codex_runner_and_pr_ci_guidance() {
+        let context = InitContext {
+            tracker_kind: "github_project".to_string(),
+            owner: "acme".to_string(),
+            project_number: 42,
+            project_title: "GitHub Backlog".to_string(),
+            repo_name_with_owner: Some("acme/repo".to_string()),
+            created_project: false,
+            asahi_port: None,
+            asahi_db: None,
+        };
+
+        let workflow = render_workflow_template(&context);
+        let definition = parse_workflow_definition(&workflow).expect("workflow parses");
+        let temp = tempdir().expect("tempdir");
+        let config =
+            resolve_service_config(&definition, &temp.path().join("WORKFLOW.md")).expect("config");
+
+        match config.tracker {
+            TrackerConfig::GitHubProject(tracker) => {
+                assert_eq!(tracker.owner, "acme");
+                assert_eq!(tracker.project_number, 42);
+                assert_eq!(tracker.gh_command, "gh");
+            }
+            other => panic!("expected github project tracker, got {other:?}"),
+        }
+        assert!(matches!(config.runner, RunnerConfig::Codex(_)));
+        assert!(workflow.contains("gh pr checks"));
+        assert!(workflow.contains("gh run watch"));
+        assert!(workflow.contains("gh pr merge"));
+        assert!(workflow.contains("gh pr create -R acme/repo --fill"));
+    }
+
+    #[tokio::test]
+    async fn run_init_writes_asahi_codex_workflow_env_and_gitignore() {
+        let temp = tempdir().expect("tempdir");
+
+        let created = run_init(InitOptions {
+            target_dir: temp.path().to_path_buf(),
+            force: false,
+            owner: None,
+            project_number: None,
+            create_project: false,
+            project_title: Some("Local Backlog".to_string()),
+            non_interactive: true,
+            tracker_kind: Some("asahi".to_string()),
+        })
+        .await
+        .expect("init");
+
+        assert_eq!(created.len(), 3);
+        assert!(temp.path().join("WORKFLOW.md").exists());
+        assert!(temp.path().join(".env.luna").exists());
+        assert!(temp.path().join(".gitignore").exists());
+        let store = WorkflowStore::load(temp.path().join("WORKFLOW.md")).expect("workflow");
+        match &store.current().config.tracker {
+            TrackerConfig::Asahi(tracker) => {
+                assert_eq!(tracker.db.as_deref(), Some("./asahi.db"));
+                assert!(tracker.port.is_some());
+            }
+            other => panic!("expected asahi tracker, got {other:?}"),
+        }
+        assert!(matches!(
+            store.current().config.runner,
+            RunnerConfig::Codex(_)
+        ));
+        let workflow = fs::read_to_string(temp.path().join("WORKFLOW.md")).expect("workflow text");
+        assert!(workflow.contains("Tracker: Asahi (local)"));
+        assert!(workflow.contains("luna wiki <command>"));
+        assert_eq!(
+            fs::read_to_string(temp.path().join(".gitignore")).expect("gitignore"),
+            "/target\n.env.luna\n.luna/\nasahi.db\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_init_writes_github_project_codex_workflow_without_creating_project() {
+        let temp = tempdir().expect("tempdir");
+
+        run_init(InitOptions {
+            target_dir: temp.path().to_path_buf(),
+            force: false,
+            owner: Some("acme".to_string()),
+            project_number: Some(7),
+            create_project: false,
+            project_title: Some("Remote Backlog".to_string()),
+            non_interactive: true,
+            tracker_kind: Some("github_project".to_string()),
+        })
+        .await
+        .expect("init");
+
+        let store = WorkflowStore::load(temp.path().join("WORKFLOW.md")).expect("workflow");
+        match &store.current().config.tracker {
+            TrackerConfig::GitHubProject(tracker) => {
+                assert_eq!(tracker.owner, "acme");
+                assert_eq!(tracker.project_number, 7);
+                assert_eq!(tracker.active_states, ["Todo", "In Progress"]);
+                assert_eq!(tracker.terminal_states, ["Done"]);
+            }
+            other => panic!("expected github project tracker, got {other:?}"),
+        }
+        assert!(matches!(
+            store.current().config.runner,
+            RunnerConfig::Codex(_)
+        ));
+        let workflow = fs::read_to_string(temp.path().join("WORKFLOW.md")).expect("workflow text");
+        assert!(workflow.contains("gh pr checks"));
+        assert!(workflow.contains("gh run watch"));
+    }
+
+    #[tokio::test]
+    async fn run_init_creates_github_project_for_codex_workflow_with_fake_gh() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let gh_dir = temp.path().join("bin");
+        fs::create_dir(&gh_dir).expect("bin dir");
+        let log_path = temp.path().join("gh.log");
+        write_fake_gh(&gh_dir, &log_path, "printf '17\\n'");
+        let _path_restore = prepend_path_for_test(&gh_dir);
+        let target = temp.path().join("repo");
+
+        run_init(InitOptions {
+            target_dir: target.clone(),
+            force: false,
+            owner: Some("acme".to_string()),
+            project_number: Some(99),
+            create_project: true,
+            project_title: Some("Created Backlog".to_string()),
+            non_interactive: true,
+            tracker_kind: Some("github_project".to_string()),
+        })
+        .await
+        .expect("init");
+
+        let store = WorkflowStore::load(target.join("WORKFLOW.md")).expect("workflow");
+        match &store.current().config.tracker {
+            TrackerConfig::GitHubProject(tracker) => {
+                assert_eq!(tracker.owner, "acme");
+                assert_eq!(tracker.project_number, 17);
+            }
+            other => panic!("expected github project tracker, got {other:?}"),
+        }
+        let calls = fs::read_to_string(log_path).expect("gh calls");
+        assert!(calls.contains("project create --owner acme --title Created\\ Backlog"));
+    }
+
+    #[tokio::test]
+    async fn run_init_falls_back_when_github_project_create_fails() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let gh_dir = temp.path().join("bin");
+        fs::create_dir(&gh_dir).expect("bin dir");
+        let log_path = temp.path().join("gh.log");
+        write_fake_gh(&gh_dir, &log_path, "echo nope >&2; exit 2");
+        let _path_restore = prepend_path_for_test(&gh_dir);
+        let target = temp.path().join("repo");
+
+        run_init(InitOptions {
+            target_dir: target.clone(),
+            force: false,
+            owner: Some("acme".to_string()),
+            project_number: Some(99),
+            create_project: true,
+            project_title: Some("Fallback Backlog".to_string()),
+            non_interactive: true,
+            tracker_kind: Some("github_project".to_string()),
+        })
+        .await
+        .expect("init");
+
+        let store = WorkflowStore::load(target.join("WORKFLOW.md")).expect("workflow");
+        match &store.current().config.tracker {
+            TrackerConfig::GitHubProject(tracker) => {
+                assert_eq!(tracker.owner, "acme");
+                assert_eq!(tracker.project_number, 99);
+            }
+            other => panic!("expected github project tracker, got {other:?}"),
+        }
+        let workflow = fs::read_to_string(target.join("WORKFLOW.md")).expect("workflow text");
+        assert!(workflow.contains("GitHub Project number: `99`"));
+        let calls = fs::read_to_string(log_path).expect("gh calls");
+        assert!(calls.contains("project create --owner acme --title Fallback\\ Backlog"));
+    }
+
+    #[tokio::test]
+    async fn run_init_rejects_unknown_tracker_kind() {
+        let temp = tempdir().expect("tempdir");
+
+        let err = run_init(InitOptions {
+            target_dir: temp.path().to_path_buf(),
+            force: false,
+            owner: None,
+            project_number: None,
+            create_project: false,
+            project_title: None,
+            non_interactive: true,
+            tracker_kind: Some("linear".to_string()),
+        })
+        .await
+        .expect_err("unknown tracker should fail");
+
+        assert!(err.to_string().contains("unknown tracker kind"));
+        assert!(!temp.path().join("WORKFLOW.md").exists());
+    }
+
+    #[test]
+    fn default_project_title_uses_directory_name_or_static_default() {
+        let temp = tempdir().expect("tempdir");
+        let named = temp.path().join("example-project");
+        fs::create_dir(&named).expect("mkdir");
+
+        assert_eq!(default_project_title(&named), "example-project backlog");
+        assert_eq!(
+            default_project_title(std::path::Path::new(".")),
+            DEFAULT_PROJECT_TITLE
+        );
+    }
+
+    #[test]
+    fn write_file_refuses_overwrite_unless_forced() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("WORKFLOW.md");
+
+        write_file(&path, "first", false).expect("initial write");
+        let err = write_file(&path, "second", false).unwrap_err();
+        assert!(err.to_string().contains("refusing to overwrite"));
+        write_file(&path, "second", true).expect("forced write");
+
+        assert_eq!(fs::read_to_string(path).expect("read file"), "second");
     }
 }
