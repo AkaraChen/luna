@@ -158,11 +158,7 @@ impl MigrationTrait for Migration {
             Activities::CreatedAt,
         )
         .await?;
-        create_composite_index(
-            manager,
-            "idx_notifications_issue_archived",
-        )
-        .await?;
+        create_composite_index(manager, "idx_notifications_issue_archived").await?;
 
         Ok(())
     }
@@ -214,11 +210,11 @@ where
         .await
 }
 
-async fn create_composite_index(
-    manager: &SchemaManager<'_>,
-    name: &str,
-) -> Result<(), DbErr> {
-    if manager.has_index(Notifications::Table.to_string(), name).await? {
+async fn create_composite_index(manager: &SchemaManager<'_>, name: &str) -> Result<(), DbErr> {
+    if manager
+        .has_index(Notifications::Table.to_string(), name)
+        .await?
+    {
         return Ok(());
     }
 

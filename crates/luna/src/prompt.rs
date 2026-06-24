@@ -51,9 +51,7 @@ and stop only at a natural handoff point. This is continuation turn {turn_number
             .map(|c| format!("- {}", c.body.trim()))
             .collect::<Vec<_>>()
             .join("\n");
-        prompt = format!(
-            "{prompt}\n\nNew comments on this issue:\n{comments_text}"
-        );
+        prompt = format!("{prompt}\n\nNew comments on this issue:\n{comments_text}");
     }
 
     prompt

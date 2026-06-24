@@ -1,10 +1,4 @@
-import {
-  createContext,
-  use,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Bell, CircleDot, FolderClosed, PanelLeft, Plus, Search, Settings } from "lucide-react";
 import { Link, useLocation } from "wouter";
@@ -101,7 +95,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-
 export function AsahiSidebar() {
   const [location] = useLocation();
   const { collapsed, setCollapsed } = useSidebarContext();
@@ -117,9 +110,7 @@ export function AsahiSidebar() {
       className={cn(
         "asahi-sidebar fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-muted/50 md:flex",
         "[transition:transform_220ms_var(--ease-out-strong),opacity_180ms_var(--ease-out-strong)]",
-        collapsed
-          ? "pointer-events-none -translate-x-full opacity-0"
-          : "translate-x-0 opacity-100",
+        collapsed ? "pointer-events-none -translate-x-full opacity-0" : "translate-x-0 opacity-100",
       )}
     >
       <div className="flex h-12 items-center gap-2 px-4 text-muted-foreground">
@@ -146,7 +137,7 @@ export function AsahiSidebar() {
       </div>
 
       <nav className="flex flex-col gap-1 px-3 pb-1">
-      {primary.map((item) => {
+        {primary.map((item) => {
           const Icon = item.icon;
           const active = item.match(location);
           return (
@@ -190,7 +181,10 @@ export function AsahiSidebar() {
       </div>
 
       {composerOpen ? (
-        <ProjectComposer onClose={() => setComposerOpen(false)} onCreated={() => setComposerOpen(false)} />
+        <ProjectComposer
+          onClose={() => setComposerOpen(false)}
+          onCreated={() => setComposerOpen(false)}
+        />
       ) : null}
     </aside>
   );

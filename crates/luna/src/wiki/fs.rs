@@ -116,7 +116,10 @@ mod tests {
         assert!(String::from_utf8(readme).unwrap().contains("Hello"));
 
         // Nested page
-        let design = fs.read_file(Path::new("/guides/backend/design.md")).await.unwrap();
+        let design = fs
+            .read_file(Path::new("/guides/backend/design.md"))
+            .await
+            .unwrap();
         assert!(String::from_utf8(design).unwrap().contains("Design"));
 
         // Directory listing

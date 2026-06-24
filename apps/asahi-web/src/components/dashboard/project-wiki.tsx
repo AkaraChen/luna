@@ -359,7 +359,10 @@ export function ProjectWiki({ project }: { project: Project }) {
               {rootNodes.length === 0 && !inlineComposer ? (
                 <div className="flex h-56 items-center justify-center px-0 text-center">
                   <div>
-                    <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
+                    <CircleDashed
+                      className="mx-auto mb-3 size-8 text-muted-foreground"
+                      strokeWidth={1.5}
+                    />
                     <div className="text-sm font-medium">No wiki pages</div>
                   </div>
                 </div>
@@ -869,7 +872,10 @@ function RenameRow({
     >
       {kind === "folder" ? (
         <ChevronRight
-          className={cn("size-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")}
+          className={cn(
+            "size-3.5 text-muted-foreground transition-transform",
+            expanded && "rotate-90",
+          )}
         />
       ) : (
         <span className="size-3.5" />

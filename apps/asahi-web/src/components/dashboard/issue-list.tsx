@@ -18,10 +18,7 @@ export function IssueList({
     return (
       <div className="flex h-[420px] items-center justify-center px-6 text-center">
         <div>
-          <CircleDashed
-            className="mx-auto mb-3 size-8 text-muted-foreground"
-            strokeWidth={1.5}
-          />
+          <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
           <div className="text-[13.5px] font-medium text-foreground">No issues</div>
           <div className="mt-1 text-[12.5px] text-muted-foreground">
             Try a different status or search.
@@ -59,10 +56,7 @@ export function IssueList({
                       className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
                       key={label}
                     >
-                      <span
-                        aria-hidden
-                        className="size-1.5 rounded-full bg-muted-foreground/70"
-                      />
+                      <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/70" />
                       {label}
                     </span>
                   ))}
@@ -105,10 +99,7 @@ export function EmptyDetails() {
   return (
     <div className="flex h-full items-center justify-center p-8 text-center">
       <div>
-        <CircleDashed
-          className="mx-auto mb-3 size-8 text-muted-foreground"
-          strokeWidth={1.5}
-        />
+        <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
         <div className="text-[13.5px] font-medium text-foreground">No issue selected</div>
       </div>
     </div>

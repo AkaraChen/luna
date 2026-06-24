@@ -31,10 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ActivitySkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { IssueCommentForm } from "@/components/dashboard/issue-comment-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  ASAHI_LIVE_REFETCH_INTERVAL_MS,
-  refreshAsahiQueries,
-} from "@/lib/query-refresh";
+import { ASAHI_LIVE_REFETCH_INTERVAL_MS, refreshAsahiQueries } from "@/lib/query-refresh";
 import { sanitizeRichText } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 
@@ -153,9 +150,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel onClick={() => setDeleteOpen(false)}>
-                    Cancel
-                  </AlertDialogCancel>
+                  <AlertDialogCancel onClick={() => setDeleteOpen(false)}>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     disabled={deleteMutation.isPending}
                     onClick={() => deleteMutation.mutate()}
@@ -479,8 +474,8 @@ function EditableBlockers({
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
       </button>
 
-      {open ? (
-        popoverPosition
+      {open
+        ? popoverPosition
           ? createPortal(
               <div
                 ref={popoverRef}
@@ -512,7 +507,9 @@ function EditableBlockers({
                             selected ? "bg-foreground" : "bg-background",
                           )}
                         >
-                          {selected ? <span className="size-1.5 rounded-full bg-background" /> : null}
+                          {selected ? (
+                            <span className="size-1.5 rounded-full bg-background" />
+                          ) : null}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-mono text-[11.5px] uppercase tracking-wide text-foreground">
@@ -526,7 +523,9 @@ function EditableBlockers({
                     );
                   })
                 ) : (
-                  <div className="px-3 py-2 text-[11.5px] text-muted-foreground">No other issues</div>
+                  <div className="px-3 py-2 text-[11.5px] text-muted-foreground">
+                    No other issues
+                  </div>
                 )}
 
                 {blockers.length ? (
@@ -544,8 +543,7 @@ function EditableBlockers({
               document.body,
             )
           : null
-      ) : null
-      }
+        : null}
     </div>
   );
 }

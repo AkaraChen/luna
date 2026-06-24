@@ -9,10 +9,7 @@ pub struct WikiShell {
 
 impl WikiShell {
     pub fn new(fs: InMemoryFs) -> Self {
-        let bash = Bash::builder()
-            .fs(std::sync::Arc::new(fs))
-            .cwd("/")
-            .build();
+        let bash = Bash::builder().fs(std::sync::Arc::new(fs)).cwd("/").build();
         Self { bash }
     }
 

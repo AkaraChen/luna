@@ -53,14 +53,12 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                if let Some(backend) = window.try_state::<Backend>() {
-                    if let Ok(mut child) = backend.0.lock() {
-                        if let Some(child) = child.take() {
-                            let _ = child.kill();
-                        }
-                    }
-                }
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. })
+                && let Some(backend) = window.try_state::<Backend>()
+                && let Ok(mut child) = backend.0.lock()
+                && let Some(child) = child.take()
+            {
+                let _ = child.kill();
             }
         })
         .run(tauri::generate_context!())
@@ -72,7 +70,7 @@ fn navigate_when_ready(window: WebviewWindow) {
         let addr = SocketAddr::from(([127, 0, 0, 1], ASAHI_PORT));
         for _ in 0..80 {
             if TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
-                let _ = window.eval(&format!(
+                let _ = window.eval(format!(
                     "window.location.replace('http://127.0.0.1:{ASAHI_PORT}/')"
                 ));
                 return;

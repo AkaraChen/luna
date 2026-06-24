@@ -231,7 +231,8 @@ impl crate::agent::AgentSession for AcpSession {
         let mut prompt = prompt.to_string();
         if !self.pending_comments.is_empty() {
             let comments = std::mem::take(&mut self.pending_comments);
-            let comments_text = comments.iter()
+            let comments_text = comments
+                .iter()
                 .map(|c| format!("- {}", c.trim()))
                 .collect::<Vec<_>>()
                 .join("\n");

@@ -203,11 +203,7 @@ async fn update_issue_state(
     let body = body.into_inner();
     body.validate()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
-    Ok(Json(
-        service
-            .update_issue_state(locator, body.state)
-            .await?,
-    ))
+    Ok(Json(service.update_issue_state(locator, body.state).await?))
 }
 
 #[post("/issues/<locator>/comments", data = "<body>")]
@@ -411,7 +407,10 @@ mod tests {
         let updated = client
             .patch(format!("/api/issues/{}/state", issue.identifier))
             .header(ContentType::JSON)
-            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
+            .body(
+                rocket::serde::json::json!({"state": IssueState::InProgress.to_string()})
+                    .to_string(),
+            )
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
         let updated: Issue = updated.into_json().expect("updated issue json");
@@ -558,7 +557,10 @@ mod tests {
         let updated = client
             .patch(format!("/api/issues/{}/state", issue.id))
             .header(ContentType::JSON)
-            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
+            .body(
+                rocket::serde::json::json!({"state": IssueState::InProgress.to_string()})
+                    .to_string(),
+            )
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
 
@@ -651,7 +653,10 @@ mod tests {
         let _ = client
             .patch(format!("/api/issues/{}/state", issue.id))
             .header(ContentType::JSON)
-            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
+            .body(
+                rocket::serde::json::json!({"state": IssueState::InProgress.to_string()})
+                    .to_string(),
+            )
             .dispatch();
         let _ = client
             .post(format!("/api/issues/{}/comments", issue.id))
@@ -711,7 +716,10 @@ mod tests {
         let updated = client
             .patch(format!("/api/issues/{}/state", issue.id))
             .header(ContentType::JSON)
-            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
+            .body(
+                rocket::serde::json::json!({"state": IssueState::InProgress.to_string()})
+                    .to_string(),
+            )
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
 

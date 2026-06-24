@@ -1,21 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Box,
-  Check,
-  ChevronDown,
-  Link2,
-  X,
-} from "lucide-react";
+import { Box, Check, ChevronDown, Link2, X } from "lucide-react";
 
 import { createIssue, fetchIssues, fetchProjects } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { refreshAsahiQueries } from "@/lib/query-refresh";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { cn } from "@/lib/utils";
@@ -102,9 +92,7 @@ export function IssueComposer({
   });
 
   const availableBlockers =
-    allIssuesQuery.data?.issues.filter(
-      (candidate) => !blockedByIds.includes(candidate.id),
-    ) ?? [];
+    allIssuesQuery.data?.issues.filter((candidate) => !blockedByIds.includes(candidate.id)) ?? [];
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -144,17 +132,12 @@ export function IssueComposer({
 
   const toggleBlocker = (issueId: string) => {
     setBlockedByIds((prev) =>
-      prev.includes(issueId)
-        ? prev.filter((id) => id !== issueId)
-        : [...prev, issueId],
+      prev.includes(issueId) ? prev.filter((id) => id !== issueId) : [...prev, issueId],
     );
   };
 
   const selectedBlockerLabels = blockedByIds
-    .map(
-      (id) =>
-        allIssuesQuery.data?.issues.find((i) => i.id === id)?.identifier ?? id,
-    )
+    .map((id) => allIssuesQuery.data?.issues.find((i) => i.id === id)?.identifier ?? id)
     .join(", ");
 
   const composer = (
@@ -195,10 +178,7 @@ export function IssueComposer({
             value={title}
           />
           <div className="mt-2">
-            <RichTextEditor
-              content={description}
-              onChange={(html) => setDescription(html)}
-            />
+            <RichTextEditor content={description} onChange={(html) => setDescription(html)} />
           </div>
         </div>
 
@@ -214,9 +194,8 @@ export function IssueComposer({
                   <Box className="size-3.5" />
                   <span>
                     {selectedProjectId
-                      ? projectsQuery.data?.projects.find(
-                          (p) => p.id === selectedProjectId,
-                        )?.name ?? "No project"
+                      ? (projectsQuery.data?.projects.find((p) => p.id === selectedProjectId)
+                          ?.name ?? "No project")
                       : "No project"}
                   </span>
                   <ChevronDown className="size-3 text-muted-foreground/70" />
@@ -255,9 +234,7 @@ export function IssueComposer({
                     type="button"
                   >
                     <span className="flex size-4 items-center justify-center">
-                      {selectedProjectId === project.id && (
-                        <Check className="size-3.5" />
-                      )}
+                      {selectedProjectId === project.id && <Check className="size-3.5" />}
                     </span>
                     {project.name}
                   </button>
@@ -331,9 +308,7 @@ export function IssueComposer({
                           selected ? "bg-foreground" : "bg-background",
                         )}
                       >
-                        {selected ? (
-                          <span className="size-1.5 rounded-full bg-background" />
-                        ) : null}
+                        {selected ? <span className="size-1.5 rounded-full bg-background" /> : null}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[11.5px] font-mono uppercase tracking-wide text-foreground">
@@ -347,9 +322,7 @@ export function IssueComposer({
                   );
                 })
               ) : (
-                <div className="px-3 py-2 text-[11.5px] text-muted-foreground">
-                  No issues
-                </div>
+                <div className="px-3 py-2 text-[11.5px] text-muted-foreground">No issues</div>
               )}
 
               {blockedByIds.length ? (

@@ -11,10 +11,7 @@ import {
   type AsahiNotification,
 } from "@/api/asahi";
 import { Button } from "@/components/ui/button";
-import {
-  NOTIFICATIONS_REFETCH_INTERVAL_MS,
-  refreshNotifications,
-} from "@/lib/query-refresh";
+import { NOTIFICATIONS_REFETCH_INTERVAL_MS, refreshNotifications } from "@/lib/query-refresh";
 import { cn } from "@/lib/utils";
 
 import { IssueDetailSkeleton } from "@/components/dashboard/dashboard-skeleton";
@@ -138,17 +135,17 @@ export function NotificationsView({
 
         <ul className="min-h-0 flex-1 overflow-auto pb-4">
           {filtered.map((notification, i) => (
-              <NotificationRow
-                animationIndex={i}
-                archiveDisabled={archiveMutation.isPending}
-                key={notification.id}
-                notification={notification}
-                onArchive={() => archiveMutation.mutate(notification.id)}
-                onRead={() => readMutation.mutate(notification.id)}
-                onUnread={() => unreadMutation.mutate(notification.id)}
-                onSelectIssue={handleSelectIssue}
-                selected={notification.issue != null && notification.issue.id === selectedIssueId}
-              />
+            <NotificationRow
+              animationIndex={i}
+              archiveDisabled={archiveMutation.isPending}
+              key={notification.id}
+              notification={notification}
+              onArchive={() => archiveMutation.mutate(notification.id)}
+              onRead={() => readMutation.mutate(notification.id)}
+              onUnread={() => unreadMutation.mutate(notification.id)}
+              onSelectIssue={handleSelectIssue}
+              selected={notification.issue != null && notification.issue.id === selectedIssueId}
+            />
           ))}
           {filtered.length === 0 ? (
             <li className="py-8 text-center text-[13px] text-muted-foreground">
@@ -238,11 +235,7 @@ function NotificationRow({
           selected && "bg-muted",
           issue && "cursor-pointer",
         )}
-        aria-label={
-          issue
-            ? `Open issue ${issue.identifier}: ${issue.title}`
-            : "Notification item"
-        }
+        aria-label={issue ? `Open issue ${issue.identifier}: ${issue.title}` : "Notification item"}
         onClick={() => {
           if (issue) {
             onSelectIssue(issue.id);
@@ -281,23 +274,23 @@ function NotificationRow({
                 "truncate text-[13.5px] leading-snug",
                 unread ? "text-foreground" : "text-muted-foreground",
               )}
-          >
-            <span className={cn(unread && "font-medium")}>{notification.title}</span>
-            {issue ? (
-              <>
-                <span aria-hidden className="mx-1.5 text-border">
-                  ·
-                </span>
-                <span className="font-mono text-[11.5px] uppercase tracking-wide text-muted-foreground">
-                  {issue.identifier}
-                </span>
-                <span aria-hidden className="mx-1.5 text-border">
-                  ·
-                </span>
-                <span className={verbTone}>{issue.title}</span>
-              </>
-            ) : null}
-          </p>
+            >
+              <span className={cn(unread && "font-medium")}>{notification.title}</span>
+              {issue ? (
+                <>
+                  <span aria-hidden className="mx-1.5 text-border">
+                    ·
+                  </span>
+                  <span className="font-mono text-[11.5px] uppercase tracking-wide text-muted-foreground">
+                    {issue.identifier}
+                  </span>
+                  <span aria-hidden className="mx-1.5 text-border">
+                    ·
+                  </span>
+                  <span className={verbTone}>{issue.title}</span>
+                </>
+              ) : null}
+            </p>
             {notification.body ? (
               <p className="truncate text-[12px] text-muted-foreground">{notification.body}</p>
             ) : null}

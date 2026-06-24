@@ -66,9 +66,7 @@ export function RichTextEditor({
 
   if (!editor) {
     return (
-      <div
-        className={cn(editorFrameClassName(editable, variant), "animate-pulse", className)}
-      />
+      <div className={cn(editorFrameClassName(editable, variant), "animate-pulse", className)} />
     );
   }
 

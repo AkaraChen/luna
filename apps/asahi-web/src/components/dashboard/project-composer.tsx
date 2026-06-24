@@ -88,10 +88,7 @@ export function ProjectComposer({
         onSubmit={submit}
       >
         <div className="flex items-center justify-between px-4 pt-3.5">
-          <span
-            className="text-[13.5px] font-medium text-foreground"
-            id="project-composer-title"
-          >
+          <span className="text-[13.5px] font-medium text-foreground" id="project-composer-title">
             New project
           </span>
           <button

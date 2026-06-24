@@ -1,9 +1,9 @@
 pub mod api;
-pub mod migration;
 pub mod app;
 pub mod db;
 pub mod domain;
 pub mod entity;
+pub mod migration;
 pub mod service;
 pub mod web;
 

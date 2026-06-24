@@ -29,13 +29,7 @@ export function IssueCommentForm({
   const disabled = isSubmitting || isBlankRichText(value);
 
   return (
-    <form
-      className={cn(
-        "shrink-0 px-6 py-4",
-        className,
-      )}
-      onSubmit={submitComment}
-    >
+    <form className={cn("shrink-0 px-6 py-4", className)} onSubmit={submitComment}>
       <Card>
         <CardHeader>
           <CardTitle>New comment</CardTitle>

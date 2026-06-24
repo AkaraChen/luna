@@ -39,14 +39,14 @@ src/
 
 ## WHERE TO LOOK
 
-| Task | Location | Notes |
-|------|----------|-------|
-| Routing | `App.tsx` | `/issues`, `/issues/:id`, `/projects/:locator`, `/inbox` |
-| Issue list + filters | `App.tsx` IssuesView, `components/dashboard/issue-list.tsx` | keepPreviousData avoids skeleton flash |
-| Issue detail + comments | `components/dashboard/issue-details.tsx` | Tiptap editor for descriptions |
-| Project wiki | `components/dashboard/project-wiki.tsx` | Renders wiki tree from API |
-| API client | `api/asahi.ts` | Base URL from env / vite proxy |
-| Design tokens | `style.css`, `DESIGN.md` | Semantic-only colour rule |
+| Task                    | Location                                                    | Notes                                                    |
+| ----------------------- | ----------------------------------------------------------- | -------------------------------------------------------- |
+| Routing                 | `App.tsx`                                                   | `/issues`, `/issues/:id`, `/projects/:locator`, `/inbox` |
+| Issue list + filters    | `App.tsx` IssuesView, `components/dashboard/issue-list.tsx` | keepPreviousData avoids skeleton flash                   |
+| Issue detail + comments | `components/dashboard/issue-details.tsx`                    | Tiptap editor for descriptions                           |
+| Project wiki            | `components/dashboard/project-wiki.tsx`                     | Renders wiki tree from API                               |
+| API client              | `api/asahi.ts`                                              | Base URL from env / vite proxy                           |
+| Design tokens           | `style.css`, `DESIGN.md`                                    | Semantic-only colour rule                                |
 
 ## CONVENTIONS
 

@@ -1020,7 +1020,8 @@ impl IssueService {
         .await?;
 
         if issue.state == IssueState::Done.to_string() {
-            self.update_issue_state(locator, IssueState::InProgress.to_string()).await?;
+            self.update_issue_state(locator, IssueState::InProgress.to_string())
+                .await?;
         }
 
         Ok(model.into())

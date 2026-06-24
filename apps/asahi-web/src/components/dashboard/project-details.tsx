@@ -61,10 +61,7 @@ export function ProjectDetails({
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
         <div>
-          <CircleDashed
-            className="mx-auto mb-3 size-8 text-muted-foreground"
-            strokeWidth={1.5}
-          />
+          <CircleDashed className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} />
           <div className="text-[13.5px] font-medium text-foreground">Project not found</div>
           <div className="mt-1 text-[12.5px] text-muted-foreground">
             Choose a project from the sidebar.
@@ -240,9 +237,7 @@ function OverviewPane({
   const done = issues.filter((i) => i.state === "Done").length;
   const recent = useMemo(
     () =>
-      issues
-        .toSorted((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
-        .slice(0, 5),
+      issues.toSorted((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? "")).slice(0, 5),
     [issues],
   );
 
@@ -271,7 +266,8 @@ function OverviewPane({
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete {project.name}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This action cannot be undone. Issues in this project will be moved out of the project.
+                    This action cannot be undone. Issues in this project will be moved out of the
+                    project.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -391,10 +387,7 @@ function IssuesPanel({
 
   return (
     <section className="flex min-w-0 flex-col">
-      <PanelHeader
-        eyebrow="Issues"
-        summary={`${open} open · ${mine} mine · ${done} done`}
-      />
+      <PanelHeader eyebrow="Issues" summary={`${open} open · ${mine} mine · ${done} done`} />
 
       <ul className="mt-4 flex flex-col gap-1.5">
         {order.map((status) => {
@@ -410,7 +403,10 @@ function IssuesPanel({
               <span className="text-right font-mono tabular-nums text-muted-foreground">
                 {list.length}
               </span>
-              <span aria-hidden className="relative h-1 w-full overflow-hidden rounded-full bg-muted">
+              <span
+                aria-hidden
+                className="relative h-1 w-full overflow-hidden rounded-full bg-muted"
+              >
                 <span
                   className="absolute inset-y-0 left-0 rounded-full"
                   style={{
@@ -431,11 +427,7 @@ function IssuesPanel({
         ) : (
           <ul className="mt-2">
             {recent.map((i, idx) => (
-              <li
-                className="asahi-rise"
-                key={i.id}
-                style={{ animationDelay: `${idx * 22}ms` }}
-              >
+              <li className="asahi-rise" key={i.id} style={{ animationDelay: `${idx * 22}ms` }}>
                 <button
                   className="asahi-press flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
                   aria-label={`Open issue ${i.identifier}: ${i.title}`}
@@ -497,16 +489,16 @@ function WikiPanel({ onOpenWiki, project }: { onOpenWiki: () => void; project: P
       ) : (
         <ul className="mt-3">
           {recent.map((doc, i) => (
-              <li
-                className="asahi-rise rounded-md"
-                key={doc.id}
-                style={{ animationDelay: `${i * 22}ms` }}
+            <li
+              className="asahi-rise rounded-md"
+              key={doc.id}
+              style={{ animationDelay: `${i * 22}ms` }}
+            >
+              <button
+                className="asahi-press flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
+                onClick={onOpenWiki}
+                type="button"
               >
-                <button
-                  className="asahi-press flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/40"
-                  onClick={onOpenWiki}
-                  type="button"
-                >
                 <FileText className="size-3.5 shrink-0 translate-y-0.5 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate text-[13.5px] text-foreground">
                   {doc.title}

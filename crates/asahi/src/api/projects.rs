@@ -161,7 +161,10 @@ mod tests {
         local::blocking::Client,
     };
 
-    use crate::{app, domain::{Issue, IssueState}};
+    use crate::{
+        app,
+        domain::{Issue, IssueState},
+    };
 
     use super::ProjectListResponse;
 
@@ -222,7 +225,10 @@ mod tests {
         let updated = client
             .patch(format!("/api/projects/{}/state", project.slug))
             .header(ContentType::JSON)
-            .body(rocket::serde::json::json!({"state": IssueState::InProgress.to_string()}).to_string())
+            .body(
+                rocket::serde::json::json!({"state": IssueState::InProgress.to_string()})
+                    .to_string(),
+            )
             .dispatch();
         assert_eq!(updated.status(), Status::Ok);
         let updated: crate::domain::Project = updated.into_json().expect("updated project json");

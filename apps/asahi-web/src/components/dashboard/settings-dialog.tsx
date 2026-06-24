@@ -14,13 +14,7 @@ const CLOSE_MS = 120;
  * daemon facts pulled from WORKFLOW.md. Sections that were filler in the
  * earlier version (Account, About) have been removed.
  */
-export function SettingsDialog({
-  onClose,
-  open,
-}: {
-  onClose: () => void;
-  open: boolean;
-}) {
+export function SettingsDialog({ onClose, open }: { onClose: () => void; open: boolean }) {
   const [mounted, setMounted] = useState(false);
   const [animState, setAnimState] = useState<"open" | "closing">("open");
   const closeTimer = useRef<number | null>(null);
@@ -107,10 +101,7 @@ export function SettingsDialog({
               L
             </span>
             <div className="flex min-w-0 flex-col">
-              <span
-                className="text-[13.5px] font-medium text-foreground"
-                id="settings-title"
-              >
+              <span className="text-[13.5px] font-medium text-foreground" id="settings-title">
                 Luna
               </span>
               <span className="text-[11.5px] text-muted-foreground">Local daemon</span>
@@ -185,13 +176,7 @@ export function SettingsDialog({
   return createPortal(node, document.body);
 }
 
-function Section({
-  children,
-  eyebrow,
-}: {
-  children: React.ReactNode;
-  eyebrow: string;
-}) {
+function Section({ children, eyebrow }: { children: React.ReactNode; eyebrow: string }) {
   return (
     <section className="border-t border-border/60 px-5 py-4 first:border-t-0">
       <h3 className="asahi-eyebrow mb-3">{eyebrow}</h3>
@@ -200,13 +185,7 @@ function Section({
   );
 }
 
-function Row({
-  children,
-  label,
-}: {
-  children: React.ReactNode;
-  label: string;
-}) {
+function Row({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-x-4">
       <div className="text-[12px] text-muted-foreground">{label}</div>
@@ -216,9 +195,7 @@ function Row({
 }
 
 function ValueChip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="text-[13px] text-foreground">{children}</span>
-  );
+  return <span className="text-[13px] text-foreground">{children}</span>;
 }
 
 function KeyValue({ k, v }: { k: string; v: string }) {

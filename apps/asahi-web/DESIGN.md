@@ -1,7 +1,7 @@
 # Asahi Web — Design DNA
 
 A short reference for the visual system this app implements. Detailed tokens
-live in `src/style.css`; the patterns below say *why* the values are what they
+live in `src/style.css`; the patterns below say _why_ the values are what they
 are.
 
 ## North star

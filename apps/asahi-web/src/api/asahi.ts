@@ -222,7 +222,10 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
   });
 }
 
-export async function updateProject(projectId: string, input: UpdateProjectInput): Promise<Project> {
+export async function updateProject(
+  projectId: string,
+  input: UpdateProjectInput,
+): Promise<Project> {
   return request<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
     body: JSON.stringify(input),
     method: "PATCH",
@@ -276,10 +279,13 @@ export async function updateWikiNode(
   nodeId: string,
   input: UpdateWikiNodeInput,
 ): Promise<WikiNode> {
-  return request<WikiNode>(`/api/projects/${encodeURIComponent(projectLocator)}/wiki/${encodeURIComponent(nodeId)}`, {
-    body: JSON.stringify(input),
-    method: "PATCH",
-  });
+  return request<WikiNode>(
+    `/api/projects/${encodeURIComponent(projectLocator)}/wiki/${encodeURIComponent(nodeId)}`,
+    {
+      body: JSON.stringify(input),
+      method: "PATCH",
+    },
+  );
 }
 
 export async function deleteWikiNode(

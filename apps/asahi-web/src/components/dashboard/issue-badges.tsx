@@ -48,11 +48,7 @@ export function Priority({
   const label = priority == null ? "No priority" : `P${priority}`;
 
   return (
-    <span
-      aria-label={label}
-      className="inline-flex items-end gap-[2px]"
-      title={label}
-    >
+    <span aria-label={label} className="inline-flex items-end gap-[2px]" title={label}>
       {[1, 2, 3].map((i) => (
         <span
           className={cn(

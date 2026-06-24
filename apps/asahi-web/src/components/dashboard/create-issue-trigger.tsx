@@ -67,11 +67,7 @@ export function CreateIssueTrigger({
         {children}
       </span>
       {mounted ? (
-        <IssueComposer
-          dataState={state}
-          onClose={requestClose}
-          projectId={projectId}
-        />
+        <IssueComposer dataState={state} onClose={requestClose} projectId={projectId} />
       ) : null}
     </>
   );
