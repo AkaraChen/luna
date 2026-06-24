@@ -1,0 +1,15 @@
+{
+  "name": "asahi-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run prepare:sidecar && tauri dev",
+    "build": "bun run prepare:sidecar -- --release && tauri build",
+    "prepare:sidecar": "node scripts/prepare-sidecar.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  },
+  "packageManager": "bun@1.3.13"
+}

@@ -129,6 +129,13 @@ enum Commands {
         )]
         args: Vec<String>,
     },
+    #[command(about = "Start the Asahi desktop backend without running agent jobs")]
+    AsahiDesktop {
+        #[arg(long, default_value_t = 49306)]
+        port: u16,
+        #[arg(long, default_value = "asahi.db")]
+        db: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -236,6 +243,23 @@ async fn main() -> Result<()> {
             if result.exit_code != 0 {
                 std::process::exit(result.exit_code);
             }
+            Ok(())
+        }
+        Some(Commands::AsahiDesktop { port, db }) => {
+            let db = absolutize_path(&db)?;
+            if let Some(parent) = db.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let database_url = format!("sqlite://{}?mode=rwc", db.display());
+            eprintln!("asahi desktop backend listening on http://127.0.0.1:{port}");
+            asahi::rocket_with_database_url_and_port(database_url, port)
+                .launch()
+                .await
+                .map_err(|err| {
+                    luna::error::LunaError::InvalidConfig(format!(
+                        "asahi desktop backend failed: {err}"
+                    ))
+                })?;
             Ok(())
         }
         None => {

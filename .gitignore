@@ -27,3 +27,5 @@ lerna-debug.log*
 .env.luna
 /.luna/workspaces
 .reference/
+apps/asahi-desktop/src-tauri/binaries/
+apps/asahi-desktop/src-tauri/gen/
