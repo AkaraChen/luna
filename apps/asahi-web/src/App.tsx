@@ -175,7 +175,7 @@ function IssuesView({
     placeholderData: keepPreviousData,
   });
 
-  const issues = data?.issues ?? [];
+  const issues = useMemo(() => data?.issues ?? [], [data]);
 
   const visibleIssues = useMemo(() => {
     const query = search.trim().toLowerCase();

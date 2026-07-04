@@ -103,6 +103,7 @@ export function ProjectComposer({
 
         <div className="flex-1 px-5 pb-3 pt-6">
           <input
+            aria-label="Project name"
             autoFocus
             className="block h-8 w-full bg-transparent text-[15px] font-medium text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(event) => setName(event.target.value)}
@@ -111,6 +112,7 @@ export function ProjectComposer({
             value={name}
           />
           <textarea
+            aria-label="Project description"
             className="mt-2 block min-h-20 w-full resize-none bg-transparent text-[13.5px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(event) => setDescription(event.target.value)}
             onKeyDown={handleKeyDown}

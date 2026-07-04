@@ -39,6 +39,7 @@ import { Priority, StatusIcon } from "./issue-badges";
 const PROJECT_STATES = ["Backlog", "Todo", "In Progress", "Done"];
 const PRIORITY_OPTIONS = [null, 1, 2, 3] as const;
 const PROJECT_SECTIONS = ["overview", "issues", "wiki"] as const;
+const ISSUE_STATUS_ORDER = ["In Progress", "Todo", "Backlog", "Done"];
 type ProjectSection = (typeof PROJECT_SECTIONS)[number];
 
 export function ProjectDetails({
@@ -382,15 +383,14 @@ function IssuesPanel({
   open: number;
   recent: Issue[];
 }) {
-  const order = ["In Progress", "Todo", "Backlog", "Done"];
-  const max = Math.max(...order.map((s) => byStatus.get(s)?.length ?? 0), 1);
+  const max = Math.max(...ISSUE_STATUS_ORDER.map((s) => byStatus.get(s)?.length ?? 0), 1);
 
   return (
     <section className="flex min-w-0 flex-col">
       <PanelHeader eyebrow="Issues" summary={`${open} open · ${mine} mine · ${done} done`} />
 
       <ul className="mt-4 flex flex-col gap-1.5">
-        {order.map((status) => {
+        {ISSUE_STATUS_ORDER.map((status) => {
           const list = byStatus.get(status) ?? [];
           const ratio = list.length / max;
           return (

@@ -40,27 +40,6 @@ export function IssueListSkeleton() {
   );
 }
 
-export function IssuesViewSkeleton() {
-  return (
-    <div className="min-h-0 flex-1 overflow-hidden">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 pt-3 pb-2">
-        <Skeleton className="h-9 w-72 rounded-full" />
-        <Skeleton className="h-4 w-32" />
-      </div>
-      <ul className="mx-auto max-w-5xl divide-y divide-border/60 px-6">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <li className="flex items-baseline gap-3 py-2.5" key={i}>
-            <Skeleton className="size-4 rounded-full" />
-            <Skeleton className="h-4 flex-1" />
-            <Skeleton className="h-3 w-14" />
-            <Skeleton className="h-3 w-10" />
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 export function IssueDetailSkeleton() {
   return (
     <div className="grid h-full min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_18rem]">

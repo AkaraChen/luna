@@ -32,5 +32,3 @@ export function DashboardPageLayout({
     </section>
   );
 }
-
-export { PageTopbar };

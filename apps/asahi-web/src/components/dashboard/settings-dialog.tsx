@@ -15,24 +15,32 @@ const CLOSE_MS = 120;
  * earlier version (Account, About) have been removed.
  */
 export function SettingsDialog({ onClose, open }: { onClose: () => void; open: boolean }) {
-  const [mounted, setMounted] = useState(false);
-  const [animState, setAnimState] = useState<"open" | "closing">("open");
+  const [mounted, setMounted] = useState(open);
+  const [entered, setEntered] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
+  // Mount inline during render when `open` flips true, so the dialog's first
+  // paint already exists (no effect-driven extra render with stale UI).
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) setMounted(true);
+  }
+
+  // The exit transition needs real time to play, so unmounting stays in an
+  // effect-managed timer; reopening cancels a pending unmount.
   useEffect(() => {
     if (open) {
       if (closeTimer.current != null) {
         window.clearTimeout(closeTimer.current);
         closeTimer.current = null;
       }
-      setAnimState("open");
-      setMounted(true);
       return;
     }
     if (!mounted) return;
-    setAnimState("closing");
     closeTimer.current = window.setTimeout(() => {
       setMounted(false);
+      setEntered(false);
       closeTimer.current = null;
     }, CLOSE_MS);
   }, [open, mounted]);
@@ -43,18 +51,17 @@ export function SettingsDialog({ onClose, open }: { onClose: () => void; open: b
     };
   }, []);
 
-  const [entered, setEntered] = useState(false);
+  // Defer the "open" data-state by one frame so the enter transition fires
+  // from the unset (hidden) base styles. `entered` is reset by the unmount
+  // timer above, not here, so this effect only ever arms the animation.
   useEffect(() => {
-    if (!mounted) {
-      setEntered(false);
-      return;
-    }
+    if (!mounted) return;
     const id = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(id);
   }, [mounted]);
 
-  const state: "open" | "closing" | undefined =
-    animState === "closing" ? "closing" : entered ? "open" : undefined;
+  // Derived, not stored: closing whenever the parent has asked to close.
+  const state: "open" | "closing" | undefined = !open ? "closing" : entered ? "open" : undefined;
 
   // Latest-ref pattern: keep onClose accessible to the effect without
   // tearing down the document listener every render. Equivalent to React's

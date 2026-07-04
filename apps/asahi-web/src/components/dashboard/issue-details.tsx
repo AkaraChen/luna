@@ -51,7 +51,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
   const [descriptionDraft, setDescriptionDraft] = useState(issue.description ?? "");
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const allIssuesQuery = useSuspenseQuery({
+  const { data: allIssuesData } = useSuspenseQuery({
     queryKey: ["issues", "all"],
     queryFn: () => fetchIssues(),
   });
@@ -110,9 +110,7 @@ export function IssueDetails({ issue }: { issue: Issue }) {
     if (blocker.id) acc.push(blocker.id);
     return acc;
   }, []);
-  const availableBlockers = allIssuesQuery.data.issues.filter(
-    (candidate) => candidate.id !== issue.id,
-  );
+  const availableBlockers = allIssuesData.issues.filter((candidate) => candidate.id !== issue.id);
 
   return (
     <section className="grid h-full min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_18rem]">
