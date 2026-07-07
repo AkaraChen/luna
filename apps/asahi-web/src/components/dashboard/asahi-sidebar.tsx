@@ -1,4 +1,12 @@
-import { createContext, use, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Bell, CircleDot, FolderClosed, PanelLeft, Plus, Search, Settings } from "lucide-react";
 import { Link, useLocation } from "wouter";
@@ -10,6 +18,14 @@ import { ProjectComposer } from "./project-composer";
 import { SettingsDialog } from "./settings-dialog";
 
 const SIDEBAR_STORAGE_KEY = "asahi:sidebar-collapsed";
+
+function persistCollapsed(next: boolean) {
+  try {
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? "1" : "0");
+  } catch {
+    // ignore (private mode, quota etc.)
+  }
+}
 
 type SidebarContextValue = {
   collapsed: boolean;
@@ -56,29 +72,35 @@ export function AppShell({ children }: { children: ReactNode }) {
     return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
   });
 
-  const setCollapsed = (next: boolean) => {
+  const setCollapsed = useCallback((next: boolean) => {
     setCollapsedState(next);
-    try {
-      window.localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      // ignore (private mode, quota etc.)
-    }
-  };
+    persistCollapsed(next);
+  }, []);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsedState((prev) => {
+      const next = !prev;
+      persistCollapsed(next);
+      return next;
+    });
+  }, []);
 
   // Cmd/Ctrl + \ to toggle, matching Linear / Cursor convention.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
         event.preventDefault();
-        setCollapsed(!collapsed);
+        toggleCollapsed();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [collapsed]);
+  }, [toggleCollapsed]);
+
+  const contextValue = useMemo(() => ({ collapsed, setCollapsed }), [collapsed, setCollapsed]);
 
   return (
-    <SidebarContext.Provider value={{ collapsed, setCollapsed }}>
+    <SidebarContext.Provider value={contextValue}>
       <div className="min-h-svh bg-background text-foreground">
         <div
           className={cn(
@@ -95,7 +117,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-export function AsahiSidebar() {
+function AsahiSidebar() {
   const [location] = useLocation();
   const { collapsed, setCollapsed } = useSidebarContext();
   const { data } = useSuspenseQuery({

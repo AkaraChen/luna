@@ -81,18 +81,18 @@ export function IssueComposer({
   const setPriorityOpen = setOpen("priority");
   const setBlockersOpen = setOpen("blockers");
 
-  const projectsQuery = useQuery({
+  const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: () => fetchProjects(),
   });
 
-  const allIssuesQuery = useQuery({
+  const { data: allIssuesData, isLoading: allIssuesLoading } = useQuery({
     queryKey: ["issues", "all"],
     queryFn: () => fetchIssues(),
   });
 
   const availableBlockers =
-    allIssuesQuery.data?.issues.filter((candidate) => !blockedByIds.includes(candidate.id)) ?? [];
+    allIssuesData?.issues.filter((candidate) => !blockedByIds.includes(candidate.id)) ?? [];
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -137,7 +137,7 @@ export function IssueComposer({
   };
 
   const selectedBlockerLabels = blockedByIds
-    .map((id) => allIssuesQuery.data?.issues.find((i) => i.id === id)?.identifier ?? id)
+    .map((id) => allIssuesData?.issues.find((i) => i.id === id)?.identifier ?? id)
     .join(", ");
 
   const composer = (
@@ -170,6 +170,7 @@ export function IssueComposer({
 
         <div className="flex-1 px-5 pb-3 pt-6">
           <input
+            aria-label="Issue title"
             autoFocus
             className="block h-8 w-full bg-transparent font-medium text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(event) => setTitle(event.target.value)}
@@ -188,14 +189,14 @@ export function IssueComposer({
               <PopoverTrigger asChild>
                 <button
                   className="inline-flex h-7 items-center gap-1.5 rounded-full bg-muted/70 px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  disabled={projectsQuery.isLoading}
+                  disabled={projectsLoading}
                   type="button"
                 >
                   <Box className="size-3.5" />
                   <span>
                     {selectedProjectId
-                      ? (projectsQuery.data?.projects.find((p) => p.id === selectedProjectId)
-                          ?.name ?? "No project")
+                      ? (projectsData?.projects.find((p) => p.id === selectedProjectId)?.name ??
+                        "No project")
                       : "No project"}
                   </span>
                   <ChevronDown className="size-3 text-muted-foreground/70" />
@@ -223,7 +224,7 @@ export function IssueComposer({
                   </span>
                   No project
                 </button>
-                {(projectsQuery.data?.projects ?? []).map((project) => (
+                {(projectsData?.projects ?? []).map((project) => (
                   <button
                     key={project.id}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
@@ -275,7 +276,7 @@ export function IssueComposer({
               trigger={
                 <button
                   className="asahi-press inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-left [transition:background-color_180ms_var(--ease-out-strong)] hover:bg-muted/60 disabled:opacity-50"
-                  disabled={allIssuesQuery.isLoading}
+                  disabled={allIssuesLoading}
                   onClick={() => setBlockersOpen(!blockersOpen)}
                   type="button"
                 >
@@ -290,7 +291,7 @@ export function IssueComposer({
               }
             >
               {availableBlockers.length || blockedByIds.length ? (
-                (allIssuesQuery.data?.issues ?? []).map((candidate) => {
+                (allIssuesData?.issues ?? []).map((candidate) => {
                   const selected = blockedByIds.includes(candidate.id);
                   return (
                     <button

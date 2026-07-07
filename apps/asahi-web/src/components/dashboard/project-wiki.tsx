@@ -75,7 +75,11 @@ export function ProjectWiki({ project }: { project: Project }) {
   const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WikiNode | null>(null);
 
-  const rootQuery = useQuery({
+  const {
+    data: rootData,
+    isError: rootIsError,
+    isLoading: rootIsLoading,
+  } = useQuery({
     queryKey: wikiNodesQueryKey(project.id, null),
     queryFn: () => fetchWikiNodes(project.id),
   });
@@ -90,8 +94,8 @@ export function ProjectWiki({ project }: { project: Project }) {
 
   const childrenByParentId = new Map<string | null, WikiNode[]>();
   const loadedNodes: WikiNode[] = [];
-  if (rootQuery.data) {
-    const nodes = sortWikiNodes(rootQuery.data.nodes);
+  if (rootData) {
+    const nodes = sortWikiNodes(rootData.nodes);
     childrenByParentId.set(null, nodes);
     loadedNodes.push(...nodes);
   }
@@ -320,9 +324,9 @@ export function ProjectWiki({ project }: { project: Project }) {
         </div>
 
         <div className="max-h-[28rem] overflow-auto pb-2 lg:min-h-0 lg:flex-1 lg:max-h-none">
-          {rootQuery.isLoading ? (
+          {rootIsLoading ? (
             <div className="px-0 py-3 text-xs text-muted-foreground">Loading wiki…</div>
-          ) : rootQuery.isError ? (
+          ) : rootIsError ? (
             <div className="px-0 py-3 text-xs text-destructive">Could not load wiki.</div>
           ) : (
             <>
@@ -678,8 +682,18 @@ function WikiNodeViewer({
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
-  const [contentDraft, setContentDraft] = useState("");
+  const [titleDraft, setTitleDraft] = useState(node?.title ?? "");
+  const [contentDraft, setContentDraft] = useState(node?.content ?? "");
+
+  // Reset drafts inline during render when the viewed node changes, so the
+  // first paint of the new node never shows the previous node's draft.
+  const [prevNodeId, setPrevNodeId] = useState(node?.id ?? null);
+  if ((node?.id ?? null) !== prevNodeId) {
+    setPrevNodeId(node?.id ?? null);
+    setTitleDraft(node?.title ?? "");
+    setContentDraft(node?.content ?? "");
+    setEditing(false);
+  }
 
   const updateMutation = useMutation({
     mutationFn: (input: UpdateWikiNodeInput) => updateWikiNode(projectId, node!.id, input),
@@ -688,14 +702,6 @@ function WikiNodeViewer({
     },
     onSettled: () => refreshAsahiQueries(queryClient),
   });
-
-  useEffect(() => {
-    if (node) {
-      setTitleDraft(node.title);
-      setContentDraft(node.content ?? "");
-    }
-    setEditing(false);
-  }, [node?.id]);
 
   if (!node) {
     return (
@@ -726,6 +732,7 @@ function WikiNodeViewer({
 
         {editing ? (
           <input
+            aria-label="Page title"
             autoFocus
             className="block w-full bg-transparent text-[15px] font-medium leading-snug text-foreground outline-none placeholder:text-muted-foreground"
             onChange={(e) => setTitleDraft(e.target.value)}
@@ -891,6 +898,7 @@ function RenameRow({
       )}
       <input
         ref={inputRef}
+        aria-label={kind === "folder" ? "Rename folder" : "Rename page"}
         className="min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
         disabled={pending}
         onBlur={submit}
@@ -955,6 +963,7 @@ function InlineRow({
       )}
       <input
         ref={inputRef}
+        aria-label={kind === "folder" ? "New folder name" : "New page name"}
         className="min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
         onBlur={handleBlur}
         onChange={(e) => setTitle(e.target.value)}
