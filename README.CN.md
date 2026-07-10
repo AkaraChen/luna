@@ -42,13 +42,42 @@ Luna 是一个长期运行的守护进程，不是一次性命令。它按配置
 
 **精细控制 Agent 行为**
 - 直接在 WORKFLOW.md 正文中编写 Agent 提示词——通过模板变量注入 Issue 标题、描述、URL、优先级、以及阻塞关系
-- 选择权限预设（`high_trust`、`workspace_write`、`read_only`），或直接精细配置沙箱和审批策略
+- 选择权限预设（`high_trust`、`workspace_write`、`read_only`），或直接设置 runner permission mode；默认是 high-trust
 - 通过生命周期 Hook 在工作区创建后、每次运行前后、以及清理时执行 Shell 命令
 
 **优雅地处理失败**
 - Agent 失败或超时时，使用指数退避进行重试
 - 卡死检测会终止无响应的 Agent 并重新调度
 - 启动时自动清理上次遗留的过期工作区
+
+## 内置内容
+
+**Tracker**
+- GitHub Projects：通过 `gh` 轮询 Project 看板。
+- Asahi：内嵌本地 tracker，包含 issues、projects、wiki 和 notifications；当 `WORKFLOW.md` 没有显式 tracker 时，Luna 可以自动启动它。
+- Linear：用于 Linear issue 队列的 tracker backend。
+
+**Asahi 界面**
+- 基于 SQLite 和 SeaORM 的 Rocket REST API
+- 用于 issues、projects、wiki pages 和 notifications 的 React dashboard
+- Asahi Desktop：打包 `luna` sidecar 的 Tauri shell
+
+**Runner**
+- Codex：默认 runner，通过 vendored `angel-engine` client 驱动
+- opencode
+- ACP 兼容 agent
+
+**CLI**
+
+| 命令 | 说明 |
+|------|------|
+| `luna init` | 在目录中初始化默认 `WORKFLOW.md` |
+| `luna comment` | 给当前 tracker item 发布 comment |
+| `luna show` | 显示当前 tracker item |
+| `luna move` | 将当前 tracker item 移动到新状态 |
+| `luna wiki` | 通过虚拟 shell 浏览当前 issue 的 project wiki |
+| `luna job` | 运行一次性的 Angel Engine job，并流式输出 TurnRunEvent JSONL |
+| `luna asahi-desktop` | 启动 Asahi desktop backend，不运行 agent jobs |
 
 ## 适合谁用
 
@@ -59,6 +88,42 @@ Luna 适合以下开发者：
 - 宁愿写一张清晰的任务卡，也不想全程盯着代码生成过程
 
 ## 快速开始
+
+**前置依赖**
+
+- 支持 edition 2024 的 Rust toolchain
+- Bun 1.3.13
+- `just`（仓库 recipes 使用它）
+- 默认 runner 需要 Codex CLI
+- GitHub Project 工作流需要 GitHub CLI（`gh`）
+- 已初始化 submodules：`git submodule update --init --recursive`
+
+`crates/luna` 通过 path dependency 依赖 `angel-engine/crates/angel-engine-client`，所以 fresh clone 需要先初始化 submodules 才能构建 Luna。
+
+**安装**
+
+```bash
+just install
+# 或：
+cargo install --path ./crates/luna --force --locked
+```
+
+**Secrets**
+
+```bash
+cp .env.luna.example .env.luna
+```
+
+把 `.env.luna` 放在你运行的 `WORKFLOW.md` 旁边；Luna 会自动加载它。
+
+**Dashboard 开发**
+
+```bash
+just asahi-backend   # Rocket + SQLite，监听 127.0.0.1:49306
+just asahi-frontend  # 指向同一端口的 Vite+ dashboard
+```
+
+**CLI**
 
 ```bash
 # 在当前目录初始化 WORKFLOW.md
@@ -71,7 +136,7 @@ luna comment "开始实现，接下来会补测试。"
 luna
 ```
 
-Luna 需要安装并完成认证的 [Codex](https://github.com/openai/codex) 和 [GitHub CLI](https://cli.github.com/)（`gh`）。
+Luna 使用 vendored `angel-engine` Rust client 驱动配置的 agent runtime。默认 runtime command 是 `codex app-server`。
 
 ## 愿景
 

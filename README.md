@@ -42,13 +42,42 @@ Each issue gets its own workspace — a fresh directory the agent works in from 
 
 **Control how agents behave**
 - Write the agent prompt directly in WORKFLOW.md — inject issue title, description, URL, priority, and blocked-by relationships with template variables
-- Choose a permission profile (`high_trust`, `workspace_write`, `read_only`) or fine-tune sandbox and approval policies directly
+- Choose a permission profile (`high_trust`, `workspace_write`, `read_only`) or set the runner permission mode directly. The default is high-trust.
 - Wire lifecycle hooks to run shell commands after workspace creation, before/after each run, and on cleanup
 
 **Fail gracefully**
 - Exponential backoff retry on agent failure or timeout
 - Stall detection kills unresponsive agents and reschedules
 - On startup, stale workspaces from previous sessions are cleaned up automatically
+
+## What's In The Box
+
+**Trackers**
+- GitHub Projects: poll a Project board through `gh`.
+- Asahi: embedded local tracker with issues, projects, wiki, and notifications; Luna can auto-start it when `WORKFLOW.md` omits an explicit tracker.
+- Linear: tracker backend for Linear issue queues.
+
+**Asahi surface**
+- Rocket REST API backed by SQLite and SeaORM
+- React dashboard for issues, projects, wiki pages, and notifications
+- Asahi Desktop, a Tauri shell that bundles a `luna` sidecar
+
+**Runners**
+- Codex: the default runner, driven through the vendored `angel-engine` client
+- opencode
+- ACP-compatible agents
+
+**CLI**
+
+| Command | Description |
+|---------|-------------|
+| `luna init` | Initialize a default `WORKFLOW.md` in a directory |
+| `luna comment` | Post a comment to the current tracker item |
+| `luna show` | Show the current tracker item |
+| `luna move` | Move the current tracker item to a new state |
+| `luna wiki` | Browse the current issue's project wiki via a virtual shell |
+| `luna job` | Run a one-off Angel Engine job and stream TurnRunEvent JSONL |
+| `luna asahi-desktop` | Start the Asahi desktop backend without running agent jobs |
 
 ## Who It's For
 
@@ -59,6 +88,42 @@ Luna is for developers who:
 - Would rather write a clear ticket than babysit a code generation session
 
 ## Getting Started
+
+**Prerequisites**
+
+- Rust toolchain with edition 2024 support
+- Bun 1.3.13
+- `just` for the repo recipes
+- Codex CLI for the default runner
+- GitHub CLI (`gh`) for GitHub Project workflows
+- Initialized submodules: `git submodule update --init --recursive`
+
+`crates/luna` path-depends on `angel-engine/crates/angel-engine-client`, so a fresh clone cannot build Luna until submodules are initialized.
+
+**Install**
+
+```bash
+just install
+# or:
+cargo install --path ./crates/luna --force --locked
+```
+
+**Secrets**
+
+```bash
+cp .env.luna.example .env.luna
+```
+
+Place `.env.luna` next to the `WORKFLOW.md` you run; Luna loads it automatically.
+
+**Dashboard dev**
+
+```bash
+just asahi-backend   # Rocket + SQLite on 127.0.0.1:49306
+just asahi-frontend  # Vite+ dashboard pointed at the same port
+```
+
+**CLI**
 
 ```bash
 # Initialize a WORKFLOW.md in the current directory
@@ -71,7 +136,7 @@ luna comment "Started implementation, validating tests next."
 luna
 ```
 
-Luna uses the vendored `angel-engine` Rust client to drive the configured agent runtime. The default runtime command is `codex app-server`, so install and authenticate [Codex](https://github.com/openai/codex) when using the default runner. GitHub Project workflows also require the [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated.
+Luna uses the vendored `angel-engine` Rust client to drive the configured agent runtime. The default runtime command is `codex app-server`.
 
 ## The Vision
 

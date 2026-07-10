@@ -1,6 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-05-27
+**Revised:** 2026-07-03 (manual docs/DX sweep)
 **Commit:** 2bd65af
 **Branch:** master
 
@@ -14,11 +15,13 @@ Luna is a Rust daemon that polls GitHub Projects (or the embedded Asahi tracker)
 luna/
 ├── crates/
 │   ├── luna/              # CLI + orchestrator daemon
-│   ├── asahi/             # Rocket REST API (issues, projects, wiki)
-│   └── asahi-migration/   # SeaORM migrations for Asahi SQLite schema
-├── apps/asahi-web/        # React dashboard (Vite+, shadcn, TanStack Query)
+│   └── asahi/             # Rocket REST API (issues, projects, wiki, migrations)
+├── apps/
+│   ├── asahi-web/         # React dashboard (Vite+, shadcn, TanStack Query)
+│   └── asahi-desktop/     # Tauri shell + luna sidecar
 ├── justfile               # Dev shortcuts (asahi-frontend, asahi-backend, install)
 ├── .agents/skills/        # Agent workflow skills (symlinked from .claude/skills/)
+├── angel-engine/          # Git submodule: vendored agent runtime client (read-only here)
 └── akrc-docs/             # Git submodule (external docs)
 ```
 
@@ -34,9 +37,10 @@ luna/
 | Issue/project REST API | `crates/asahi/src/api/` | Rocket handlers |
 | Domain logic | `crates/asahi/src/domain/` | Pure types + validation (garde) |
 | DB entities | `crates/asahi/src/entity/` | SeaORM models |
-| Schema migrations | `crates/asahi-migration/src/m*.rs` | Ordered SeaORM migrations |
+| Schema migrations | `crates/asahi/src/migration/m*.rs` | Ordered SeaORM migrations |
 | Dashboard UI | `apps/asahi-web/src/App.tsx` | wouter routes, React Query |
 | Visual system | `apps/asahi-web/DESIGN.md` | "Studio Notebook" — read before UI work |
+| Desktop shell | `apps/asahi-desktop/src-tauri/` | Tauri app that spawns `luna asahi-desktop` |
 
 ## CODE MAP
 
@@ -65,6 +69,7 @@ luna/
 - Do not share workspace state between concurrent agent runs.
 - Do not use bold typography or display-scale headings in Asahi UI (see `DESIGN.md`).
 - Do not edit `.reference/` — it is read-only reference material.
+- Do not edit `angel-engine/` for Luna changes unless the task explicitly targets that submodule.
 
 ## UNIQUE STYLES
 
@@ -87,6 +92,10 @@ just asahi-backend                                     # cargo-watch + Rocket
 # Frontend (from apps/asahi-web)
 vp install && vp check && vp test                      # Vite+ toolchain
 bun run dev                                            # via package.json → vp dev
+
+# Desktop
+bun run --cwd apps/asahi-desktop dev                   # Tauri shell with luna sidecar
+bun run --cwd apps/asahi-desktop build                 # bundle desktop app
 ```
 
 ## NOTES
