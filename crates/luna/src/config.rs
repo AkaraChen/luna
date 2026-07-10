@@ -5,7 +5,6 @@ use std::{
 
 use garde::Validate;
 use serde::Deserialize;
-use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 
 use crate::{
@@ -17,9 +16,11 @@ use crate::{
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 30_000;
+const DEFAULT_COMMENT_INTERVAL_MS: u64 = 2_000;
 const DEFAULT_HOOK_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_MAX_CONCURRENT: usize = 10;
 const DEFAULT_MAX_TURNS: u32 = 20;
+const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 const DEFAULT_MAX_RETRY_BACKOFF_MS: u64 = 300_000;
 const DEFAULT_TURN_TIMEOUT_MS: u64 = 3_600_000;
 const DEFAULT_READ_TIMEOUT_MS: u64 = 5_000;
@@ -230,11 +231,9 @@ pub struct CodexRunner {
     #[garde(inner(custom(not_blank)))]
     pub args: Vec<String>,
     #[garde(skip)]
-    pub approval_policy: Option<JsonValue>,
+    pub permission_profile: Option<PermissionProfile>,
     #[garde(inner(custom(not_blank)))]
-    pub thread_sandbox: Option<String>,
-    #[garde(skip)]
-    pub turn_sandbox_policy: Option<JsonValue>,
+    pub permission_mode: Option<String>,
     #[serde(default = "default_turn_timeout_ms")]
     #[garde(range(min = 1))]
     pub turn_timeout_ms: u64,
@@ -251,13 +250,56 @@ impl Default for CodexRunner {
         Self {
             command: DEFAULT_CODEX_COMMAND.to_string(),
             args: Vec::new(),
-            approval_policy: None,
-            thread_sandbox: None,
-            turn_sandbox_policy: None,
+            permission_profile: None,
+            permission_mode: None,
             turn_timeout_ms: DEFAULT_TURN_TIMEOUT_MS,
             read_timeout_ms: DEFAULT_READ_TIMEOUT_MS,
             stall_timeout_ms: DEFAULT_STALL_TIMEOUT_MS,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionProfile {
+    HighTrust,
+    WorkspaceWrite,
+    ReadOnly,
+}
+
+impl PermissionProfile {
+    fn codex_permission_mode(self) -> &'static str {
+        match self {
+            Self::HighTrust => "never",
+            Self::WorkspaceWrite => "on-request",
+            // Codex has no sandboxed read-only approval mode; "untrusted"
+            // (approve everything outside the trusted set) is the strictest.
+            Self::ReadOnly => "untrusted",
+        }
+    }
+
+    fn opencode_permission_mode(self) -> &'static str {
+        match self {
+            Self::HighTrust => "bypassPermissions",
+            Self::WorkspaceWrite => "default",
+            Self::ReadOnly => "plan",
+        }
+    }
+}
+
+impl CodexRunner {
+    pub fn resolved_permission_mode(&self) -> String {
+        self.permission_mode.clone().unwrap_or_else(|| {
+            self.permission_profile
+                .unwrap_or(PermissionProfile::HighTrust)
+                .codex_permission_mode()
+                .to_string()
+        })
+    }
+
+    pub fn resolved_elicitation_grants_all(&self) -> bool {
+        matches!(self.permission_profile, Some(PermissionProfile::HighTrust))
+            || (self.permission_profile.is_none() && self.permission_mode.is_none())
     }
 }
 
@@ -270,6 +312,10 @@ pub struct OpencodeRunner {
     #[serde(default)]
     #[garde(inner(custom(not_blank)))]
     pub args: Vec<String>,
+    #[garde(skip)]
+    pub permission_profile: Option<PermissionProfile>,
+    #[garde(inner(custom(not_blank)))]
+    pub permission_mode: Option<String>,
     #[serde(default = "default_turn_timeout_ms")]
     #[garde(range(min = 1))]
     pub turn_timeout_ms: u64,
@@ -286,10 +332,28 @@ impl Default for OpencodeRunner {
         Self {
             command: DEFAULT_OPENCODE_COMMAND.to_string(),
             args: Vec::new(),
+            permission_profile: None,
+            permission_mode: None,
             turn_timeout_ms: DEFAULT_TURN_TIMEOUT_MS,
             read_timeout_ms: DEFAULT_READ_TIMEOUT_MS,
             stall_timeout_ms: DEFAULT_STALL_TIMEOUT_MS,
         }
+    }
+}
+
+impl OpencodeRunner {
+    pub fn resolved_permission_mode(&self) -> String {
+        self.permission_mode.clone().unwrap_or_else(|| {
+            self.permission_profile
+                .unwrap_or(PermissionProfile::HighTrust)
+                .opencode_permission_mode()
+                .to_string()
+        })
+    }
+
+    pub fn resolved_elicitation_grants_all(&self) -> bool {
+        matches!(self.permission_profile, Some(PermissionProfile::HighTrust))
+            || (self.permission_profile.is_none() && self.permission_mode.is_none())
     }
 }
 
@@ -319,6 +383,11 @@ pub struct SchedulerConfig {
     #[serde(default = "default_max_turns")]
     #[garde(range(min = 1))]
     pub max_turns: u32,
+    /// Maximum dispatch attempts per issue for failure-class retries (failed / timed out /
+    /// stalled). Continuation turns after successful runs are not counted.
+    #[serde(default = "default_max_attempts")]
+    #[garde(range(min = 1))]
+    pub max_attempts: u32,
     #[serde(default = "default_max_retry_backoff_ms")]
     #[garde(range(min = 1))]
     pub retry_backoff_ms: u64,
@@ -332,6 +401,7 @@ impl Default for SchedulerConfig {
         Self {
             max_concurrent: DEFAULT_MAX_CONCURRENT,
             max_turns: DEFAULT_MAX_TURNS,
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
             retry_backoff_ms: DEFAULT_MAX_RETRY_BACKOFF_MS,
             max_concurrent_by_state: HashMap::new(),
         }
@@ -344,12 +414,16 @@ pub struct PollingConfig {
     #[serde(default = "default_poll_interval_ms")]
     #[garde(range(min = 1))]
     pub interval_ms: u64,
+    #[serde(default = "default_comment_interval_ms")]
+    #[garde(range(min = 250))]
+    pub comment_interval_ms: u64,
 }
 
 impl Default for PollingConfig {
     fn default() -> Self {
         Self {
             interval_ms: DEFAULT_POLL_INTERVAL_MS,
+            comment_interval_ms: DEFAULT_COMMENT_INTERVAL_MS,
         }
     }
 }
@@ -590,6 +664,9 @@ fn valid_state_limits(value: &HashMap<String, usize>, _: &()) -> garde::Result {
 fn default_poll_interval_ms() -> u64 {
     DEFAULT_POLL_INTERVAL_MS
 }
+fn default_comment_interval_ms() -> u64 {
+    DEFAULT_COMMENT_INTERVAL_MS
+}
 fn default_hook_timeout_ms() -> u64 {
     DEFAULT_HOOK_TIMEOUT_MS
 }
@@ -601,6 +678,9 @@ fn default_max_concurrent() -> usize {
 }
 fn default_max_turns() -> u32 {
     DEFAULT_MAX_TURNS
+}
+fn default_max_attempts() -> u32 {
+    DEFAULT_MAX_ATTEMPTS
 }
 fn default_max_retry_backoff_ms() -> u64 {
     DEFAULT_MAX_RETRY_BACKOFF_MS
@@ -667,7 +747,6 @@ fn default_linear_terminal_states() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use std::path::Path;
 
     #[test]
@@ -817,6 +896,67 @@ shell_activity_patterns: []
     }
 
     #[test]
+    fn codex_workflow_comment_poll_interval_defaults_and_validates() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert_eq!(config.polling.comment_interval_ms, 2_000);
+
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+polling:
+  comment_interval_ms: 250
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert_eq!(config.polling.comment_interval_ms, 250);
+
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+polling:
+  comment_interval_ms: 249
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+        assert!(err.to_string().contains("comment_interval_ms"));
+    }
+
+    #[test]
     fn codex_workflow_scheduler_state_limits_are_normalized_and_validated() {
         let yaml = serde_yaml::from_str(
             r#"
@@ -862,6 +1002,47 @@ scheduler:
         };
         let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
         assert!(err.to_string().contains("limit must be greater than 0"));
+    }
+
+    #[test]
+    fn codex_workflow_scheduler_max_attempts_defaults_and_validates() {
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert_eq!(config.scheduler.max_attempts, 5);
+
+        let yaml = serde_yaml::from_str(
+            r#"
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+runner:
+  kind: codex
+scheduler:
+  max_attempts: 0
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+        assert!(err.to_string().contains("max_attempts"));
     }
 
     #[test]
@@ -1043,10 +1224,7 @@ tracker:
 runner:
   kind: codex
   command: codex app-server
-  approval_policy: never
-  thread_sandbox: danger-full-access
-  turn_sandbox_policy:
-    type: dangerFullAccess
+  permission_profile: high_trust
 tracker:
   kind: github_project
   owner: acme
@@ -1061,17 +1239,46 @@ tracker:
         let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
         match config.runner {
             RunnerConfig::Codex(c) => {
-                assert_eq!(
-                    c.approval_policy,
-                    Some(JsonValue::String("never".to_string()))
-                );
-                assert_eq!(c.thread_sandbox.as_deref(), Some("danger-full-access"));
-                assert_eq!(
-                    c.turn_sandbox_policy,
-                    Some(json!({ "type": "dangerFullAccess" }))
-                );
+                assert_eq!(c.permission_profile, Some(PermissionProfile::HighTrust));
+                assert_eq!(c.resolved_permission_mode(), "never");
+                assert!(c.resolved_elicitation_grants_all());
             }
             other => panic!("expected codex, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rejects_removed_sandbox_fields_on_codex_runner() {
+        // approval_policy / thread_sandbox / turn_sandbox_policy were parsed
+        // but never enforced; they must now fail loudly instead of silently
+        // implying a sandbox that does not exist.
+        for field in [
+            "approval_policy: never",
+            "thread_sandbox: danger-full-access",
+            "turn_sandbox_policy:\n    type: dangerFullAccess",
+        ] {
+            let yaml = serde_yaml::from_str(&format!(
+                r#"
+runner:
+  kind: codex
+  command: codex app-server
+  {field}
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+"#
+            ))
+            .unwrap();
+            let def = WorkflowDefinition {
+                config: yaml,
+                prompt_template: "hello".to_string(),
+            };
+            let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
+            assert!(
+                err.to_string().contains("unknown field"),
+                "expected unknown-field error for `{field}`, got: {err}"
+            );
         }
     }
 
@@ -1100,13 +1307,77 @@ codex:
     }
 
     #[test]
-    fn rejects_permission_profile_on_runner() {
+    fn permission_profiles_parse_and_resolve_modes() {
         let yaml = serde_yaml::from_str(
             r#"
 runner:
   kind: codex
   command: codex app-server
-  permission_profile: high_trust
+  permission_profile: workspace_write
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        match config.runner {
+            RunnerConfig::Codex(c) => {
+                assert_eq!(
+                    c.permission_profile,
+                    Some(PermissionProfile::WorkspaceWrite)
+                );
+                assert_eq!(c.resolved_permission_mode(), "on-request");
+                assert!(!c.resolved_elicitation_grants_all());
+            }
+            other => panic!("expected codex, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn explicit_permission_mode_overrides_profile() {
+        let yaml = serde_yaml::from_str(
+            r#"
+runner:
+  kind: opencode
+  permission_profile: read_only
+  permission_mode: default
+tracker:
+  kind: github_project
+  owner: acme
+  project_number: 12
+"#,
+        )
+        .unwrap();
+        let def = WorkflowDefinition {
+            config: yaml,
+            prompt_template: "hello".to_string(),
+        };
+        let config = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        match config.runner {
+            RunnerConfig::Opencode(r) => {
+                assert_eq!(r.permission_profile, Some(PermissionProfile::ReadOnly));
+                assert_eq!(r.resolved_permission_mode(), "default");
+                assert!(!r.resolved_elicitation_grants_all());
+            }
+            other => panic!("expected opencode, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_permission_profile_value() {
+        let yaml = serde_yaml::from_str(
+            r#"
+runner:
+  kind: codex
+  permission_profile: root_access
 tracker:
   kind: github_project
   owner: acme
@@ -1120,7 +1391,7 @@ tracker:
         };
         let err = resolve_service_config(&def, Path::new("/tmp/WORKFLOW.md")).unwrap_err();
 
-        assert!(err.to_string().contains("permission_profile"));
+        assert!(err.to_string().contains("root_access"));
     }
 
     #[test]

@@ -358,6 +358,10 @@ query ProjectStatusField(
 
 #[async_trait]
 impl Tracker for GitHubProjectTracker {
+    async fn fetch_board_snapshot(&self) -> Result<Option<Vec<Issue>>> {
+        Ok(Some(self.fetch_all_items().await?))
+    }
+
     async fn fetch_candidate_issues(&self) -> Result<Vec<Issue>> {
         let all = self.fetch_all_items().await?;
         Ok(all
@@ -1005,6 +1009,27 @@ runner:
             };
             assert!(parse_gh_json_output::<serde_json::Value>("gh test", invalid).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn fetch_board_snapshot_returns_unfiltered_items() {
+        let fake = fake_gh(
+            r#"
+log_args "$@"
+cat <<'JSON'
+{"data":{"repositoryOwner":{"projectV2":{"url":"https://github.com/orgs/acme/projects/12","items":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PVTI_active","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","statusFieldValue":{"__typename":"ProjectV2ItemFieldSingleSelectValue","name":"Todo"},"priorityFieldValue":null,"content":{"__typename":"Issue","id":"I_1","number":1,"title":"Active issue","body":"Body","url":"https://github.com/acme/repo/issues/1","state":"OPEN","closed":false,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","repository":{"nameWithOwner":"acme/repo"},"labels":{"nodes":[]}}},{"id":"PVTI_backlog","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","statusFieldValue":{"__typename":"ProjectV2ItemFieldSingleSelectValue","name":"Backlog"},"priorityFieldValue":null,"content":{"__typename":"Issue","id":"I_2","number":2,"title":"Backlog issue","body":"Body","url":"https://github.com/acme/repo/issues/2","state":"OPEN","closed":false,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","repository":{"nameWithOwner":"acme/repo"},"labels":{"nodes":[]}}}]}}}}}
+JSON
+"#,
+        );
+        let tracker = tracker_with_gh(&fake.command);
+
+        let snapshot = tracker.fetch_board_snapshot().await.unwrap().unwrap();
+
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].id, "PVTI_active");
+        assert_eq!(snapshot[1].id, "PVTI_backlog");
+        let calls = fs::read_to_string(fake.log_path).unwrap();
+        assert_eq!(calls.lines().count(), 1);
     }
 
     #[tokio::test]

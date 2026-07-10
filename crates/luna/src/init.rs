@@ -342,6 +342,7 @@ fn render_workflow_template(context: &InitContext) -> String {
 
 polling:
   interval_ms: 30000
+  # comment_interval_ms: 2000
 
 workspace:
   root: ./.luna/workspaces
@@ -352,17 +353,19 @@ hooks:
 scheduler:
   max_concurrent: 4
   max_turns: 20
+  # Failure-class retry attempts before Luna gives up on the current run.
+  # max_attempts: 5
   retry_backoff_ms: 300000
 
 runner:
   kind: codex
   command: codex app-server
+  # Default omitted permission_profile is high_trust/full trust.
+  # permission_profile: workspace_write
+  # permission_mode overrides permission_profile when set.
+  # permission_mode: on-request
   # Alternative:
   # kind: opencode      # command: opencode acp
-  approval_policy: never
-  thread_sandbox: danger-full-access
-  turn_sandbox_policy:
-    type: dangerFullAccess
 ---
 # Luna Workflow
 
@@ -707,7 +710,8 @@ fi
         match config.runner {
             RunnerConfig::Codex(runner) => {
                 assert_eq!(runner.command, "codex app-server");
-                assert_eq!(runner.approval_policy, Some(serde_json::json!("never")));
+                assert_eq!(runner.permission_profile, None);
+                assert_eq!(runner.resolved_permission_mode(), "never");
             }
             other => panic!("expected codex runner, got {other:?}"),
         }
@@ -715,6 +719,8 @@ fi
         assert!(workflow.contains("luna show"));
         assert!(workflow.contains("luna comment"));
         assert!(workflow.contains("luna move"));
+        assert!(workflow.contains("# max_attempts: 5"));
+        assert!(workflow.contains("# comment_interval_ms: 2000"));
     }
 
     #[test]

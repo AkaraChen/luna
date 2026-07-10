@@ -1,7 +1,15 @@
-use std::{path::Path, time::Duration};
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use angel_engine_client::{
-    AngelSession, RuntimeOptionsOverrides, SendTextRequest, TurnRunEvent, create_runtime_options,
+    AngelSession, ElicitationResponse, RuntimeOptionsOverrides, SendTextRequest, TurnRunEvent,
+    create_runtime_options,
 };
 use chrono::Utc;
 use tokio::{
@@ -18,6 +26,9 @@ use crate::{
 };
 
 use super::command_line::split_command;
+
+const DRAIN_GRACE: Duration = Duration::from_secs(30);
+const CANCEL_GRACE: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug)]
 enum AngelRuntimeKind {
@@ -42,6 +53,7 @@ struct AngelRuntimeLaunchConfig {
     turn_timeout_ms: u64,
     default_reasoning_effort: Option<String>,
     default_permission_mode: String,
+    elicitation_grants_all: bool,
 }
 
 impl AngelRuntimeLaunchConfig {
@@ -52,7 +64,8 @@ impl AngelRuntimeLaunchConfig {
             args: config.args.clone(),
             turn_timeout_ms: config.turn_timeout_ms,
             default_reasoning_effort: None,
-            default_permission_mode: "never".to_string(),
+            default_permission_mode: config.resolved_permission_mode(),
+            elicitation_grants_all: config.resolved_elicitation_grants_all(),
         }
     }
 
@@ -63,7 +76,8 @@ impl AngelRuntimeLaunchConfig {
             args: config.args.clone(),
             turn_timeout_ms: config.turn_timeout_ms,
             default_reasoning_effort: None,
-            default_permission_mode: "bypassPermissions".to_string(),
+            default_permission_mode: config.resolved_permission_mode(),
+            elicitation_grants_all: config.resolved_elicitation_grants_all(),
         }
     }
 }
@@ -75,6 +89,7 @@ pub struct AngelRuntimeSession {
     issue_identifier: String,
     events: mpsc::UnboundedSender<WorkerEvent>,
     config: AngelRuntimeLaunchConfig,
+    cancel_requested: Arc<AtomicBool>,
     session_id: Option<String>,
     thread_id: Option<String>,
     turn_id: Option<String>,
@@ -124,7 +139,11 @@ struct AngelWorker {
     workspace_path: String,
     pending_comments: Vec<String>,
     event_state: AngelWorkerEventState,
+    turn_timeout_ms: u64,
     default_permission_mode: String,
+    elicitation_grants_all: bool,
+    // NOTE: worker-thread cancellation avoids requiring AngelSession to be Sync.
+    cancel_requested: Arc<AtomicBool>,
 }
 
 impl AngelRuntimeSession {
@@ -195,13 +214,15 @@ impl AngelRuntimeSession {
                 default_reasoning_effort: config.default_reasoning_effort.clone(),
                 ..RuntimeOptionsOverrides::default()
             },
-        );
+        )
+        .map_err(angel_error)?;
         let session = tokio::task::spawn_blocking(move || AngelSession::new(options))
             .await
             .map_err(|e| LunaError::Agent(format!("angel session spawn task failed: {e}")))?
             .map_err(angel_error)?;
 
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let cancel_requested = Arc::new(AtomicBool::new(false));
         let worker = AngelWorker {
             session,
             issue_id: issue_id.clone(),
@@ -210,7 +231,10 @@ impl AngelRuntimeSession {
             workspace_path: workspace_path.clone(),
             pending_comments: Vec::new(),
             event_state: AngelWorkerEventState::default(),
+            turn_timeout_ms: config.turn_timeout_ms,
             default_permission_mode: config.default_permission_mode.clone(),
+            elicitation_grants_all: config.elicitation_grants_all,
+            cancel_requested: cancel_requested.clone(),
         };
         let worker = tokio::task::spawn_blocking(move || worker.run(command_rx));
 
@@ -221,6 +245,7 @@ impl AngelRuntimeSession {
             issue_identifier,
             events,
             config,
+            cancel_requested,
             session_id: None,
             thread_id: None,
             turn_id: None,
@@ -264,6 +289,7 @@ impl AngelWorker {
                     turn_number,
                     respond,
                 } => {
+                    self.cancel_requested.store(false, Ordering::SeqCst);
                     let result = self.run_turn(prompt, turn_number);
                     let _ = respond.send(result);
                 }
@@ -321,20 +347,45 @@ impl AngelWorker {
     }
 
     fn drain_until_result(&mut self, turn_number: u32) -> Result<TurnExit> {
+        let deadline = Instant::now() + Duration::from_millis(self.turn_timeout_ms) + DRAIN_GRACE;
+        let mut cancel_issued = false;
+        let mut cancel_deadline = None;
         loop {
-            match self
+            let now = Instant::now();
+            match drain_action(
+                now,
+                deadline,
+                cancel_deadline,
+                self.cancel_requested.load(Ordering::SeqCst),
+                cancel_issued,
+            ) {
+                DrainAction::Continue => {}
+                DrainAction::IssueCancel => {
+                    if let Err(err) = self.session.cancel_turn() {
+                        warn!(issue_id = %self.issue_id, error = %err, "failed to cancel angel turn");
+                    }
+                    cancel_issued = true;
+                    cancel_deadline = Some(now + CANCEL_GRACE);
+                }
+                DrainAction::GiveUp => {
+                    if !cancel_issued && let Err(err) = self.session.cancel_turn() {
+                        warn!(issue_id = %self.issue_id, error = %err, "failed to cancel angel turn after drain deadline");
+                    }
+                    return Err(LunaError::Agent(
+                        "angel turn drain deadline exceeded".to_string(),
+                    ));
+                }
+            }
+            if let Some(event) = self
                 .session
                 .next_turn_event(Duration::from_millis(250))
                 .map_err(angel_error)?
             {
-                Some(event) => {
-                    if matches!(event, TurnRunEvent::Result { .. }) {
-                        self.handle_turn_event(event, turn_number)?;
-                        return Ok(TurnExit::Completed);
-                    }
+                if matches!(event, TurnRunEvent::Result { .. }) {
                     self.handle_turn_event(event, turn_number)?;
+                    return Ok(TurnExit::Completed);
                 }
-                None => continue,
+                self.handle_turn_event(event, turn_number)?;
             }
         }
     }
@@ -354,12 +405,31 @@ impl AngelWorker {
         match projected {
             ProjectedAngelEvent::Handled => {}
             ProjectedAngelEvent::ResolveElicitation(elicitation_id) => {
+                let response = if self.elicitation_grants_all {
+                    ElicitationResponse::AllowForSession
+                } else {
+                    let _ = self.events.send(WorkerEvent::Session(SessionUpdate {
+                        issue_id: self.issue_id.clone(),
+                        issue_identifier: self.issue_identifier.clone(),
+                        event: "elicitation/denied".to_string(),
+                        timestamp: Utc::now(),
+                        session_id: self.event_state.session_id.clone(),
+                        thread_id: self.event_state.thread_id.clone(),
+                        turn_id: self.event_state.turn_id.clone(),
+                        agent_pid: None,
+                        message: Some(
+                            "permission elicitation denied by runner permission profile"
+                                .to_string(),
+                        ),
+                        usage: None,
+                        rate_limits: None,
+                        turn_count: Some(turn_number),
+                    }));
+                    ElicitationResponse::Deny
+                };
                 let events = self
                     .session
-                    .resolve_elicitation(
-                        elicitation_id,
-                        angel_engine_client::ElicitationResponse::AllowForSession,
-                    )
+                    .resolve_elicitation(elicitation_id, response)
                     .map_err(angel_error)?;
                 for event in events {
                     self.handle_turn_event(event, turn_number)?;
@@ -391,11 +461,17 @@ fn project_turn_event(
             );
             ProjectedAngelEvent::Handled
         }
-        TurnRunEvent::ActionObserved { action, .. }
-        | TurnRunEvent::ActionUpdated { action, .. } => {
-            set_projected_turn_id(action.turn_id.clone(), turn_number, state, &context);
-            if action.kind == "command" && action.phase == "completed" && action.error.is_none() {
-                if let Some(command) = action.input_summary.or(action.raw_input) {
+        TurnRunEvent::ActionObserved { message_part, .. }
+        | TurnRunEvent::ActionUpdated { message_part, .. } => {
+            if let Some(action) = message_part.action {
+                if let Some(turn_id) = action.turn_id.clone() {
+                    set_projected_turn_id(turn_id, turn_number, state, &context);
+                }
+                if action.kind.as_deref() == Some("command")
+                    && action.phase == "completed"
+                    && action.error.is_none()
+                    && let Some(command) = action.input_summary.or(action.raw_input)
+                {
                     let _ =
                         context
                             .events
@@ -415,14 +491,14 @@ fn project_turn_event(
             set_projected_turn_id(turn_id, turn_number, state, &context);
             ProjectedAngelEvent::Handled
         }
-        TurnRunEvent::Elicitation { elicitation, .. } => {
-            set_projected_turn_id(
-                elicitation.turn_id.unwrap_or_default(),
-                turn_number,
-                state,
-                &context,
-            );
-            ProjectedAngelEvent::ResolveElicitation(elicitation.id)
+        TurnRunEvent::Elicitation { message_part, .. } => {
+            let Some(action) = message_part.action else {
+                return ProjectedAngelEvent::Handled;
+            };
+            if let Some(turn_id) = action.turn_id.clone() {
+                set_projected_turn_id(turn_id, turn_number, state, &context);
+            }
+            ProjectedAngelEvent::ResolveElicitation(action.elicitation_id.unwrap_or(action.id))
         }
         TurnRunEvent::PlanUpdated { turn_id, .. } => {
             if let Some(turn_id) = turn_id {
@@ -534,6 +610,7 @@ impl crate::agent::AgentSession for AngelRuntimeSession {
         stop_rx: &mut tokio::sync::watch::Receiver<Option<StopReason>>,
     ) -> Result<TurnExit> {
         let (tx, rx) = oneshot::channel();
+        self.cancel_requested.store(false, Ordering::SeqCst);
         self.command_tx
             .send(AngelCommand::RunTurn {
                 prompt: prompt.to_string(),
@@ -549,12 +626,15 @@ impl crate::agent::AgentSession for AngelRuntimeSession {
             changed = stop_rx.changed() => {
                 if changed.is_ok() {
                     let reason = stop_rx.borrow().clone().unwrap_or(StopReason::Shutdown);
+                    self.cancel_requested.store(true, Ordering::SeqCst);
                     let _ = self.command_tx.send(AngelCommand::Cancel);
                     return Ok(TurnExit::Stopped(reason));
                 }
+                self.cancel_requested.store(true, Ordering::SeqCst);
                 Ok(TurnExit::Stopped(StopReason::Shutdown))
             }
             _ = tokio::time::sleep(Duration::from_millis(self.config.turn_timeout_ms)) => {
+                self.cancel_requested.store(true, Ordering::SeqCst);
                 let _ = self.command_tx.send(AngelCommand::Cancel);
                 Ok(TurnExit::TimedOut)
             }
@@ -574,9 +654,44 @@ impl crate::agent::AgentSession for AngelRuntimeSession {
     }
 
     async fn shutdown(&mut self) {
+        self.cancel_requested.store(true, Ordering::SeqCst);
         let _ = self.command_tx.send(AngelCommand::Shutdown);
-        self.worker.abort();
+        let mut worker = std::mem::replace(&mut self.worker, tokio::spawn(async {}));
+        tokio::select! {
+            result = &mut worker => {
+                if let Err(err) = result {
+                    warn!(error = %err, "angel worker shutdown join failed");
+                }
+            }
+            _ = tokio::time::sleep(DRAIN_GRACE + Duration::from_secs(5)) => {
+                warn!("angel worker did not shut down before grace timeout; detaching blocking thread");
+                worker.abort();
+            }
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DrainAction {
+    Continue,
+    IssueCancel,
+    GiveUp,
+}
+
+fn drain_action(
+    now: Instant,
+    deadline: Instant,
+    cancel_deadline: Option<Instant>,
+    cancel_requested: bool,
+    cancel_issued: bool,
+) -> DrainAction {
+    if cancel_requested && !cancel_issued {
+        return DrainAction::IssueCancel;
+    }
+    if cancel_deadline.is_some_and(|deadline| now >= deadline) || now >= deadline {
+        return DrainAction::GiveUp;
+    }
+    DrainAction::Continue
 }
 
 fn angel_error(error: angel_engine_client::ClientError) -> LunaError {
@@ -595,19 +710,21 @@ fn truncate_message(message: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use angel_engine_client::TurnRunEvent;
     use serde_json::{Value, json};
     use tokio::sync::{mpsc, watch};
 
     use crate::{
         agent::{AgentSession, StopReason, TurnExit, WorkerEvent},
-        config::CodexRunner,
+        config::{CodexRunner, PermissionProfile},
     };
 
     use super::{
         AngelCommand, AngelEventContext, AngelRuntimeKind, AngelRuntimeLaunchConfig,
-        AngelRuntimeSession, AngelWorkerEventState, ProjectedAngelEvent, project_turn_event,
-        truncate_message,
+        AngelRuntimeSession, AngelWorkerEventState, DrainAction, ProjectedAngelEvent, drain_action,
+        project_turn_event, truncate_message,
     };
 
     #[test]
@@ -615,9 +732,8 @@ mod tests {
         let config = CodexRunner {
             command: "codex app-server".to_string(),
             args: vec!["--experimental".to_string()],
-            approval_policy: None,
-            thread_sandbox: None,
-            turn_sandbox_policy: None,
+            permission_profile: Some(PermissionProfile::WorkspaceWrite),
+            permission_mode: None,
             turn_timeout_ms: 1234,
             read_timeout_ms: 5000,
             stall_timeout_ms: 300_000,
@@ -630,8 +746,19 @@ mod tests {
         assert_eq!(launch.command, "codex app-server");
         assert_eq!(launch.args, vec!["--experimental"]);
         assert_eq!(launch.turn_timeout_ms, 1234);
-        assert_eq!(launch.default_permission_mode, "never");
+        assert_eq!(launch.default_permission_mode, "on-request");
+        assert!(!launch.elicitation_grants_all);
         assert_eq!(launch.default_reasoning_effort, None);
+    }
+
+    #[test]
+    fn codex_launch_config_preserves_high_trust_defaults() {
+        let config = CodexRunner::default();
+
+        let launch = AngelRuntimeLaunchConfig::codex(&config);
+
+        assert_eq!(launch.default_permission_mode, "never");
+        assert!(launch.elicitation_grants_all);
     }
 
     fn codex_session_with_command_tx(
@@ -641,9 +768,7 @@ mod tests {
     ) -> AngelRuntimeSession {
         AngelRuntimeSession {
             command_tx,
-            worker: tokio::spawn(async {
-                std::future::pending::<()>().await;
-            }),
+            worker: tokio::spawn(async {}),
             issue_id: "issue-1".to_string(),
             issue_identifier: "ASAHI-1".to_string(),
             events,
@@ -653,8 +778,10 @@ mod tests {
                 args: Vec::new(),
                 turn_timeout_ms,
                 default_reasoning_effort: None,
-                default_permission_mode: "never".to_string(),
+                default_permission_mode: CodexRunner::default().resolved_permission_mode(),
+                elicitation_grants_all: true,
             },
+            cancel_requested: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             session_id: Some("session".to_string()),
             thread_id: Some("thread".to_string()),
             turn_id: Some("turn".to_string()),
@@ -667,6 +794,13 @@ mod tests {
 
     fn message_part_json() -> Value {
         json!({"type": "text", "text": ""})
+    }
+
+    fn action_message_part_json(action: Value) -> Value {
+        json!({
+            "type": "tool-call",
+            "action": action
+        })
     }
 
     fn command_action_json(
@@ -688,6 +822,34 @@ mod tests {
             "outputText": "",
             "output": [],
             "error": error
+        })
+    }
+
+    fn elicitation_action_json(id: &str, turn_id: &str, kind: &str) -> Value {
+        let raw_input = json!({
+            "id": id,
+            "turnId": turn_id,
+            "actionId": null,
+            "kind": kind,
+            "phase": "open",
+            "title": null,
+            "body": null,
+            "choices": [],
+            "questions": []
+        });
+
+        json!({
+            "id": id,
+            "turnId": turn_id,
+            "elicitationId": id,
+            "kind": "elicitation",
+            "phase": "awaitingDecision",
+            "title": null,
+            "inputSummary": null,
+            "rawInput": raw_input.to_string(),
+            "outputText": "",
+            "output": [],
+            "error": null
         })
     }
 
@@ -752,6 +914,11 @@ mod tests {
                 }
             },
             "availableCommands": [],
+            "skills": {
+                "canList": false,
+                "canMention": false,
+                "skills": []
+            },
             "usage": {
                 "used": used_tokens,
                 "size": 1000,
@@ -777,6 +944,50 @@ mod tests {
                 workspace_path: "/tmp/luna-workspace",
             },
         )
+    }
+
+    #[test]
+    fn drain_action_continues_before_deadline() {
+        let now = Instant::now();
+
+        assert_eq!(
+            drain_action(now, now + Duration::from_secs(1), None, false, false),
+            DrainAction::Continue
+        );
+    }
+
+    #[test]
+    fn drain_action_issues_cancel_once() {
+        let now = Instant::now();
+
+        assert_eq!(
+            drain_action(now, now + Duration::from_secs(1), None, true, false),
+            DrainAction::IssueCancel
+        );
+        assert_eq!(
+            drain_action(now, now + Duration::from_secs(1), None, true, true),
+            DrainAction::Continue
+        );
+    }
+
+    #[test]
+    fn drain_action_gives_up_after_cancel_grace_or_deadline() {
+        let now = Instant::now();
+
+        assert_eq!(
+            drain_action(
+                now,
+                now + Duration::from_secs(30),
+                Some(now - Duration::from_millis(1)),
+                true,
+                true,
+            ),
+            DrainAction::GiveUp
+        );
+        assert_eq!(
+            drain_action(now, now, None, false, false),
+            DrainAction::GiveUp
+        );
     }
 
     fn expect_session_event(
@@ -822,14 +1033,13 @@ mod tests {
         let projected = project(
             turn_event(json!({
                 "type": "action_observed",
-                "action": command_action_json(
-                    "command",
-                    "completed",
-                    Some("gh pr create"),
-                    Some("ignored raw input"),
-                    None
-                ),
-                "messagePart": message_part_json()
+                "messagePart": action_message_part_json(command_action_json(
+                        "command",
+                        "completed",
+                        Some("gh pr create"),
+                        Some("ignored raw input"),
+                        None
+                    ))
             })),
             4,
             &mut state,
@@ -892,18 +1102,17 @@ mod tests {
         let projected = project(
             turn_event(json!({
                 "type": "action_updated",
-                "action": command_action_json(
-                    "command",
-                    "completed",
-                    Some("gh pr create"),
-                    None,
-                    Some(json!({
-                        "code": "failed",
-                        "message": "command failed",
-                        "recoverable": true
-                    }))
-                ),
-                "messagePart": message_part_json()
+                "messagePart": action_message_part_json(command_action_json(
+                        "command",
+                        "completed",
+                        Some("gh pr create"),
+                        None,
+                        Some(json!({
+                            "code": "failed",
+                            "message": "command failed",
+                            "recoverable": true
+                        }))
+                    ))
             })),
             1,
             &mut state,
@@ -917,8 +1126,7 @@ mod tests {
         let projected = project(
             turn_event(json!({
                 "type": "action_updated",
-                "action": command_action_json("read", "completed", Some("cat README.md"), None, None),
-                "messagePart": message_part_json()
+                "messagePart": action_message_part_json(command_action_json("read", "completed", Some("cat README.md"), None, None))
             })),
             1,
             &mut state,
@@ -1009,18 +1217,11 @@ mod tests {
         let projected = project(
             turn_event(json!({
                 "type": "elicitation",
-                "elicitation": {
-                    "id": "approval-1",
-                    "turnId": "turn-approval",
-                    "actionId": null,
-                    "kind": "approval",
-                    "phase": "open",
-                    "title": null,
-                    "body": null,
-                    "choices": [],
-                    "questions": []
-                },
-                "messagePart": message_part_json()
+                "messagePart": action_message_part_json(elicitation_action_json(
+                    "approval-1",
+                    "turn-approval",
+                    "approval"
+                ))
             })),
             2,
             &mut state,

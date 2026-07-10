@@ -2,6 +2,7 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
     path::PathBuf,
+    sync::Arc,
 };
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -19,7 +20,7 @@ use crate::{
     error::{LunaError, Result},
     model::{Issue, TokenTotals},
     shell_command::ShellActivityInspection,
-    tracker::build_tracker,
+    tracker::{Tracker, build_tracker},
     workflow::{LoadedWorkflow, WorkflowStore, parse_workflow_definition},
     workspace::WorkspaceManager,
 };
@@ -63,7 +64,8 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
     ));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    let mut comment_ticker = interval(Duration::from_secs(2));
+    let mut comment_interval_ms = initial.config.polling.comment_interval_ms.max(250);
+    let mut comment_ticker = interval(Duration::from_millis(comment_interval_ms));
     comment_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
@@ -84,6 +86,13 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
                 let next = Instant::now() + Duration::from_millis(store.current().config.polling.interval_ms.max(1));
                 ticker = interval_at(next, Duration::from_millis(store.current().config.polling.interval_ms.max(1)));
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let next_comment_interval_ms = store.current().config.polling.comment_interval_ms.max(250);
+                if next_comment_interval_ms != comment_interval_ms {
+                    comment_interval_ms = next_comment_interval_ms;
+                    let next = Instant::now() + Duration::from_millis(comment_interval_ms);
+                    comment_ticker = interval_at(next, Duration::from_millis(comment_interval_ms));
+                    comment_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                }
             }
             Some(event) = events_rx.recv() => {
                 handle_worker_event(event, &mut store, &mut state, &events_tx).await;
@@ -92,6 +101,10 @@ pub async fn run(workflow_path: PathBuf) -> Result<()> {
                 if let Err(err) = poll_comments(&mut store, &mut state, &events_tx).await {
                     error!(error = %err, "comment poll failed");
                 }
+                comment_interval_ms = store.current().config.polling.comment_interval_ms.max(250);
+                let next = Instant::now() + Duration::from_millis(comment_interval_ms);
+                comment_ticker = interval_at(next, Duration::from_millis(comment_interval_ms));
+                comment_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             }
         }
     }
@@ -104,9 +117,6 @@ async fn on_tick(
     state: &mut OrchestratorState,
     events_tx: &mpsc::UnboundedSender<WorkerEvent>,
 ) -> Result<()> {
-    let current = store.current().clone();
-    reconcile_running_issues(state, &current, events_tx).await;
-
     let dispatch_enabled = match store.reload_if_changed() {
         Ok(true) => {
             info!(
@@ -114,6 +124,7 @@ async fn on_tick(
                 shell_activity_patterns = ?store.current().config.shell_activity_patterns,
                 "reloaded workflow configuration"
             );
+            state.exhausted_attempts.clear();
             true
         }
         Ok(false) => true,
@@ -127,25 +138,52 @@ async fn on_tick(
     state.poll_interval_ms = workflow.config.polling.interval_ms;
     state.max_concurrent_agents = workflow.config.scheduler.max_concurrent;
 
-    if !dispatch_enabled {
-        return Ok(());
-    }
-
     let tracker = match build_tracker(&workflow.config.tracker) {
         Ok(client) => client,
         Err(err) => {
+            reconcile_stalled_runs(state, &workflow.config);
             error!(error = %err, "tracker client initialization failed");
             return Ok(());
         }
     };
 
-    let candidates = match tracker.fetch_candidate_issues().await {
-        Ok(issues) => issues,
+    let board_snapshot = match tracker.fetch_board_snapshot().await {
+        Ok(snapshot) => snapshot,
         Err(err) => {
-            error!(error = %err, "candidate issue fetch failed");
+            reconcile_stalled_runs(state, &workflow.config);
+            warn!(error = %err, "board snapshot fetch failed; keeping workers running and skipping dispatch");
             return Ok(());
         }
     };
+
+    reconcile_running_issues(
+        state,
+        &workflow,
+        tracker.as_ref(),
+        board_snapshot.as_deref(),
+        events_tx,
+    )
+    .await;
+
+    if !dispatch_enabled {
+        return Ok(());
+    }
+
+    let candidates = match board_snapshot.as_deref() {
+        Some(snapshot) => snapshot
+            .iter()
+            .filter(|issue| workflow.config.tracker.is_active_state(&issue.state))
+            .cloned()
+            .collect(),
+        None => match tracker.fetch_candidate_issues().await {
+            Ok(issues) => issues,
+            Err(err) => {
+                error!(error = %err, "candidate issue fetch failed");
+                return Ok(());
+            }
+        },
+    };
+    sync_exhausted_attempts_with_candidates(state, &candidates);
 
     info!(
         candidate_count = candidates.len(),
@@ -333,38 +371,35 @@ async fn handle_worker_exit(
             );
         }
         WorkerOutcome::Failed(reason) => {
-            schedule_retry(
+            schedule_failure_retry(
                 state,
                 workflow.config.clone(),
                 exit.issue_id,
-                entry.retry_attempt.unwrap_or(0) + 1,
-                Some(identifier),
-                Some(reason),
-                RetryDelay::Backoff,
+                identifier,
+                entry.retry_attempt,
+                reason,
                 events_tx,
             );
         }
         WorkerOutcome::TimedOut => {
-            schedule_retry(
+            schedule_failure_retry(
                 state,
                 workflow.config.clone(),
                 exit.issue_id,
-                entry.retry_attempt.unwrap_or(0) + 1,
-                Some(identifier),
-                Some("turn_timeout".to_string()),
-                RetryDelay::Backoff,
+                identifier,
+                entry.retry_attempt,
+                "turn_timeout".to_string(),
                 events_tx,
             );
         }
         WorkerOutcome::Stalled => {
-            schedule_retry(
+            schedule_failure_retry(
                 state,
                 workflow.config.clone(),
                 exit.issue_id,
-                entry.retry_attempt.unwrap_or(0) + 1,
-                Some(identifier),
-                Some("stalled".to_string()),
-                RetryDelay::Backoff,
+                identifier,
+                entry.retry_attempt,
+                "stalled".to_string(),
                 events_tx,
             );
         }
@@ -372,6 +407,41 @@ async fn handle_worker_exit(
             state.claimed.remove(&exit.issue_id);
         }
     }
+}
+
+fn schedule_failure_retry(
+    state: &mut OrchestratorState,
+    config: ServiceConfig,
+    issue_id: String,
+    identifier: String,
+    retry_attempt: Option<u32>,
+    reason: String,
+    events_tx: &mpsc::UnboundedSender<WorkerEvent>,
+) {
+    let next_attempt = retry_attempt.unwrap_or(0) + 1;
+    if next_attempt > config.scheduler.max_attempts {
+        error!(
+            issue_id = %issue_id,
+            identifier = %identifier,
+            attempts = next_attempt - 1,
+            reason = %reason,
+            "issue exhausted retry attempts; giving up"
+        );
+        state.claimed.remove(&issue_id);
+        state.exhausted_attempts.insert(issue_id);
+        return;
+    }
+
+    schedule_retry(
+        state,
+        config,
+        issue_id,
+        next_attempt,
+        Some(identifier),
+        Some(reason),
+        RetryDelay::Backoff,
+        events_tx,
+    );
 }
 
 async fn handle_command_executed(
@@ -510,11 +580,12 @@ async fn handle_retry_due(
         Ok(issues) => issues,
         Err(err) => {
             warn!(issue_id = %issue_id, error = %err, "retry poll failed");
+            // A flaky tracker poll is not an agent-run failure; keep the failure budget unchanged.
             schedule_retry(
                 state,
                 workflow.config.clone(),
                 issue_id,
-                entry.attempt + 1,
+                entry.attempt,
                 Some(entry.identifier),
                 Some("retry poll failed".to_string()),
                 RetryDelay::Backoff,
@@ -538,11 +609,12 @@ async fn handle_retry_due(
     if available_global_slots(state, &workflow.config) == 0
         || !has_available_state_slot(&issue.state, state, &workflow.config)
     {
+        // Waiting for capacity is not an agent-run failure; keep the failure budget unchanged.
         schedule_retry(
             state,
             workflow.config.clone(),
             entry.issue_id,
-            entry.attempt + 1,
+            entry.attempt,
             Some(issue.identifier),
             Some("no available orchestrator slots".to_string()),
             RetryDelay::Backoff,
@@ -565,6 +637,7 @@ fn dispatch_issue(
     let identifier = issue.identifier.clone();
     let attempt_num = attempt.unwrap_or(0);
     info!(issue_id = %issue_id, identifier = %identifier, attempt = attempt_num, "agent spawned");
+    state.exhausted_attempts.remove(&issue_id);
     let (stop_tx, stop_rx) = watch::channel(None);
     let (comment_tx, comment_rx) = mpsc::channel::<String>(16);
     let worker = tokio::spawn(run_agent_attempt(
@@ -613,6 +686,8 @@ fn dispatch_issue(
 async fn reconcile_running_issues(
     state: &mut OrchestratorState,
     workflow: &LoadedWorkflow,
+    tracker: &dyn Tracker,
+    board_snapshot: Option<&[Issue]>,
     _events_tx: &mpsc::UnboundedSender<WorkerEvent>,
 ) {
     reconcile_stalled_runs(state, &workflow.config);
@@ -621,20 +696,21 @@ async fn reconcile_running_issues(
         return;
     }
 
-    let tracker = match build_tracker(&workflow.config.tracker) {
-        Ok(client) => client,
-        Err(err) => {
-            warn!(error = %err, "tracker client init failed during reconciliation");
-            return;
-        }
-    };
-
     let ids = state.running.keys().cloned().collect::<Vec<_>>();
-    let refreshed = match tracker.fetch_issue_states_by_ids(&ids).await {
-        Ok(issues) => issues,
-        Err(err) => {
-            warn!(error = %err, "issue state refresh failed; keeping workers running");
-            return;
+    let refreshed = if let Some(snapshot) = board_snapshot {
+        let running_ids = ids.iter().cloned().collect::<HashSet<_>>();
+        snapshot
+            .iter()
+            .filter(|issue| running_ids.contains(&issue.id))
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        match tracker.fetch_issue_states_by_ids(&ids).await {
+            Ok(issues) => issues,
+            Err(err) => {
+                warn!(error = %err, "issue state refresh failed; keeping workers running");
+                return;
+            }
         }
     };
 
@@ -693,6 +769,9 @@ fn should_dispatch(issue: &Issue, state: &OrchestratorState, config: &ServiceCon
     if state.running.contains_key(&issue.id) || state.claimed.contains(&issue.id) {
         return false;
     }
+    if state.exhausted_attempts.contains(&issue.id) {
+        return false;
+    }
     if available_global_slots(state, config) == 0
         || !has_available_state_slot(&issue.state, state, config)
     {
@@ -709,6 +788,13 @@ fn should_dispatch(issue: &Issue, state: &OrchestratorState, config: &ServiceCon
         return false;
     }
     true
+}
+
+fn sync_exhausted_attempts_with_candidates(state: &mut OrchestratorState, candidates: &[Issue]) {
+    let active_ids: HashSet<&str> = candidates.iter().map(|issue| issue.id.as_str()).collect();
+    state
+        .exhausted_attempts
+        .retain(|issue_id| active_ids.contains(issue_id.as_str()));
 }
 
 fn sort_issues_for_dispatch(left: &Issue, right: &Issue) -> Ordering {
@@ -843,22 +929,62 @@ async fn poll_comments(
     }
 
     let workflow = store.current().clone();
-    let tracker = build_tracker(&workflow.config.tracker)?;
+    let tracker: Arc<dyn Tracker> = Arc::from(build_tracker(&workflow.config.tracker)?);
+    let running = state
+        .running
+        .iter()
+        .map(|(issue_id, entry)| (issue_id.clone(), entry.issue.clone()))
+        .collect::<Vec<_>>();
+    let mut handles = Vec::with_capacity(running.len());
+    for (issue_id, issue) in running {
+        let tracker = Arc::clone(&tracker);
+        handles.push(tokio::spawn(async move {
+            let comments = tracker.fetch_comments(&issue).await;
+            (issue_id, comments)
+        }));
+    }
 
-    for entry in state.running.values_mut() {
-        let comments = match tracker.fetch_comments(&entry.issue).await {
-            Ok(c) => c,
+    for handle in handles {
+        let (issue_id, comments) = match handle.await {
+            Ok(result) => result,
             Err(err) => {
-                warn!(issue_id = %entry.issue.id, error = %err, "failed to fetch comments");
+                warn!(error = %err, "comment fetch task failed");
                 continue;
             }
         };
 
+        let comments = match comments {
+            Ok(comments) => comments,
+            Err(err) => {
+                warn!(issue_id = %issue_id, error = %err, "failed to fetch comments");
+                continue;
+            }
+        };
+
+        let Some(entry) = state.running.get_mut(&issue_id) else {
+            continue;
+        };
+
         for comment in comments {
-            if entry.seen_comment_ids.insert(comment.id.clone()) {
-                if let Some(tx) = entry.comment_tx.take() {
-                    let _ = tx.send(comment.body).await;
-                    entry.comment_tx = Some(tx);
+            if entry.seen_comment_ids.contains(&comment.id) {
+                continue;
+            }
+            let send_result = match entry.comment_tx.as_ref() {
+                Some(tx) => tx.try_send(comment.body.clone()),
+                None => break,
+            };
+            match send_result {
+                Ok(()) => {
+                    // Mark seen only after delivery; full channels redeliver on the next poll.
+                    entry.seen_comment_ids.insert(comment.id.clone());
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    warn!(issue_id = %entry.issue.id, identifier = %entry.identifier, "agent comment channel full; will redeliver next poll");
+                    break;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    entry.comment_tx = None;
+                    break;
                 }
             }
         }
@@ -884,6 +1010,7 @@ struct OrchestratorState {
     running: HashMap<String, RunningEntry>,
     claimed: HashSet<String>,
     retry_attempts: HashMap<String, RetryEntry>,
+    exhausted_attempts: HashSet<String>,
     completed: HashSet<String>,
     agent_totals: TokenTotals,
     agent_rate_limits: Option<serde_json::Value>,
@@ -897,6 +1024,7 @@ impl OrchestratorState {
             running: HashMap::new(),
             claimed: HashSet::new(),
             retry_attempts: HashMap::new(),
+            exhausted_attempts: HashSet::new(),
             completed: HashSet::new(),
             agent_totals: TokenTotals::default(),
             agent_rate_limits: None,
@@ -1067,6 +1195,7 @@ async fn wait_for_asahi(endpoint: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::HashSet,
         path::{Path, PathBuf},
         time::Duration as StdDuration,
     };
@@ -1080,6 +1209,7 @@ mod tests {
         config::{RunnerConfig, ServiceConfig, TrackerConfig, resolve_service_config},
         model::{BlockerRef, Issue, ProjectRef, WorkflowDefinition},
         test_support::{MockHttpServer, MockResponse, issue_json},
+        tracker::build_tracker,
         workflow::WorkflowStore,
     };
 
@@ -2083,6 +2213,182 @@ Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
     }
 
     #[tokio::test]
+    async fn worker_exit_gives_up_after_max_attempts() {
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) = asahi_endpoint_codex_workflow(
+            "http://127.0.0.1:9",
+            workspace_temp.path().join("workspaces"),
+        );
+        let mut workflow = store.current().clone();
+        workflow.config.scheduler.max_attempts = 2;
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let mut state = OrchestratorState::new(&workflow.config);
+
+        let (mut entry, _stop_rx) = running_entry(issue("1", "ASAHI-1", "Todo"));
+        entry.retry_attempt = Some(2);
+        state.claimed.insert("1".to_string());
+        state.running.insert("1".to_string(), entry);
+
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "1".to_string(),
+                issue_identifier: "ASAHI-1".to_string(),
+                outcome: WorkerOutcome::Failed("boom".to_string()),
+                runtime_seconds: 1.0,
+                error: Some("boom".to_string()),
+            },
+            workflow,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        assert!(!state.retry_attempts.contains_key("1"));
+        assert!(!state.claimed.contains("1"));
+        assert!(state.exhausted_attempts.contains("1"));
+    }
+
+    #[tokio::test]
+    async fn worker_exit_retries_below_max_attempts() {
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) = asahi_endpoint_codex_workflow(
+            "http://127.0.0.1:9",
+            workspace_temp.path().join("workspaces"),
+        );
+        let mut workflow = store.current().clone();
+        workflow.config.scheduler.max_attempts = 2;
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let mut state = OrchestratorState::new(&workflow.config);
+
+        let (mut entry, _stop_rx) = running_entry(issue("1", "ASAHI-1", "Todo"));
+        entry.retry_attempt = Some(1);
+        state.running.insert("1".to_string(), entry);
+
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "1".to_string(),
+                issue_identifier: "ASAHI-1".to_string(),
+                outcome: WorkerOutcome::Failed("boom".to_string()),
+                runtime_seconds: 1.0,
+                error: Some("boom".to_string()),
+            },
+            workflow,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        let retry = state.retry_attempts.get("1").unwrap();
+        assert_eq!(retry.attempt, 2);
+        retry.task.abort();
+    }
+
+    #[tokio::test]
+    async fn continuation_turns_are_not_capped() {
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) = asahi_endpoint_codex_workflow(
+            "http://127.0.0.1:9",
+            workspace_temp.path().join("workspaces"),
+        );
+        let mut workflow = store.current().clone();
+        workflow.config.scheduler.max_attempts = 1;
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let mut state = OrchestratorState::new(&workflow.config);
+
+        let (mut entry, _stop_rx) = running_entry(issue("1", "ASAHI-1", "Todo"));
+        entry.retry_attempt = Some(99);
+        state.running.insert("1".to_string(), entry);
+
+        handle_worker_exit(
+            WorkerExit {
+                issue_id: "1".to_string(),
+                issue_identifier: "ASAHI-1".to_string(),
+                outcome: WorkerOutcome::Normal,
+                runtime_seconds: 1.0,
+                error: None,
+            },
+            workflow,
+            &mut state,
+            &events_tx,
+        )
+        .await;
+
+        assert!(state.completed.contains("1"));
+        let retry = state.retry_attempts.get("1").unwrap();
+        assert_eq!(retry.attempt, 1);
+        retry.task.abort();
+    }
+
+    #[tokio::test]
+    async fn slot_wait_does_not_consume_budget() {
+        let server = MockHttpServer::spawn(vec![MockResponse::json(
+            200,
+            json!({
+                "issues": [issue_json("1", "ASAHI-1", "Todo", None)]
+            }),
+        )])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut workflow = store.current().clone();
+        workflow.config.scheduler.max_concurrent = 1;
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let mut state = OrchestratorState::new(&workflow.config);
+
+        let (busy_entry, _stop_rx) = running_entry(issue("busy", "ASAHI-busy", "Todo"));
+        state.running.insert("busy".to_string(), busy_entry);
+        state.claimed.insert("1".to_string());
+        state
+            .retry_attempts
+            .insert("1".to_string(), retry_entry("1", "ASAHI-1", 4));
+
+        handle_retry_due("1".to_string(), workflow, &mut state, &events_tx).await;
+
+        assert_eq!(state.retry_attempts.get("1").unwrap().attempt, 4);
+        state.retry_attempts.get("1").unwrap().task.abort();
+        state.running.get("busy").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn exhausted_issue_is_not_redispatched_until_it_leaves_active_candidates() {
+        let active_issue = json!({
+            "issues": [issue_json("1", "ASAHI-1", "Todo", None)]
+        });
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(200, active_issue.clone()),
+            MockResponse::json(200, json!({ "issues": [] })),
+            MockResponse::json(200, active_issue),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, mut store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut state = OrchestratorState::new(&store.current().config);
+        state.exhausted_attempts.insert("1".to_string());
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("first tick");
+        assert!(!state.running.contains_key("1"));
+        assert!(state.exhausted_attempts.contains("1"));
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("second tick");
+        assert!(!state.exhausted_attempts.contains("1"));
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("third tick");
+        assert!(state.running.contains_key("1"));
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
     async fn retry_due_dispatches_active_codex_issue_and_releases_missing_issue() {
         let server = MockHttpServer::spawn(vec![
             MockResponse::json(
@@ -2241,6 +2547,69 @@ Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
             .expect("missing comment sender is ignored");
 
         assert!(comment_rx.try_recv().is_err());
+        assert!(state.running.get("1").unwrap().seen_comment_ids.is_empty());
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].target, "/api/issues/1/comments");
+        assert_eq!(requests[1].target, "/api/issues/1/comments");
+        state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_comments_redelivers_after_comment_channel_was_full() {
+        let response = json!({
+            "comments": [
+                {
+                    "id": "c1",
+                    "issue_id": "1",
+                    "body": "redelivered",
+                    "created_at": "2026-01-01T00:00:00Z"
+                }
+            ]
+        });
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(200, response.clone()),
+            MockResponse::json(200, response),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, mut store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry, mut comment_rx, _stop_rx) =
+            running_entry_with_comment_rx(issue("1", "ASAHI-1", "Todo"));
+        let comment_tx = entry.comment_tx.as_ref().unwrap().clone();
+        for index in 0..8 {
+            comment_tx
+                .try_send(format!("filler-{index}"))
+                .expect("fill comment channel");
+        }
+        state.running.insert("1".to_string(), entry);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("first poll");
+
+        assert!(
+            !state
+                .running
+                .get("1")
+                .unwrap()
+                .seen_comment_ids
+                .contains("c1")
+        );
+        for index in 0..8 {
+            assert_eq!(comment_rx.try_recv().unwrap(), format!("filler-{index}"));
+        }
+        assert!(comment_rx.try_recv().is_err());
+
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("second poll");
+
+        assert_eq!(comment_rx.try_recv().unwrap(), "redelivered");
         assert!(
             state
                 .running
@@ -2254,6 +2623,61 @@ Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
         assert_eq!(requests[0].target, "/api/issues/1/comments");
         assert_eq!(requests[1].target, "/api/issues/1/comments");
         state.running.get("1").unwrap().worker.abort();
+    }
+
+    #[tokio::test]
+    async fn poll_comments_fetches_all_running_issues_when_one_fetch_errors() {
+        let server = MockHttpServer::spawn(vec![
+            MockResponse::json(500, json!({"error": "boom"})),
+            MockResponse::json(
+                200,
+                json!({
+                    "comments": [
+                        {
+                            "id": "c2",
+                            "issue_id": "2",
+                            "body": "survivor",
+                            "created_at": "2026-01-02T00:00:00Z"
+                        }
+                    ]
+                }),
+            ),
+        ])
+        .await;
+        let endpoint = server.endpoint.clone();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let (_temp, mut store) =
+            asahi_endpoint_codex_workflow(&endpoint, workspace_temp.path().join("workspaces"));
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (entry1, mut comment_rx1, _stop_rx1) =
+            running_entry_with_comment_rx(issue("1", "ASAHI-1", "Todo"));
+        let (entry2, mut comment_rx2, _stop_rx2) =
+            running_entry_with_comment_rx(issue("2", "ASAHI-2", "Todo"));
+        state.running.insert("1".to_string(), entry1);
+        state.running.insert("2".to_string(), entry2);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        poll_comments(&mut store, &mut state, &events_tx)
+            .await
+            .expect("poll comments");
+
+        let delivered = [comment_rx1.try_recv().ok(), comment_rx2.try_recv().ok()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(delivered, vec!["survivor".to_string()]);
+        let requests = server.recorded_requests().await;
+        assert_eq!(requests.len(), 2);
+        let targets = requests
+            .iter()
+            .map(|request| request.target.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            targets,
+            HashSet::from(["/api/issues/1/comments", "/api/issues/2/comments"])
+        );
+        state.running.get("1").unwrap().worker.abort();
+        state.running.get("2").unwrap().worker.abort();
     }
 
     #[tokio::test]
@@ -2630,9 +3054,10 @@ Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
                 .eq("ASAHI-99")
         );
 
-        let requests = tokio::time::timeout(StdDuration::from_secs(2), server.recorded_requests())
-            .await
-            .expect("new Asahi endpoint should receive candidate fetch and activity");
+        let requests =
+            tokio::time::timeout(StdDuration::from_millis(2_000), server.recorded_requests())
+                .await
+                .expect("new Asahi endpoint should receive candidate fetch and activity");
         assert_eq!(requests.len(), 2);
         assert!(requests[0].target.starts_with("/api/issues?"));
         assert_eq!(requests[1].method, "POST");
@@ -2678,6 +3103,37 @@ Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
         assert_eq!(running.issue.identifier, "acme/repo#42");
         assert_eq!(running.issue.state, "Todo");
         assert_eq!(running.issue.priority, Some(1));
+
+        for entry in state.running.values() {
+            entry.worker.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn on_tick_uses_one_github_board_fetch_for_reconcile_and_dispatch() {
+        let fake = fake_github_project_gh();
+        let workflow_temp = tempfile::tempdir().unwrap();
+        let workspace_temp = tempfile::tempdir().unwrap();
+        let workflow_path = workflow_temp.path().join("WORKFLOW.md");
+        write_github_project_codex_workflow(
+            &workflow_path,
+            &fake.command,
+            &workspace_temp.path().join("workspaces"),
+        );
+        let mut store = WorkflowStore::load(workflow_path).expect("workflow");
+        let mut state = OrchestratorState::new(&store.current().config);
+        let (running, _stop_rx) = running_entry(issue("PVTI_1", "acme/repo#42", "Todo"));
+        state.claimed.insert("PVTI_1".to_string());
+        state.running.insert("PVTI_1".to_string(), running);
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+
+        on_tick(&mut store, &mut state, &events_tx)
+            .await
+            .expect("tick should reconcile and dispatch from one GitHub snapshot");
+
+        let calls = std::fs::read_to_string(&fake.log_path).expect("fake gh log");
+        assert_eq!(calls.lines().count(), 1, "fake gh calls: {calls}");
+        assert_eq!(state.running.get("PVTI_1").unwrap().issue.priority, Some(1));
 
         for entry in state.running.values() {
             entry.worker.abort();
@@ -2746,9 +3202,10 @@ Issue {{{{ issue.identifier }}}}: {{{{ issue.title }}}}
             Some("proj-a")
         );
 
-        let requests = tokio::time::timeout(StdDuration::from_secs(2), server.recorded_requests())
-            .await
-            .expect("Asahi should receive reconcile, candidates, and activity");
+        let requests =
+            tokio::time::timeout(StdDuration::from_millis(2_000), server.recorded_requests())
+                .await
+                .expect("Asahi should receive reconcile, candidates, and activity");
         assert_eq!(requests.len(), 3);
         assert!(requests[0].target.starts_with("/api/issues?"));
         assert!(requests[0].target.contains("ids=existing"));
@@ -2907,8 +3364,9 @@ Issue {{ issue.identifier }}: {{ issue.title }}
         state.running.insert("2".to_string(), nonactive_entry);
         state.running.insert("3".to_string(), active_entry);
         let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        let tracker = build_tracker(&workflow.config.tracker).expect("tracker");
 
-        reconcile_running_issues(&mut state, &workflow, &events_tx).await;
+        reconcile_running_issues(&mut state, &workflow, tracker.as_ref(), None, &events_tx).await;
 
         assert!(state.running.get("1").unwrap().pending_cleanup);
         assert!(matches!(

@@ -30,7 +30,7 @@ src/
 |------|----------|-------|
 | Add tracker backend | `src/tracker/mod.rs` + new module | Implement `Tracker` trait |
 | Change poll/dispatch logic | `src/orchestrator.rs` | Also embeds Asahi Rocket when needed |
-| Permission profiles | `src/config.rs` | `high_trust`, `workspace_write`, `read_only` |
+| Permission profiles | `src/config.rs` (`PermissionProfile`) | `high_trust`, `workspace_write`, `read_only` |
 | Agent lifecycle hooks | `src/config.rs` + `src/shell_command.rs` | Shell commands at workspace events |
 | Stall detection | `src/orchestrator.rs` | Kills unresponsive agents, reschedules |
 | Wiki virtual FS | `src/wiki/fs.rs`, `src/wiki/shell.rs` | Used by `luna wiki` command |

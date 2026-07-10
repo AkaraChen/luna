@@ -24,6 +24,13 @@ pub use linear::LinearTracker;
 
 #[async_trait]
 pub trait Tracker: Send + Sync {
+    /// One unfiltered fetch of every issue on the board, for backends where a
+    /// full crawl is the cheapest primitive. Backends that filter server-side
+    /// return None and callers fall back to scoped fetches.
+    async fn fetch_board_snapshot(&self) -> Result<Option<Vec<Issue>>> {
+        Ok(None)
+    }
+
     async fn fetch_candidate_issues(&self) -> Result<Vec<Issue>>;
     async fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<Issue>>;
     async fn fetch_issue_states_by_ids(&self, issue_ids: &[String]) -> Result<Vec<Issue>>;

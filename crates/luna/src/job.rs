@@ -20,6 +20,8 @@ use crate::{
     workspace::{WorkspaceManager, sanitize_workspace_key},
 };
 
+const JOB_DRAIN_GRACE: Duration = Duration::from_secs(30);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum JobWorkspaceMode {
     None,
@@ -151,6 +153,8 @@ trait AngelJobRunnerConfig {
     fn command(&self) -> &str;
     fn args(&self) -> &[String];
     fn turn_timeout_ms(&self) -> u64;
+    fn resolved_permission_mode(&self) -> String;
+    fn resolved_elicitation_grants_all(&self) -> bool;
 }
 
 impl AngelJobRunnerConfig for CodexRunner {
@@ -163,6 +167,12 @@ impl AngelJobRunnerConfig for CodexRunner {
     fn turn_timeout_ms(&self) -> u64 {
         self.turn_timeout_ms
     }
+    fn resolved_permission_mode(&self) -> String {
+        CodexRunner::resolved_permission_mode(self)
+    }
+    fn resolved_elicitation_grants_all(&self) -> bool {
+        CodexRunner::resolved_elicitation_grants_all(self)
+    }
 }
 
 impl AngelJobRunnerConfig for OpencodeRunner {
@@ -174,6 +184,12 @@ impl AngelJobRunnerConfig for OpencodeRunner {
     }
     fn turn_timeout_ms(&self) -> u64 {
         self.turn_timeout_ms
+    }
+    fn resolved_permission_mode(&self) -> String {
+        OpencodeRunner::resolved_permission_mode(self)
+    }
+    fn resolved_elicitation_grants_all(&self) -> bool {
+        OpencodeRunner::resolved_elicitation_grants_all(self)
     }
 }
 
@@ -221,6 +237,8 @@ async fn run_angel_job(
     let workspace_path = workspace_path.to_string_lossy().to_string();
     let (command, args) = split_command(config.command(), config.args())?;
     let timeout_ms = config.turn_timeout_ms();
+    let permission_mode = config.resolved_permission_mode();
+    let elicitation_grants_all = config.resolved_elicitation_grants_all();
     let prompt = prompt.to_string();
     let runtime_name = runtime_name.to_string();
 
@@ -236,16 +254,19 @@ async fn run_angel_job(
                 client_title: Some("Luna".to_string()),
                 ..RuntimeOptionsOverrides::default()
             },
-        );
+        )
+        .map_err(angel_error)?;
         let mut session = AngelSession::new(options).map_err(angel_error)?;
         let stdout = io::stdout();
         let mut output = stdout.lock();
         run_angel_job_session(
             &mut session,
-            &runtime_name,
             workspace_path,
             prompt,
             timeout_ms,
+            permission_mode,
+            elicitation_grants_all,
+            JOB_DRAIN_GRACE,
             &mut output,
         )
     })
@@ -255,16 +276,18 @@ async fn run_angel_job(
 
 fn run_angel_job_session(
     session: &mut impl AngelJobSession,
-    runtime_name: &str,
     workspace_path: String,
     prompt: String,
     timeout_ms: u64,
+    permission_mode: String,
+    elicitation_grants_all: bool,
+    drain_grace: Duration,
     output: &mut impl Write,
 ) -> Result<()> {
     let request = SendTextRequest {
         text: prompt,
         cwd: Some(workspace_path),
-        permission_mode: Some(default_permission_mode(runtime_name).to_string()),
+        permission_mode: Some(permission_mode),
         ..SendTextRequest::default()
     };
     let events = session.start_text_turn(request)?;
@@ -272,50 +295,49 @@ fn run_angel_job_session(
         write_turn_event_to(output, &event)?;
     }
 
-    let started = Instant::now();
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms) + drain_grace;
     loop {
-        if started.elapsed() > Duration::from_millis(timeout_ms) {
+        if Instant::now() >= deadline {
             session.close();
             return Err(LunaError::Agent("job turn timed out".to_string()));
         }
-        match session.next_turn_event(Duration::from_millis(250))? {
-            Some(event) => {
-                let done = matches!(event, TurnRunEvent::Result { .. });
-                let approval_id = permission_elicitation_id(&event);
-                write_turn_event_to(output, &event)?;
-                if let Some(elicitation_id) = approval_id {
-                    let events = session.resolve_elicitation(
-                        elicitation_id,
-                        ElicitationResponse::AllowForSession,
-                    )?;
-                    for event in events {
-                        write_turn_event_to(output, &event)?;
-                    }
-                }
-                if done {
-                    session.close();
-                    return Ok(());
+        if let Some(event) = session.next_turn_event(Duration::from_millis(250))? {
+            let done = matches!(event, TurnRunEvent::Result { .. });
+            let approval_id = permission_elicitation_id(&event);
+            write_turn_event_to(output, &event)?;
+            if let Some(elicitation_id) = approval_id {
+                let response = if elicitation_grants_all {
+                    ElicitationResponse::AllowForSession
+                } else {
+                    ElicitationResponse::Deny
+                };
+                let events = session.resolve_elicitation(elicitation_id, response)?;
+                for event in events {
+                    write_turn_event_to(output, &event)?;
                 }
             }
-            None => {}
+            if done {
+                session.close();
+                return Ok(());
+            }
         }
-    }
-}
-
-fn default_permission_mode(runtime_name: &str) -> &'static str {
-    match runtime_name {
-        "codex" => "never",
-        "opencode" => "bypassPermissions",
-        _ => "never",
     }
 }
 
 fn permission_elicitation_id(event: &TurnRunEvent) -> Option<String> {
-    let TurnRunEvent::Elicitation { elicitation, .. } = event else {
+    let TurnRunEvent::Elicitation { message_part, .. } = event else {
         return None;
     };
-    matches!(elicitation.kind.as_str(), "approval" | "permissionProfile")
-        .then(|| elicitation.id.clone())
+    let action = message_part.action.as_ref()?;
+    let raw_input = action.raw_input.as_deref()?;
+    let value = serde_json::from_str::<serde_json::Value>(raw_input).ok()?;
+    let kind = value.get("kind")?.as_str()?;
+    matches!(kind, "approval" | "permissionProfile").then(|| {
+        action
+            .elicitation_id
+            .clone()
+            .unwrap_or_else(|| action.id.clone())
+    })
 }
 
 fn write_turn_event_to(output: &mut impl Write, event: &TurnRunEvent) -> Result<()> {
@@ -375,20 +397,20 @@ mod tests {
     use std::{collections::VecDeque, time::Duration};
 
     use angel_engine_client::{
-        DisplayMessagePartSnapshot, ElicitationResponse, ElicitationSnapshot, SendTextRequest,
-        TurnRunEvent,
+        DisplayMessagePartSnapshot, DisplayToolActionSnapshot, ElicitationResponse,
+        SendTextRequest, TurnRunEvent,
     };
     use serde_json::{Value, json};
     use tempfile::tempdir;
 
     use crate::{
-        config::{AcpRunner, CodexRunner, RunnerConfig},
+        config::{AcpRunner, CodexRunner, PermissionProfile, RunnerConfig},
         error::Result,
         workflow::WorkflowStore,
     };
 
     use super::{
-        AngelJobSession, JobOptions, JobWorkspaceMode, default_permission_mode, job_workspace_key,
+        AngelJobSession, JobOptions, JobWorkspaceMode, job_workspace_key,
         permission_elicitation_id, resolve_job_workspace, run_angel_job_session, run_job,
         run_job_in_workspace,
     };
@@ -586,11 +608,6 @@ test prompt
         );
     }
 
-    #[test]
-    fn codex_job_default_permission_mode_is_never() {
-        assert_eq!(default_permission_mode("codex"), "never");
-    }
-
     fn empty_message_part() -> DisplayMessagePartSnapshot {
         DisplayMessagePartSnapshot {
             kind: "tool".to_string(),
@@ -604,20 +621,33 @@ test prompt
     }
 
     fn elicitation_event(kind: &str) -> TurnRunEvent {
-        TurnRunEvent::Elicitation {
-            elicitation: ElicitationSnapshot {
-                id: format!("{kind}-id"),
-                turn_id: Some("turn".to_string()),
-                action_id: Some("action".to_string()),
-                kind: kind.to_string(),
-                phase: "open".to_string(),
-                title: None,
-                body: None,
-                choices: Vec::new(),
-                questions: Vec::new(),
-            },
-            message_part: empty_message_part(),
-        }
+        let id = format!("{kind}-id");
+        let raw_input = json!({
+            "id": id,
+            "turnId": "turn",
+            "actionId": "action",
+            "kind": kind,
+            "phase": "open",
+            "title": null,
+            "body": null,
+            "choices": [],
+            "questions": []
+        });
+        let mut message_part = empty_message_part();
+        message_part.action = Some(DisplayToolActionSnapshot {
+            id: id.clone(),
+            turn_id: Some("turn".to_string()),
+            elicitation_id: Some(id),
+            kind: Some("elicitation".to_string()),
+            phase: "awaitingDecision".to_string(),
+            title: None,
+            input_summary: None,
+            raw_input: Some(raw_input.to_string()),
+            output_text: String::new(),
+            output: Vec::new(),
+            error: None,
+        });
+        TurnRunEvent::Elicitation { message_part }
     }
 
     fn turn_event(value: Value) -> TurnRunEvent {
@@ -724,10 +754,12 @@ test prompt
 
         run_angel_job_session(
             &mut session,
-            "codex",
             "/tmp/luna-job".to_string(),
             "inspect repo".to_string(),
             1_000,
+            CodexRunner::default().resolved_permission_mode(),
+            CodexRunner::default().resolved_elicitation_grants_all(),
+            Duration::ZERO,
             &mut output,
         )
         .expect("job session");
@@ -757,10 +789,45 @@ test prompt
         assert_eq!(lines[0]["type"], "delta");
         assert_eq!(lines[0]["text"], "started");
         assert_eq!(lines[1]["type"], "elicitation");
-        assert_eq!(lines[1]["elicitation"]["id"], "approval-id");
+        assert_eq!(
+            lines[1]["messagePart"]["action"]["elicitationId"],
+            "approval-id"
+        );
         assert_eq!(lines[2]["type"], "delta");
         assert_eq!(lines[2]["text"], "approved");
         assert_eq!(lines[3]["type"], "result");
+    }
+
+    #[test]
+    fn codex_job_session_denies_permission_for_restricted_profile() {
+        let mut session =
+            FakeJobSession::new(Vec::new(), vec![Some(elicitation_event("approval"))]);
+        let mut output = Vec::new();
+        let runner = CodexRunner {
+            permission_profile: Some(PermissionProfile::ReadOnly),
+            ..CodexRunner::default()
+        };
+
+        let err = run_angel_job_session(
+            &mut session,
+            "/tmp/luna-job".to_string(),
+            "inspect repo".to_string(),
+            1,
+            runner.resolved_permission_mode(),
+            runner.resolved_elicitation_grants_all(),
+            Duration::ZERO,
+            &mut output,
+        )
+        .expect_err("restricted unresolved turn times out after denying");
+
+        assert!(err.to_string().contains("job turn timed out"));
+        assert_eq!(
+            session.requests[0].permission_mode.as_deref(),
+            Some("untrusted")
+        );
+        assert_eq!(session.resolved.len(), 1);
+        assert_eq!(session.resolved[0].0, "approval-id");
+        assert!(matches!(session.resolved[0].1, ElicitationResponse::Deny));
     }
 
     #[test]
@@ -771,10 +838,12 @@ test prompt
 
         let err = run_angel_job_session(
             &mut session,
-            "codex",
             "/tmp/luna-job".to_string(),
             "inspect repo".to_string(),
             1,
+            CodexRunner::default().resolved_permission_mode(),
+            CodexRunner::default().resolved_elicitation_grants_all(),
+            Duration::ZERO,
             &mut output,
         )
         .expect_err("timeout");
@@ -789,6 +858,10 @@ test prompt
             .collect::<Vec<_>>();
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0]["type"], "elicitation");
-        assert_eq!(lines[0]["elicitation"]["kind"], "userInput");
+        let raw_input = lines[0]["messagePart"]["action"]["rawInput"]
+            .as_str()
+            .expect("raw input");
+        let elicitation = serde_json::from_str::<Value>(raw_input).expect("elicitation json");
+        assert_eq!(elicitation["kind"], "userInput");
     }
 }
