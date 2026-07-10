@@ -17,6 +17,7 @@ src/
 ├── api/          # HTTP handlers (issues, projects, wiki, notifications, health)
 ├── domain/       # Business types + garde validation
 ├── entity/       # SeaORM entity models
+├── migration/    # SeaORM migrations, registered in migration/mod.rs
 ├── service/      # DB query/update layer
 ├── db.rs         # Connection setup
 └── web.rs        # Static frontend embed (production builds)
@@ -27,7 +28,7 @@ src/
 | Task | Location | Notes |
 |------|----------|-------|
 | Add REST endpoint | `src/api/mod.rs` + handler module | Follow existing error mapping in `api/error.rs` |
-| Change issue schema | `entity/issue.rs` + migration in `asahi-migration` | Always add migration first |
+| Change issue schema | `entity/issue.rs` + `src/migration/` | Add a migration module and register it in `migration/mod.rs` |
 | Project wiki | `api/wiki.rs`, `domain/wiki.rs`, `entity/wiki_*` | Versioned pages + audit trail |
 | Notifications | `api/notifications.rs`, `domain/notification.rs` | Inbox feed for dashboard |
 | Embeddable server | `app.rs::rocket_with_database_url_and_port` | Used by Luna orchestrator |
@@ -43,7 +44,7 @@ src/
 ## ANTI-PATTERNS
 
 - Do not put business logic in API handlers — delegate to `service/` + `domain/`.
-- Do not alter schema without a corresponding migration in `asahi-migration`.
+- Do not alter schema without a corresponding migration module in `src/migration/`.
 - Do not assume a default project exists (migration `m20260501_000005` removed synthetic default).
 
 ## COMMANDS

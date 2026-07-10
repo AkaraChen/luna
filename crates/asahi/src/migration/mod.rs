@@ -5,6 +5,7 @@ mod m20260430_000002_create_projects;
 mod m20260501_000003_backfill_projects;
 mod m20260501_000004_create_project_wiki;
 mod m20260501_000005_remove_synthetic_default_project;
+mod m20260703_000006_unique_issue_identity;
 
 pub struct Migrator;
 
@@ -17,6 +18,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260501_000003_backfill_projects::Migration),
             Box::new(m20260501_000004_create_project_wiki::Migration),
             Box::new(m20260501_000005_remove_synthetic_default_project::Migration),
+            Box::new(m20260703_000006_unique_issue_identity::Migration),
         ]
     }
 }

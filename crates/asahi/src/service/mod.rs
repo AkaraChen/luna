@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, DbErr,
-    EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, DbErr, EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use thiserror::Error;
 use uuid::Uuid;
+
+const MAX_ISSUE_CREATE_ATTEMPTS: usize = 5;
 
 use crate::{
     domain::{
@@ -49,66 +51,84 @@ impl IssueService {
         let state = non_empty_or(input.state, &IssueState::Todo.to_string());
         let labels = normalize_list(input.labels);
         let blocked_by_ids = self.resolve_issue_locators(&input.blocked_by).await?;
-        let number = self.next_issue_number(&team_key).await?;
         let now = Utc::now();
-        let id = Uuid::new_v4().to_string();
-        let identifier = format!("{team_key}-{number}");
-        let url = Some(format!("/api/issues/{}", url_safe_identifier(&identifier)));
+        let project_id = project_model.as_ref().map(|project| project.id.clone());
+        let mut last_unique_violation = None;
 
-        let transaction = self.db.begin().await?;
-        issue::ActiveModel {
-            id: Set(id.clone()),
-            identifier: Set(identifier),
-            project_id: Set(project_model.as_ref().map(|project| project.id.clone())),
-            project_slug: Set(project_slug),
-            team_key: Set(team_key),
-            number: Set(number),
-            title: Set(title),
-            description: Set(input.description),
-            priority: Set(input.priority),
-            state: Set(state),
-            branch_name: Set(input.branch_name),
-            url: Set(url),
-            assignee_id: Set(input.assignee_id),
-            created_at: Set(now),
-            updated_at: Set(now),
-        }
-        .insert(&transaction)
-        .await?;
+        for _ in 0..MAX_ISSUE_CREATE_ATTEMPTS {
+            let transaction = self.db.begin().await?;
+            let number = self.next_issue_number(&transaction, &team_key).await?;
+            let id = Uuid::new_v4().to_string();
+            let identifier = format!("{team_key}-{number}");
+            let url = Some(format!("/api/issues/{}", url_safe_identifier(&identifier)));
 
-        for name in labels {
-            issue_label::ActiveModel {
-                id: Set(Uuid::new_v4().to_string()),
-                issue_id: Set(id.clone()),
-                name: Set(name),
+            let insert_result = issue::ActiveModel {
+                id: Set(id.clone()),
+                identifier: Set(identifier),
+                project_id: Set(project_id.clone()),
+                project_slug: Set(project_slug.clone()),
+                team_key: Set(team_key.clone()),
+                number: Set(number),
+                title: Set(title.clone()),
+                description: Set(input.description.clone()),
+                priority: Set(input.priority),
+                state: Set(state.clone()),
+                branch_name: Set(input.branch_name.clone()),
+                url: Set(url),
+                assignee_id: Set(input.assignee_id.clone()),
+                created_at: Set(now),
+                updated_at: Set(now),
             }
             .insert(&transaction)
-            .await?;
-        }
+            .await;
 
-        for blocked_by_issue_id in blocked_by_ids {
-            issue_relation::ActiveModel {
-                id: Set(Uuid::new_v4().to_string()),
-                issue_id: Set(id.clone()),
-                blocked_by_issue_id: Set(blocked_by_issue_id),
+            if let Err(err) = insert_result {
+                if is_unique_violation(&err) {
+                    let _ = transaction.rollback().await;
+                    last_unique_violation = Some(err);
+                    continue;
+                }
+                return Err(err.into());
             }
-            .insert(&transaction)
+
+            for name in &labels {
+                issue_label::ActiveModel {
+                    id: Set(Uuid::new_v4().to_string()),
+                    issue_id: Set(id.clone()),
+                    name: Set(name.clone()),
+                }
+                .insert(&transaction)
+                .await?;
+            }
+
+            for blocked_by_issue_id in &blocked_by_ids {
+                issue_relation::ActiveModel {
+                    id: Set(Uuid::new_v4().to_string()),
+                    issue_id: Set(id.clone()),
+                    blocked_by_issue_id: Set(blocked_by_issue_id.clone()),
+                }
+                .insert(&transaction)
+                .await?;
+            }
+
+            transaction.commit().await?;
+            let issue = self
+                .find_issue_by_id(&id)
+                .await?
+                .ok_or_else(|| ServiceError::IssueNotFound(id))?;
+            self.upsert_notification(
+                &issue,
+                "issue_created",
+                format!("{} created", issue.identifier),
+                Some(issue.title.clone()),
+            )
             .await?;
+            return Ok(issue);
         }
 
-        transaction.commit().await?;
-        let issue = self
-            .find_issue_by_id(&id)
-            .await?
-            .ok_or_else(|| ServiceError::IssueNotFound(id))?;
-        self.upsert_notification(
-            &issue,
-            "issue_created",
-            format!("{} created", issue.identifier),
-            Some(issue.title.clone()),
-        )
-        .await?;
-        Ok(issue)
+        Err(last_unique_violation
+            .map(ServiceError::Database)
+            .unwrap_or_else(|| ServiceError::InvalidInput("issue create retry exhausted".into())))
     }
 
     pub async fn create_project(&self, input: CreateProjectInput) -> ServiceResult<Project> {
@@ -1328,11 +1348,14 @@ impl IssueService {
         .await?)
     }
 
-    async fn next_issue_number(&self, team_key: &str) -> ServiceResult<i64> {
+    async fn next_issue_number<C>(&self, db: &C, team_key: &str) -> ServiceResult<i64>
+    where
+        C: ConnectionTrait,
+    {
         let latest = issue::Entity::find()
             .filter(issue::Column::TeamKey.eq(team_key.to_string()))
             .order_by_desc(issue::Column::Number)
-            .one(&self.db)
+            .one(db)
             .await?;
 
         Ok(latest.map(|issue| issue.number + 1).unwrap_or(1))
@@ -1400,7 +1423,17 @@ impl IssueService {
             return Ok(None);
         }
 
-        let models = project::Entity::find().all(&self.db).await?;
+        // Project locators match id exactly or slug case-insensitively.
+        // SQLite LIKE is ASCII-case-insensitive and keeps RO lookup semantics aligned with
+        // project_matches_locator's eq_ignore_ascii_case slug check.
+        let models = project::Entity::find()
+            .filter(
+                Condition::any()
+                    .add(project::Column::Id.eq(locator.to_string()))
+                    .add(project::Column::Slug.like(locator.to_string())),
+            )
+            .all(&self.db)
+            .await?;
         Ok(models.into_iter().find(|model| {
             let candidate = model_to_project(model.clone());
             project_matches_locator(&candidate, locator)
@@ -1412,18 +1445,31 @@ impl IssueService {
         slug: &str,
     ) -> ServiceResult<Option<project::Model>> {
         let slug = normalize_slug(slug)?;
-        let models = project::Entity::find().all(&self.db).await?;
+        let models = project::Entity::find()
+            .filter(project::Column::Slug.like(slug.clone()))
+            .all(&self.db)
+            .await?;
         Ok(models
             .into_iter()
             .find(|model| model.slug.eq_ignore_ascii_case(&slug)))
     }
 
     async fn resolve_issue_locators(&self, locators: &[String]) -> ServiceResult<Vec<String>> {
+        let models = self.find_issue_models_for_locators(locators).await?;
+        let candidates = models
+            .into_iter()
+            .map(|model| {
+                let id = model.id.clone();
+                (id, model_to_issue(model, None, Vec::new(), Vec::new()))
+            })
+            .collect::<Vec<_>>();
         let mut ids = Vec::with_capacity(locators.len());
         for locator in locators {
-            let id = self
-                .find_issue_id(locator)
-                .await?
+            let trimmed = locator.trim();
+            let id = candidates
+                .iter()
+                .find(|(_, issue)| issue_matches_locator(issue, trimmed))
+                .map(|(id, _)| id.clone())
                 .ok_or_else(|| ServiceError::IssueNotFound(locator.clone()))?;
             ids.push(id);
         }
@@ -1436,12 +1482,45 @@ impl IssueService {
             return Ok(None);
         }
 
-        let models = issue::Entity::find().all(&self.db).await?;
+        let models = self
+            .find_issue_models_for_locators(&[locator.to_string()])
+            .await?;
         Ok(models
             .into_iter()
             .map(|model| model_to_issue(model, None, Vec::new(), Vec::new()))
             .find(|issue| issue_matches_locator(issue, locator))
             .map(|issue| issue.id))
+    }
+
+    async fn find_issue_models_for_locators(
+        &self,
+        locators: &[String],
+    ) -> ServiceResult<Vec<issue::Model>> {
+        // Issue locators match id exactly, identifier case-insensitively, or
+        // sanitize_workspace_key(identifier) case-insensitively. The workspace-key form is
+        // derived, so SQL fetches a candidate superset with identifier LIKE and the original
+        // issue_matches_locator helper remains the final contract check.
+        let mut condition = Condition::any();
+        let mut has_locator = false;
+        for locator in locators
+            .iter()
+            .map(|locator| locator.trim())
+            .filter(|locator| !locator.is_empty())
+        {
+            has_locator = true;
+            condition = condition
+                .add(issue::Column::Id.eq(locator.to_string()))
+                .add(issue::Column::Identifier.like(locator.to_string()));
+        }
+
+        if !has_locator {
+            return Ok(Vec::new());
+        }
+
+        Ok(issue::Entity::find()
+            .filter(condition)
+            .all(&self.db)
+            .await?)
     }
 
     async fn find_issue_by_id(&self, id: &str) -> ServiceResult<Option<Issue>> {
@@ -1455,63 +1534,103 @@ impl IssueService {
     }
 
     async fn hydrate_issues(&self, models: Vec<issue::Model>) -> ServiceResult<Vec<Issue>> {
-        let mut issues = Vec::with_capacity(models.len());
-        for model in models {
-            issues.push(self.hydrate_issue(model).await?);
+        if models.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(issues)
-    }
 
-    async fn hydrate_issue(&self, model: issue::Model) -> ServiceResult<Issue> {
-        let labels = issue_label::Entity::find()
-            .filter(issue_label::Column::IssueId.eq(model.id.clone()))
+        let issue_ids = models
+            .iter()
+            .map(|model| model.id.clone())
+            .collect::<Vec<_>>();
+        let project_ids = models
+            .iter()
+            .filter_map(|model| model.project_id.clone())
+            .collect::<HashSet<_>>();
+
+        let mut labels_by_issue: HashMap<String, Vec<String>> = HashMap::new();
+        for label in issue_label::Entity::find()
+            .filter(issue_label::Column::IssueId.is_in(issue_ids.clone()))
+            .order_by_asc(issue_label::Column::IssueId)
             .order_by_asc(issue_label::Column::Name)
             .all(&self.db)
             .await?
-            .into_iter()
-            .map(|label| label.name)
-            .collect::<Vec<_>>();
+        {
+            labels_by_issue
+                .entry(label.issue_id)
+                .or_default()
+                .push(label.name);
+        }
 
-        let project = match model.project_id.as_deref() {
-            Some(project_id) => project::Entity::find_by_id(project_id.to_string())
-                .one(&self.db)
-                .await?
-                .map(model_to_project_ref),
-            None => None,
-        };
-
-        let relations = issue_relation::Entity::find()
-            .filter(issue_relation::Column::IssueId.eq(model.id.clone()))
-            .all(&self.db)
-            .await?;
-        let blocker_ids = relations
-            .iter()
-            .map(|relation| relation.blocked_by_issue_id.clone())
-            .collect::<Vec<_>>();
-        let blockers = if blocker_ids.is_empty() {
-            Vec::new()
+        let projects_by_id = if project_ids.is_empty() {
+            HashMap::new()
         } else {
-            let lookup = blocker_ids.iter().cloned().collect::<HashSet<_>>();
-            let models = issue::Entity::find()
-                .filter(issue::Column::Id.is_in(lookup))
+            project::Entity::find()
+                .filter(project::Column::Id.is_in(project_ids))
                 .all(&self.db)
                 .await?
                 .into_iter()
-                .map(|issue| (issue.id.clone(), issue))
-                .collect::<HashMap<_, _>>();
-
-            blocker_ids
-                .iter()
-                .filter_map(|id| models.get(id))
-                .map(|issue| BlockerRef {
-                    id: Some(issue.id.clone()),
-                    identifier: Some(issue.identifier.clone()),
-                    state: Some(issue.state.clone()),
-                })
-                .collect()
+                .map(|project| (project.id.clone(), model_to_project_ref(project)))
+                .collect::<HashMap<_, _>>()
         };
 
-        Ok(model_to_issue(model, project, labels, blockers))
+        let mut blocker_ids_by_issue: HashMap<String, Vec<String>> = HashMap::new();
+        let mut all_blocker_ids = HashSet::new();
+        for relation in issue_relation::Entity::find()
+            .filter(issue_relation::Column::IssueId.is_in(issue_ids))
+            .all(&self.db)
+            .await?
+        {
+            all_blocker_ids.insert(relation.blocked_by_issue_id.clone());
+            blocker_ids_by_issue
+                .entry(relation.issue_id)
+                .or_default()
+                .push(relation.blocked_by_issue_id);
+        }
+
+        let blockers_by_id = if all_blocker_ids.is_empty() {
+            HashMap::new()
+        } else {
+            issue::Entity::find()
+                .filter(issue::Column::Id.is_in(all_blocker_ids))
+                .all(&self.db)
+                .await?
+                .into_iter()
+                .map(|issue| {
+                    (
+                        issue.id.clone(),
+                        BlockerRef {
+                            id: Some(issue.id),
+                            identifier: Some(issue.identifier),
+                            state: Some(issue.state),
+                        },
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        };
+
+        Ok(models
+            .into_iter()
+            .map(|model| {
+                let project = model
+                    .project_id
+                    .as_deref()
+                    .and_then(|project_id| projects_by_id.get(project_id))
+                    .cloned();
+                let labels = labels_by_issue.remove(&model.id).unwrap_or_default();
+                let blockers = blocker_ids_by_issue
+                    .remove(&model.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|blocker_id| blockers_by_id.get(&blocker_id).cloned())
+                    .collect::<Vec<_>>();
+                model_to_issue(model, project, labels, blockers)
+            })
+            .collect())
+    }
+
+    async fn hydrate_issue(&self, model: issue::Model) -> ServiceResult<Issue> {
+        let mut issues = self.hydrate_issues(vec![model]).await?;
+        Ok(issues.remove(0))
     }
 
     pub async fn list_activities(&self, locator: &str) -> ServiceResult<Vec<Activity>> {
@@ -1636,11 +1755,33 @@ impl IssueService {
         &self,
         models: Vec<notification::Model>,
     ) -> ServiceResult<Vec<Notification>> {
-        let mut notifications = Vec::with_capacity(models.len());
-        for model in models {
-            notifications.push(self.hydrate_notification(model).await?);
-        }
-        Ok(notifications)
+        let issue_ids = models
+            .iter()
+            .filter_map(|model| model.issue_id.clone())
+            .collect::<HashSet<_>>();
+        let issues_by_id = if issue_ids.is_empty() {
+            HashMap::new()
+        } else {
+            issue::Entity::find()
+                .filter(issue::Column::Id.is_in(issue_ids))
+                .all(&self.db)
+                .await?
+                .into_iter()
+                .map(|issue| (issue.id.clone(), notification_issue_ref(issue)))
+                .collect::<HashMap<_, _>>()
+        };
+
+        Ok(models
+            .into_iter()
+            .map(|model| {
+                let issue = model
+                    .issue_id
+                    .as_deref()
+                    .and_then(|issue_id| issues_by_id.get(issue_id))
+                    .cloned();
+                model_to_notification(model, issue)
+            })
+            .collect())
     }
 
     async fn hydrate_notification(
@@ -2021,6 +2162,215 @@ fn normalize_list(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+fn is_unique_violation(err: &DbErr) -> bool {
+    // SQLite/sqlx reports unique-index failures through the message text.
+    err.to_string().contains("UNIQUE constraint failed")
+}
+
 fn url_safe_identifier(identifier: &str) -> String {
     identifier.replace(' ', "%20")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use chrono::Utc;
+    use rocket::tokio;
+    use sea_orm::{ActiveModelTrait, Set};
+    use uuid::Uuid;
+
+    use crate::{db, domain::IssueState, entity::issue};
+
+    use super::{CreateIssueInput, IssueService, ServiceError, is_unique_violation};
+
+    #[tokio::test]
+    async fn duplicate_identifier_insert_is_rejected() {
+        let db = db::connect_and_setup("sqlite::memory:").await.expect("db");
+        let now = Utc::now();
+        issue::ActiveModel {
+            id: Set("issue-1".to_string()),
+            identifier: Set("ENG-1".to_string()),
+            project_id: Set(None),
+            project_slug: Set("default".to_string()),
+            team_key: Set("ENG".to_string()),
+            number: Set(1),
+            title: Set("First".to_string()),
+            description: Set(None),
+            priority: Set(None),
+            state: Set(IssueState::Todo.to_string()),
+            branch_name: Set(None),
+            url: Set(Some("/api/issues/ENG-1".to_string())),
+            assignee_id: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&db)
+        .await
+        .expect("first insert");
+
+        let err = issue::ActiveModel {
+            id: Set("issue-2".to_string()),
+            identifier: Set("ENG-1".to_string()),
+            project_id: Set(None),
+            project_slug: Set("default".to_string()),
+            team_key: Set("ENG".to_string()),
+            number: Set(1),
+            title: Set("Duplicate".to_string()),
+            description: Set(None),
+            priority: Set(None),
+            state: Set(IssueState::Todo.to_string()),
+            branch_name: Set(None),
+            url: Set(Some("/api/issues/ENG-1".to_string())),
+            assignee_id: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&db)
+        .await
+        .expect_err("duplicate insert");
+
+        assert!(is_unique_violation(&err));
+    }
+
+    #[tokio::test]
+    async fn concurrent_creates_yield_distinct_identifiers() {
+        let db_url = format!("sqlite:file:{}?mode=memory&cache=shared", Uuid::new_v4());
+        let db = db::connect_and_setup(&db_url).await.expect("db");
+        let service = IssueService::new(db);
+
+        let mut handles = Vec::new();
+        for index in 0..8 {
+            let service = service.clone();
+            handles.push(tokio::spawn(async move {
+                service
+                    .create_issue(CreateIssueInput {
+                        title: Some(format!("Concurrent {index}")),
+                        team_key: Some("ENG".to_string()),
+                        ..CreateIssueInput::default()
+                    })
+                    .await
+            }));
+        }
+
+        let mut identifiers = HashSet::new();
+        for handle in handles {
+            let issue = handle.await.expect("join").expect("create issue");
+            identifiers.insert(issue.identifier);
+        }
+
+        assert_eq!(identifiers.len(), 8);
+    }
+
+    #[tokio::test]
+    async fn find_issue_id_matches_id_identifier_and_identifier_case() {
+        let db = db::connect_and_setup("sqlite::memory:").await.expect("db");
+        let service = IssueService::new(db);
+        let issue = service
+            .create_issue(CreateIssueInput {
+                title: Some("Locator issue".to_string()),
+                team_key: Some("ENG".to_string()),
+                ..CreateIssueInput::default()
+            })
+            .await
+            .expect("create issue");
+
+        assert_eq!(
+            service.find_issue_id(&issue.id).await.expect("by id"),
+            Some(issue.id.clone())
+        );
+        assert_eq!(
+            service
+                .find_issue_id(&issue.identifier)
+                .await
+                .expect("by identifier"),
+            Some(issue.id.clone())
+        );
+        assert_eq!(
+            service.find_issue_id("eng-1").await.expect("by case"),
+            Some(issue.id)
+        );
+    }
+
+    #[tokio::test]
+    async fn find_issue_id_matches_workspace_key_form() {
+        let db = db::connect_and_setup("sqlite::memory:").await.expect("db");
+        let service = IssueService::new(db.clone());
+        let now = Utc::now();
+        issue::ActiveModel {
+            id: Set("issue-workspace".to_string()),
+            identifier: Set("acme/repo#42".to_string()),
+            project_id: Set(None),
+            project_slug: Set("default".to_string()),
+            team_key: Set("ACME".to_string()),
+            number: Set(42),
+            title: Set("Workspace locator".to_string()),
+            description: Set(None),
+            priority: Set(None),
+            state: Set(IssueState::Todo.to_string()),
+            branch_name: Set(None),
+            url: Set(Some("/api/issues/acme/repo#42".to_string())),
+            assignee_id: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&db)
+        .await
+        .expect("insert issue");
+
+        assert_eq!(
+            service
+                .find_issue_id("acme_repo_42")
+                .await
+                .expect("by workspace key"),
+            Some("issue-workspace".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_issue_locators_preserves_order() {
+        let db = db::connect_and_setup("sqlite::memory:").await.expect("db");
+        let service = IssueService::new(db);
+        let first = service
+            .create_issue(CreateIssueInput {
+                title: Some("First".to_string()),
+                team_key: Some("ONE".to_string()),
+                ..CreateIssueInput::default()
+            })
+            .await
+            .expect("first issue");
+        let second = service
+            .create_issue(CreateIssueInput {
+                title: Some("Second".to_string()),
+                team_key: Some("TWO".to_string()),
+                ..CreateIssueInput::default()
+            })
+            .await
+            .expect("second issue");
+
+        let resolved = service
+            .resolve_issue_locators(&[second.identifier, first.id.clone()])
+            .await
+            .expect("resolve locators");
+
+        assert_eq!(resolved, vec![second.id, first.id]);
+    }
+
+    #[tokio::test]
+    async fn issue_locator_misses_return_none_or_not_found() {
+        let db = db::connect_and_setup("sqlite::memory:").await.expect("db");
+        let service = IssueService::new(db);
+
+        assert_eq!(service.find_issue_id("  ").await.expect("blank"), None);
+        assert_eq!(
+            service.find_issue_id("missing").await.expect("missing"),
+            None
+        );
+
+        let err = service
+            .resolve_issue_locators(&["missing".to_string()])
+            .await
+            .expect_err("missing locator");
+        assert!(matches!(err, ServiceError::IssueNotFound(locator) if locator == "missing"));
+    }
 }

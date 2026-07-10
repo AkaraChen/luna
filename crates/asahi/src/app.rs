@@ -13,7 +13,9 @@ pub fn rocket() -> Rocket<Build> {
 
 pub fn rocket_with_database_url(database_url: impl Into<String>) -> Rocket<Build> {
     let database_url = database_url.into();
-    rocket::build()
+    // Local tracker by design; set ROCKET_ADDRESS explicitly to expose it.
+    let figment = rocket::Config::figment().join(("address", "127.0.0.1"));
+    rocket::custom(figment)
         .attach(AdHoc::try_on_ignite("Asahi Database", move |rocket| {
             Box::pin(async move {
                 match db::connect_and_setup(&database_url).await {

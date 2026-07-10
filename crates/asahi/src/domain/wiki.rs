@@ -76,3 +76,54 @@ pub struct WikiAudit {
 pub fn wiki_node_matches_locator(node: &WikiNode, locator: &str) -> bool {
     node.id == locator || node.slug.eq_ignore_ascii_case(locator)
 }
+
+#[cfg(test)]
+mod tests {
+    use rocket::serde::json::{from_str, to_string};
+
+    use super::*;
+
+    fn node() -> WikiNode {
+        WikiNode {
+            id: "node-1".to_string(),
+            project_id: "project-1".to_string(),
+            parent_id: None,
+            kind: WikiNodeKind::Page,
+            title: "Design Notes".to_string(),
+            slug: "design-notes".to_string(),
+            content: Some("content".to_string()),
+            current_version: None,
+            created_at: None,
+            updated_at: None,
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn wiki_node_kind_parse_accepts_trimmed_case_insensitive_values() {
+        assert_eq!(WikiNodeKind::parse(" folder "), Some(WikiNodeKind::Folder));
+        assert_eq!(WikiNodeKind::parse("PAGE"), Some(WikiNodeKind::Page));
+    }
+
+    #[test]
+    fn wiki_node_kind_parse_rejects_unknown_values() {
+        assert_eq!(WikiNodeKind::parse("document"), None);
+        assert_eq!(WikiNodeKind::parse(""), None);
+    }
+
+    #[test]
+    fn wiki_node_kind_serde_uses_snake_case() {
+        let encoded = to_string(&WikiNodeKind::Folder).expect("serialize");
+        assert_eq!(encoded, r#""folder""#);
+        let decoded: WikiNodeKind = from_str(r#""page""#).expect("deserialize");
+        assert_eq!(decoded, WikiNodeKind::Page);
+    }
+
+    #[test]
+    fn wiki_node_locator_matches_id_or_slug_case_insensitive() {
+        let node = node();
+        assert!(wiki_node_matches_locator(&node, "node-1"));
+        assert!(wiki_node_matches_locator(&node, "DESIGN-NOTES"));
+        assert!(!wiki_node_matches_locator(&node, "Design Notes"));
+    }
+}

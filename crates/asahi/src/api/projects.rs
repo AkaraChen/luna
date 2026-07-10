@@ -168,6 +168,126 @@ mod tests {
 
     use super::ProjectListResponse;
 
+    fn create_project(client: &Client, slug: &str, name: &str) -> crate::domain::Project {
+        let created = client
+            .post("/api/projects")
+            .header(ContentType::JSON)
+            .body(
+                rocket::serde::json::json!({
+                    "slug": slug,
+                    "name": name
+                })
+                .to_string(),
+            )
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        created.into_json().expect("project json")
+    }
+
+    #[test]
+    fn fetches_project_by_slug_and_id() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        let project = create_project(&client, "Lookup Project", "Lookup Project");
+
+        let by_slug = client
+            .get(format!("/api/projects/{}", project.slug))
+            .dispatch();
+        assert_eq!(by_slug.status(), Status::Ok);
+        let by_slug: crate::domain::Project = by_slug.into_json().expect("project by slug");
+        assert_eq!(by_slug.id, project.id);
+
+        let by_id = client
+            .get(format!("/api/projects/{}", project.id))
+            .dispatch();
+        assert_eq!(by_id.status(), Status::Ok);
+        let by_id: crate::domain::Project = by_id.into_json().expect("project by id");
+        assert_eq!(by_id.slug, project.slug);
+    }
+
+    #[test]
+    fn updates_project_fields_round_trip() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        let project = create_project(&client, "Update Project", "Update Project");
+
+        let updated = client
+            .patch(format!("/api/projects/{}", project.slug))
+            .header(ContentType::JSON)
+            .body(
+                rocket::serde::json::json!({
+                    "name": "Updated Project",
+                    "description": "Updated description",
+                    "priority": 7
+                })
+                .to_string(),
+            )
+            .dispatch();
+        assert_eq!(updated.status(), Status::Ok);
+        let updated: crate::domain::Project = updated.into_json().expect("updated project");
+        assert_eq!(updated.name, "Updated Project");
+        assert_eq!(updated.description.as_deref(), Some("Updated description"));
+        assert_eq!(updated.priority, Some(7));
+
+        let cleared = client
+            .patch(format!("/api/projects/{}", project.id))
+            .header(ContentType::JSON)
+            .body(r#"{"description":null,"priority":null}"#)
+            .dispatch();
+        assert_eq!(cleared.status(), Status::Ok);
+        let cleared: crate::domain::Project = cleared.into_json().expect("cleared project");
+        assert_eq!(cleared.description, None);
+        assert_eq!(cleared.priority, None);
+    }
+
+    #[test]
+    fn delete_project_orphans_attached_issues() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        let project = create_project(&client, "Delete Project", "Delete Project");
+        let issue = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(format!(
+                r#"{{
+                    "project_id": "{}",
+                    "team_key": "DEL",
+                    "title": "Issue survives project delete"
+                }}"#,
+                project.id
+            ))
+            .dispatch();
+        assert_eq!(issue.status(), Status::Ok);
+        let issue: Issue = issue.into_json().expect("issue json");
+
+        let deleted = client
+            .delete(format!("/api/projects/{}", project.slug))
+            .dispatch();
+        assert_eq!(deleted.status(), Status::Ok);
+
+        // CHARACTERIZATION: deleting a project orphans attached issues.
+        let fetched = client.get(format!("/api/issues/{}", issue.id)).dispatch();
+        assert_eq!(fetched.status(), Status::Ok);
+        let fetched: Issue = fetched.into_json().expect("issue after project delete");
+        assert_eq!(fetched.project_id, None);
+        assert_eq!(fetched.project, None);
+    }
+
+    #[test]
+    fn duplicate_project_slug_returns_bad_request() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        create_project(&client, "Duplicate Project", "Duplicate Project");
+
+        let duplicate = client
+            .post("/api/projects")
+            .header(ContentType::JSON)
+            .body(r#"{"slug":"duplicate-project","name":"Duplicate Again"}"#)
+            .dispatch();
+
+        assert_eq!(duplicate.status(), Status::BadRequest);
+    }
+
     #[test]
     fn manages_project_lifecycle_and_issue_association() {
         let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))

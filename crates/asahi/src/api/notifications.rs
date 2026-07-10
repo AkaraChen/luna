@@ -87,3 +87,129 @@ pub fn routes() -> Vec<Route> {
         archive_notification
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use rocket::{
+        http::{ContentType, Status},
+        local::blocking::Client,
+    };
+
+    use crate::{app, domain::Issue};
+
+    use super::NotificationListResponse;
+
+    fn create_issue(client: &Client, title: &str) -> Issue {
+        let created = client
+            .post("/api/issues")
+            .header(ContentType::JSON)
+            .body(rocket::serde::json::json!({ "title": title }).to_string())
+            .dispatch();
+        assert_eq!(created.status(), Status::Ok);
+        created.into_json().expect("issue json")
+    }
+
+    fn list_notifications(client: &Client, query: &str) -> NotificationListResponse {
+        let response = client.get(format!("/api/notifications{query}")).dispatch();
+        assert_eq!(response.status(), Status::Ok);
+        response.into_json().expect("notifications json")
+    }
+
+    #[test]
+    fn list_returns_seeded_notifications_and_clamps_limit() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        create_issue(&client, "First issue");
+        create_issue(&client, "Second issue");
+
+        let all = list_notifications(&client, "?limit=10");
+        assert_eq!(all.notifications.len(), 2);
+        assert_eq!(all.unread_count, 2);
+        assert!(all.notifications.iter().all(|notification| {
+            notification.issue.is_some() && notification.read_at.is_none()
+        }));
+
+        let clamped = list_notifications(&client, "?limit=0");
+        assert_eq!(clamped.notifications.len(), 1);
+        assert_eq!(clamped.unread_count, 2);
+    }
+
+    #[test]
+    fn unread_filter_excludes_read_notifications_and_count_reflects_reads() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        create_issue(&client, "First issue");
+        create_issue(&client, "Second issue");
+        let notifications = list_notifications(&client, "?limit=10");
+        let notification_id = notifications.notifications[0].id.clone();
+
+        let read = client
+            .patch(format!("/api/notifications/{notification_id}/read"))
+            .dispatch();
+        assert_eq!(read.status(), Status::Ok);
+
+        let unread = list_notifications(&client, "?unread_only=true&limit=10");
+        assert_eq!(unread.notifications.len(), 1);
+        assert_eq!(unread.unread_count, 1);
+        assert_ne!(unread.notifications[0].id, notification_id);
+
+        let all = list_notifications(&client, "?limit=10");
+        assert_eq!(all.notifications.len(), 2);
+        assert_eq!(all.unread_count, 1);
+    }
+
+    #[test]
+    fn read_unread_archive_transitions_round_trip() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        create_issue(&client, "Transition issue");
+        let notifications = list_notifications(&client, "?limit=10");
+        let notification_id = notifications.notifications[0].id.clone();
+
+        let read = client
+            .patch(format!("/api/notifications/{notification_id}/read"))
+            .dispatch();
+        assert_eq!(read.status(), Status::Ok);
+        let read: crate::domain::Notification = read.into_json().expect("read notification json");
+        assert!(read.read_at.is_some());
+
+        let unread = client
+            .patch(format!("/api/notifications/{notification_id}/unread"))
+            .dispatch();
+        assert_eq!(unread.status(), Status::Ok);
+        let unread: crate::domain::Notification =
+            unread.into_json().expect("unread notification json");
+        assert!(unread.read_at.is_none());
+
+        let archived = client
+            .patch(format!("/api/notifications/{notification_id}/archive"))
+            .dispatch();
+        assert_eq!(archived.status(), Status::Ok);
+        let archived: crate::domain::Notification =
+            archived.into_json().expect("archived notification json");
+        assert!(archived.archived_at.is_some());
+
+        let active = list_notifications(&client, "?limit=10");
+        assert!(active.notifications.is_empty());
+        assert_eq!(active.unread_count, 0);
+
+        let archived = list_notifications(&client, "?include_archived=true&limit=10");
+        assert_eq!(archived.notifications.len(), 1);
+        assert_eq!(archived.notifications[0].id, notification_id);
+    }
+
+    #[test]
+    fn missing_notification_mutations_return_not_found() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+
+        for route in [
+            "/api/notifications/missing/read",
+            "/api/notifications/missing/unread",
+            "/api/notifications/missing/archive",
+        ] {
+            let response = client.patch(route).dispatch();
+            assert_eq!(response.status(), Status::NotFound);
+        }
+    }
+}

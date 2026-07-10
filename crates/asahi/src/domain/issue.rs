@@ -108,3 +108,74 @@ pub fn default_team_key(project_slug: &str) -> String {
         candidate
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use rocket::serde::json::{from_str, to_string};
+
+    use super::*;
+
+    fn issue(identifier: &str) -> Issue {
+        Issue {
+            id: "issue-1".to_string(),
+            identifier: identifier.to_string(),
+            project_id: None,
+            project: None,
+            title: "Implement tracker".to_string(),
+            description: None,
+            priority: None,
+            state: IssueState::Todo.to_string(),
+            branch_name: None,
+            url: None,
+            labels: Vec::new(),
+            blocked_by: Vec::new(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn issue_state_display_uses_public_names() {
+        assert_eq!(IssueState::Backlog.to_string(), "Backlog");
+        assert_eq!(IssueState::Todo.to_string(), "Todo");
+        assert_eq!(IssueState::InProgress.to_string(), "In Progress");
+        assert_eq!(IssueState::Done.to_string(), "Done");
+    }
+
+    #[test]
+    fn issue_state_from_str_accepts_all_public_names() {
+        for state in IssueState::ALL {
+            assert_eq!(IssueState::from_str(&state.to_string()), Ok(*state));
+        }
+    }
+
+    #[test]
+    fn issue_state_from_str_is_case_sensitive() {
+        assert!(IssueState::from_str("in progress").is_err());
+        assert!(IssueState::from_str("Unknown").is_err());
+    }
+
+    #[test]
+    fn issue_state_serde_round_trips_public_names() {
+        let encoded = to_string(&IssueState::InProgress).expect("serialize");
+        assert_eq!(encoded, r#""In Progress""#);
+        let decoded: IssueState = from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, IssueState::InProgress);
+    }
+
+    #[test]
+    fn issue_locator_matches_id_identifier_and_workspace_key() {
+        let issue = issue("acme/repo#42");
+        assert!(issue_matches_locator(&issue, "issue-1"));
+        assert!(issue_matches_locator(&issue, "ACME/REPO#42"));
+        assert!(issue_matches_locator(&issue, "acme_repo_42"));
+        assert!(!issue_matches_locator(&issue, "acme-repo-42"));
+    }
+
+    #[test]
+    fn default_team_key_uses_uppercase_alphanumeric_prefix_or_fallback() {
+        assert_eq!(default_team_key("asahi-web"), "ASAHIWEB");
+        assert_eq!(default_team_key("123456789"), "12345678");
+        assert_eq!(default_team_key("---"), "ASH");
+    }
+}

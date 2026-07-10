@@ -303,9 +303,169 @@ mod tests {
         local::blocking::Client,
     };
 
-    use crate::{app, domain::WikiNodeKind};
+    use crate::{
+        app,
+        domain::{Project, WikiNode, WikiNodeKind},
+    };
 
     use super::{WikiAuditListResponse, WikiNodeListResponse, WikiVersionListResponse};
+
+    fn create_project(client: &Client) -> Project {
+        let project = client
+            .post("/api/projects")
+            .header(ContentType::JSON)
+            .body(r#"{"slug":"docs","name":"Docs"}"#)
+            .dispatch();
+        assert_eq!(project.status(), Status::Ok);
+        project.into_json().expect("project json")
+    }
+
+    fn create_page(client: &Client, project_slug: &str, title: &str, content: &str) -> WikiNode {
+        let page = client
+            .post(format!("/api/projects/{project_slug}/wiki"))
+            .header(ContentType::JSON)
+            .body(
+                rocket::serde::json::json!({
+                    "kind": "page",
+                    "title": title,
+                    "content": content
+                })
+                .to_string(),
+            )
+            .dispatch();
+        assert_eq!(page.status(), Status::Ok);
+        page.into_json().expect("page json")
+    }
+
+    #[test]
+    fn gets_wiki_page_by_id_and_slug() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        let project = create_project(&client);
+        let page = create_page(&client, &project.slug, "Design Doc", "Initial");
+
+        let by_id = client
+            .get(format!("/api/projects/{}/wiki/{}", project.slug, page.id))
+            .dispatch();
+        assert_eq!(by_id.status(), Status::Ok);
+        let by_id: WikiNode = by_id.into_json().expect("wiki node by id");
+        assert_eq!(by_id.id, page.id);
+
+        let by_slug = client
+            .get(format!("/api/projects/{}/wiki/{}", project.slug, page.slug))
+            .dispatch();
+        assert_eq!(by_slug.status(), Status::Ok);
+        let by_slug: WikiNode = by_slug.into_json().expect("wiki node by slug");
+        assert_eq!(by_slug.id, page.id);
+    }
+
+    #[test]
+    fn rejects_invalid_wiki_input() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        let project = create_project(&client);
+
+        let blank_title = client
+            .post(format!("/api/projects/{}/wiki", project.slug))
+            .header(ContentType::JSON)
+            .body(r#"{"kind":"page","title":"   ","content":"content"}"#)
+            .dispatch();
+        assert_eq!(blank_title.status(), Status::BadRequest);
+
+        let invalid_kind = client
+            .post(format!("/api/projects/{}/wiki", project.slug))
+            .header(ContentType::JSON)
+            .body(r#"{"kind":"document","title":"Doc","content":"content"}"#)
+            .dispatch();
+        assert_eq!(invalid_kind.status(), Status::BadRequest);
+    }
+
+    #[test]
+    fn recursive_wiki_listing_returns_nested_nodes() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        let project = create_project(&client);
+        let folder = client
+            .post(format!("/api/projects/{}/wiki", project.slug))
+            .header(ContentType::JSON)
+            .body(r#"{"kind":"folder","title":"Guides"}"#)
+            .dispatch();
+        assert_eq!(folder.status(), Status::Ok);
+        let folder: WikiNode = folder.into_json().expect("folder json");
+        let page = client
+            .post(format!("/api/projects/{}/wiki", project.slug))
+            .header(ContentType::JSON)
+            .body(
+                rocket::serde::json::json!({
+                    "kind": "page",
+                    "parent_id": folder.id,
+                    "title": "Nested Page",
+                    "content": "content"
+                })
+                .to_string(),
+            )
+            .dispatch();
+        assert_eq!(page.status(), Status::Ok);
+        let page: WikiNode = page.into_json().expect("page json");
+
+        let listed = client
+            .get(format!(
+                "/api/projects/{}/wiki?recursive=true",
+                project.slug
+            ))
+            .dispatch();
+        assert_eq!(listed.status(), Status::Ok);
+        let listed: WikiNodeListResponse = listed.into_json().expect("recursive list json");
+        let node_ids = listed
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(node_ids.contains(&folder.id.as_str()));
+        assert!(node_ids.contains(&page.id.as_str()));
+    }
+
+    #[test]
+    fn project_wiki_audits_include_create_update_and_rollback() {
+        let client = Client::tracked(app::rocket_with_database_url("sqlite::memory:"))
+            .expect("valid rocket instance");
+        let project = create_project(&client);
+        let page = create_page(&client, &project.slug, "Audit Page", "v1");
+
+        let updated = client
+            .patch(format!("/api/projects/{}/wiki/{}", project.slug, page.id))
+            .header(ContentType::JSON)
+            .body(r#"{"content":"v2"}"#)
+            .dispatch();
+        assert_eq!(updated.status(), Status::Ok);
+
+        let rolled_back = client
+            .post(format!(
+                "/api/projects/{}/wiki/{}/rollback",
+                project.slug, page.id
+            ))
+            .header(ContentType::JSON)
+            .body(r#"{"version":1}"#)
+            .dispatch();
+        assert_eq!(rolled_back.status(), Status::Ok);
+
+        let audits = client
+            .get(format!(
+                "/api/projects/{}/wiki/audits?limit=10",
+                project.slug
+            ))
+            .dispatch();
+        assert_eq!(audits.status(), Status::Ok);
+        let audits: WikiAuditListResponse = audits.into_json().expect("audits json");
+        let actions = audits
+            .audits
+            .iter()
+            .map(|audit| audit.action.as_str())
+            .collect::<Vec<_>>();
+        assert!(actions.contains(&"page_created"));
+        assert!(actions.contains(&"page_updated"));
+        assert!(actions.contains(&"page_rolled_back"));
+    }
 
     #[test]
     fn manages_project_wiki_lifecycle_with_versions_and_audits() {
