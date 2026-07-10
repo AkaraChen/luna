@@ -21,6 +21,12 @@ export default defineConfig({
       "@": resolve(import.meta.dirname, "src"),
     },
   },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    setupFiles: ["./src/test/setup.ts"],
+  },
   fmt: {},
   lint: { options: { typeAware: true, typeCheck: true } },
 });

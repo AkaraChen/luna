@@ -27,6 +27,21 @@ jobs:
       - name: Lint Rust
         run: cargo clippy --workspace --all-targets --no-deps
 
+  rust-test:
+    name: Rust tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Run Rust tests
+        run: cargo test -p luna -p asahi --locked
+
   asahi-web:
     name: Asahi web lint and format
     runs-on: ubuntu-22.04
@@ -37,7 +52,16 @@ jobs:
         with:
           bun-version: 1.3.13
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
       - run: bun install --frozen-lockfile
 
       - name: Check Asahi web
         run: bun run --cwd apps/asahi-web vp check src AGENTS.md DESIGN.md
+
+      - name: Test Asahi web
+        run: bun run --cwd apps/asahi-web test
