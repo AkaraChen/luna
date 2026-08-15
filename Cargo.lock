@@ -172,7 +172,7 @@ dependencies = [
 name = "angel-engine"
 version = "0.1.0"
 dependencies = [
- "garde 0.23.0",
+ "garde",
  "serde",
  "serde_json",
  "strum 0.28.0",
@@ -186,7 +186,7 @@ dependencies = [
  "aghub-agents",
  "angel-engine",
  "angel-provider",
- "garde 0.23.0",
+ "garde",
  "serde",
  "serde_json",
  "skill",
@@ -279,7 +279,7 @@ name = "asahi"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "garde 0.22.1",
+ "garde",
  "rocket",
  "sea-orm",
  "sea-orm-migration",
@@ -850,20 +850,6 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
-]
-
-[[package]]
-name = "compact_str"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b79c4069c6cad78e2e0cdfcbd26275770669fb39fd308a752dc110e83b9af32"
-dependencies = [
- "castaway",
- "cfg-if",
- "itoa",
- "rustversion",
- "ryu",
- "static_assertions",
 ]
 
 [[package]]
@@ -1814,35 +1800,13 @@ dependencies = [
 
 [[package]]
 name = "garde"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a74b56a4039a46e8c91cc9d84e8a7df4e1f8b24239ca57d1304b3263cb599b9"
-dependencies = [
- "compact_str 0.8.1",
- "garde_derive 0.22.1",
- "smallvec",
-]
-
-[[package]]
-name = "garde"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d7f479d28d1daedf23970890723b8774d120aa627abcb33c1d7c93d0965e6c3"
 dependencies = [
- "compact_str 0.9.1",
- "garde_derive 0.23.0",
+ "compact_str",
+ "garde_derive",
  "smallvec",
-]
-
-[[package]]
-name = "garde_derive"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7224c08ec489e2840af29ed882b47f7f6ac8f4ce15c275d9fc0d6d1b94578ae6"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -3095,7 +3059,7 @@ dependencies = [
  "clash-brush-parser",
  "dirs",
  "dotenvy",
- "garde 0.22.1",
+ "garde",
  "html2md",
  "minijinja",
  "reqwest 0.12.28",
