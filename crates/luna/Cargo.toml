@@ -21,7 +21,7 @@ thiserror = "2.0.12"
 tokio = { version = "1.45.0", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "json"] }
-agent-client-protocol = "0.11.1"
+agent-client-protocol = "0.15.0"
 agent-client-protocol-tokio = "0.11.1"
 bashkit = "0.2"
 html2md = "0.2.15"
