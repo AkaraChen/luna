@@ -41,7 +41,7 @@
     "tailwindcss": "^4.2.4",
     "typescript": "~6.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.2",
-    "vite-plus": "0.2.2"
+    "vite-plus": "0.3.0"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.2",
